@@ -1,0 +1,91 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5;
+  font-size: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #f7fafc, #edf2f7);
+  color: #1a202c;
+}
+
+.container {
+  width: min(90vw, 480px);
+  background-color: rgba(255, 255, 255, 0.92);
+  padding: 2.5rem 2rem;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+}
+
+h1 {
+  margin: 0 0 1.5rem;
+  font-size: clamp(1.75rem, 2.5vw + 1rem, 2.5rem);
+  text-align: center;
+}
+
+.upload-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+label {
+  font-weight: 600;
+}
+
+.file-input {
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  font-size: 1rem;
+  background-color: #fff;
+  cursor: pointer;
+}
+
+.file-input:focus {
+  outline: 3px solid rgba(99, 102, 241, 0.45);
+  outline-offset: 2px;
+}
+
+.help-text {
+  font-size: 0.9rem;
+  color: #4a5568;
+  margin: 0;
+}
+
+.message {
+  margin-top: 1.5rem;
+  font-weight: 600;
+  min-height: 1.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: linear-gradient(180deg, #1f2933, #111827);
+    color: #e2e8f0;
+  }
+
+  .container {
+    background-color: rgba(30, 41, 59, 0.85);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  }
+
+  .file-input {
+    background-color: #1f2933;
+    border-color: #4a5568;
+    color: #e2e8f0;
+  }
+
+  .help-text {
+    color: #cbd5f5;
+  }
+}
