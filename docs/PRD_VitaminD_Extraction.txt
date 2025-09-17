@@ -1,0 +1,112 @@
+# PRD v0.2 — Vitamin D Extraction (OpenAI Vision)
+
+## 1. Purpose
+Extend the MVP with backend functionality: after the user uploads an image or PDF of a lab report, the server sends the file to OpenAI’s Vision model. The model should analyze the document, detect whether there is a **Vitamin D** test value, and if present, return it in a structured format.
+
+This is the first real use of AI in the project and introduces API calls to OpenAI.
+
+## 2. Scope
+- User flow:
+  1. User selects a file (image or PDF).
+  2. File is uploaded to the backend (Express server).
+  3. Backend sends the file to OpenAI Vision API with a carefully crafted prompt.
+  4. Backend converts PDFs to images **only if** the Vision API cannot consume PDFs directly (use an open-source converter such as `pdf-poppler`; limit conversion to the first 5 pages to control cost).
+  5. API response is parsed to check if Vitamin D is present.
+  6. If found, the numeric value (and optionally unit) is returned to the frontend.
+  7. If not found, return a clear message: “Vitamin D not found”.
+
+- **Targeted extraction only:** Vitamin D (e.g., “Vitamin D”, “25(OH)D”, “25-hydroxyvitamin D”).  
+- No database persistence yet — just pass-through result.  
+- No advanced normalization — raw number + unit from the document.  
+
+## 3. User Story
+As a user, I want to upload my lab report and immediately know if it contains a Vitamin D measurement, so I can quickly see that result without parsing the whole report.
+
+## 4. Functional Requirements
+- **Frontend**:
+  - Add “Upload & Analyze” button that triggers file upload to `/api/analyze-vitamin-d`.
+  - Display the returned result (either the value + unit, or “not found”).
+- **Backend**:
+  - New endpoint: `POST /api/analyze-vitamin-d`
+    - Accepts file upload (image or PDF) using `express-fileupload` (add as dependency and configure temp storage in memory).
+    - Reject unsupported mime types before upload to OpenAI.
+    - Sends the file (or converted PDF images) to OpenAI Vision API with a JSON-schema style prompt via the Responses API.
+    - Parses response into JSON, validating and sanitizing fields before returning to the client:  
+      ```json
+      {
+        "vitamin_d_found": true,
+        "value": 32,
+        "unit": "ng/mL"
+      }
+      ```
+      or  
+      ```json
+      {
+        "vitamin_d_found": false
+      }
+      ```
+- **Error handling**:
+  - If API call fails → return `{ error: "Vision API error" }` and log only request metadata (no PHI).
+  - If response JSON is malformed → coerce to `{ vitamin_d_found: false }` and surface a warning in logs.
+  - If no text extracted → `{ vitamin_d_found: false }`.
+
+## 5. Non-Functional Requirements
+- **Tech stack**: Node.js + Express backend, OpenAI SDK (`openai` npm package).
+- **Security**: 
+  - Sanitize filename before saving/uploading and store files only in memory (no disk writes) unless explicit approval is added later.
+  - Do not persist files or raw API responses; redact PHI from logs.
+  - Store credentials (e.g., `OPENAI_API_KEY`) in `.env` and never commit; ensure production deployment serves over HTTPS and is gated behind authentication when PHI is involved.
+- **Performance**:
+  - Limit file size to 10 MB and short-circuit PDFs with more than 5 pages for the MVP.
+  - Only one file per request; expose progress/loading state on the frontend if processing exceeds 3 seconds.
+- **Cost & observability**: Send each uploaded file to the Vision API at most once, capture latency + usage metrics, and implement exponential backoff on retryable errors.
+
+## 6. Tech Stack & APIs
+- **Backend**: Node.js 20 LTS, Express.
+- **File upload**: `express-fileupload` (to be introduced with this scope).
+- **LLM**: OpenAI API (`gpt-4o-mini` or `gpt-4.1` with vision input).
+- **Frontend**: Existing HTML/JS, add button + fetch request.
+- **PDF conversion (fallback)**: CLI or library capable of converting PDFs to images (e.g., `pdf-poppler`) if the Vision endpoint rejects PDFs.
+
+## 7. Project Structure Updates
+```
+/ (repo root)
+├─ public/
+│  ├─ index.html                # add button + result area
+│  └─ js/app.js                 # add fetch to POST /api/analyze-vitamin-d
+├─ server/
+│  ├─ app.js                    # mount route
+│  └─ routes/
+│     └─ analyzeVitaminD.js     # new endpoint logic
+└─ .env                         # contains OPENAI_API_KEY
+```
+
+## 8. Prompting & Post-processing strategy
+System message:  
+> You are a medical document analyzer. Extract only the Vitamin D (25(OH)D) measurement from the uploaded lab report. Return JSON only.
+
+User message:  
+- Instruction: “Find Vitamin D value if present. Return JSON object with fields: `vitamin_d_found` (boolean), `value` (number or null), `unit` (string or null).”  
+- Input: uploaded image or PDF.
+
+Post-processing guidelines:
+- Validate that the response is valid JSON; if parsing fails, default to `{ "vitamin_d_found": false }` and emit a structured warning.
+- Escape any string values before including in frontend responses.
+- Normalize units to lowercase (`ng/mL`, `nmol/L`, etc.) but do not perform conversions in v0.2.
+- Design the response schema to allow additional analytes in future versions (e.g., accept an array of metrics while still returning Vitamin D only for now).
+
+## 9. Acceptance Criteria
+- [ ] Upload + analyze button exists on frontend.
+- [ ] User can select image or PDF and trigger analysis.
+- [ ] Server sends file (or converted PDF images) to OpenAI Vision, receives structured JSON.
+- [ ] If Vitamin D found → result shown (value + unit).
+- [ ] If not found → “Vitamin D not found” shown.
+- [ ] If error → friendly error message shown.
+- [ ] Files larger than 10 MB or PDFs with >5 pages are rejected with a helpful message.
+
+## 10. Test Cases (manual, for now)
+1. Upload an image of a lab result containing “Vitamin D (25(OH)D) 32 ng/mL” → output: `{ vitamin_d_found: true, value: 32, unit: "ng/mL" }`.
+2. Upload an image of a lab result with no Vitamin D test → output: `{ vitamin_d_found: false }`.
+3. Upload an unsupported file type → rejected before API call.
+4. Upload a file >10MB → rejected.
+5. API error (e.g., invalid key) → friendly error message.
