@@ -1,0 +1,84 @@
+PRD v0.1 — Upload Form MVP (Images + PDF)
+
+1. Purpose
+
+Create the initial functionality for the project: allow the user to
+select a photo (image) or PDF document (e.g., medical analysis scan) and
+instantly display the file name on the page. No backend upload or
+processing is required in this step. This feature also establishes the
+base project structure.
+
+2. Scope
+
+-   A single web page with:
+    -   Title: “Upload Analysis”
+    -   File input (<input type="file" accept="image/*,.pdf">)
+    -   Message area that shows: “You selected: <filename>”
+-   Behavior:
+    -   When the user selects a file, the filename is displayed
+        immediately.
+    -   If the selection is cleared or canceled, the message area is
+        cleared.
+    -   Only one file is supported at this stage.
+
+3. User Story
+
+As a user, I want to select an image or PDF file and immediately see its
+name displayed, so that I know I chose the correct file.
+
+4. UI/UX Requirements
+
+-   Label is linked to the input (<label for="file">).
+-   Message area uses aria-live="polite" for accessibility.
+-   Works on desktop and mobile browsers.
+-   Minimal CSS for readability; responsive layout.
+
+5. Non-Functional Requirements
+
+-   Frontend only: Plain HTML, CSS, and JavaScript (no frameworks).
+-   Backend placeholder: Node.js + Express server to serve static files
+    (no API yet).
+-   Security: File is never uploaded, only the filename is displayed;
+    escape special characters before showing in the DOM.
+-   Performance: Instant response; no network calls.
+
+6. Tech Stack
+
+-   Frontend: HTML, CSS, JavaScript (vanilla).
+-   Backend (for static serving): Node.js + Express.
+-   Environment: Local development, later deployable on VPS with Nginx +
+    pm2.
+-   Dependencies: Only express for backend.
+
+7. Project Structure
+
+    / (repo root)
+    ├─ public/
+    │  ├─ index.html        # Upload form page
+    │  ├─ css/
+    │  │  └─ style.css      # Minimal styles
+    │  └─ js/
+    │     └─ app.js         # File selection logic
+    ├─ server/
+    │  └─ app.js            # Express server serving /public
+    ├─ .gitignore
+    ├─ package.json         # Scripts: "dev": "node server/app.js"
+    └─ README.md            # How to run locally
+
+8. Acceptance Criteria
+
+-   ☐ When an image or PDF is selected, the message “You selected:
+    <filename>” appears below the input.
+-   ☐ If selection is canceled, the message disappears.
+-   ☐ Only the filename is shown (no path).
+-   ☐ The file is not uploaded to the server.
+-   ☐ The page opens at http://localhost:3000 after running npm run dev.
+
+9. Test Cases
+
+1.  Select a JPEG → filename appears.
+2.  Select a PDF → filename appears.
+3.  Select a second file (image or PDF) → filename updates.
+4.  Cancel selection → message cleared.
+5.  Long filename → displayed correctly without breaking layout.
+6.  Keyboard navigation → file selection and filename display works.
