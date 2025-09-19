@@ -1,5 +1,9 @@
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const express = require('express');
+const fileUpload = require('express-fileupload');
+
+const analyzeVitaminDRouter = require('./routes/analyzeVitaminD');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -7,6 +11,18 @@ const publicDir = path.join(__dirname, '..', 'public');
 
 app.disable('x-powered-by');
 app.use(express.static(publicDir));
+
+app.use(
+  fileUpload({
+    limits: { fileSize: 10 * 1024 * 1024 },
+    abortOnLimit: true,
+    useTempFiles: false,
+    preserveExtension: true,
+    safeFileNames: true,
+  }),
+);
+
+app.use('/api/analyze-vitamin-d', analyzeVitaminDRouter);
 
 app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));

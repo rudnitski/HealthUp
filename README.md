@@ -9,9 +9,15 @@ Frontend-only prototype that lets a user choose an image or PDF and displays the
 
 ## Setup
 
-```bash
-npm install
-```
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Copy `.env.example` to `.env`, then set:
+   - `OPENAI_API_KEY=<your key>`
+   - Optional overrides:
+     - `OPENAI_VISION_MODEL` – model name (defaults to `gpt-4o-mini`)
+     - `PDFTOPPM_PATH` – absolute path to `pdftoppm` if it isn’t on `PATH`
 
 ## Run Locally
 
@@ -19,7 +25,7 @@ npm install
 npm run dev
 ```
 
-The app serves at http://localhost:3000. Select a file to see `You selected: <filename>` appear below the input. Clear the selection to remove the message.
+The app serves at http://localhost:3000. Select a file to see `You selected: <filename>` appear below the input; press “Upload & Analyze” to call the Vision backend.
 
 ## Project Structure
 

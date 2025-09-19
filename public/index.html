@@ -20,8 +20,11 @@
         aria-describedby="file-help"
       >
       <p id="file-help" class="help-text">Supported formats: images and PDF. Only one file at a time.</p>
+      <button id="analyze-btn" class="analyze-button" type="button">Upload &amp; Analyze</button>
     </form>
     <p id="file-message" class="message" aria-live="polite" hidden></p>
+    <p id="analysis-result" class="message" aria-live="polite" hidden></p>
+    <pre id="analysis-raw" class="raw-output" hidden></pre>
   </main>
   <script src="js/app.js" defer></script>
 </body>
