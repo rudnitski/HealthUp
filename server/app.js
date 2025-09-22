@@ -3,7 +3,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const express = require('express');
 const fileUpload = require('express-fileupload');
 
-const analyzeVitaminDRouter = require('./routes/analyzeVitaminD');
+const analyzeLabReportRouter = require('./routes/analyzeLabReport');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,7 +22,7 @@ app.use(
   }),
 );
 
-app.use('/api/analyze-vitamin-d', analyzeVitaminDRouter);
+app.use('/api/analyze-labs', analyzeLabReportRouter);
 
 app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
