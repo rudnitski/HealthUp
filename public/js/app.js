@@ -166,40 +166,7 @@
     return '';
   };
 
-  const formatOutOfRange = (value) => {
-    switch (value) {
-      case 'above':
-        return 'Above interval';
-      case 'below':
-        return 'Below interval';
-      case 'flagged_by_lab':
-        return 'Flagged by lab';
-      case 'within':
-        return 'Within interval';
-      case 'unknown':
-      default:
-        return 'Unknown';
-    }
-  };
-
-  const formatSecondaryDates = (secondaryDates) => {
-    if (!Array.isArray(secondaryDates) || !secondaryDates.length) {
-      return '';
-    }
-
-    return secondaryDates
-      .map((entry) => {
-        const type = isNonEmptyString(entry.type) ? entry.type.trim() : 'date';
-        const value = isNonEmptyString(entry.value) ? entry.value.trim() : 'unknown';
-        if (isNonEmptyString(entry.source_text)) {
-          return `${type}: ${value} (${entry.source_text.trim()})`;
-        }
-        return `${type}: ${value}`;
-      })
-      .join('; ');
-  };
-
-  const renderDetails = (payload) => {
+  const renderDetails = (payload, elapsedMs = null) => {
     if (!payload || typeof payload !== 'object') {
       hideDetails();
       return;
@@ -240,46 +207,49 @@
       return sectionTitle;
     };
 
-    const statusLabel = isNonEmptyString(payload.status)
-      ? payload.status.replace(/_/g, ' ')
-      : 'needs review';
-    addRow('Extraction Status', statusLabel, { isMissing: payload.status === 'failed' });
+    if (typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0) {
+      const seconds = (elapsedMs / 1000).toFixed(1);
+      addRow('Processing Time', `${seconds} s`);
+    }
 
     const patientName = isNonEmptyString(payload.patient_name)
       ? payload.patient_name.trim()
       : 'Missing';
     addRow('Patient Name', patientName, { isMissing: !isNonEmptyString(payload.patient_name) });
 
-    const dateOfBirth = isNonEmptyString(payload.date_of_birth)
-      ? payload.date_of_birth.trim()
+    const rawDateOfBirth = isNonEmptyString(payload.patient_date_of_birth)
+      ? payload.patient_date_of_birth
+      : payload.date_of_birth;
+    const dateOfBirth = isNonEmptyString(rawDateOfBirth)
+      ? rawDateOfBirth.trim()
       : 'Missing';
-    addRow('Date of Birth', dateOfBirth, { isMissing: !isNonEmptyString(payload.date_of_birth) });
+    addRow('Date of Birth', dateOfBirth, { isMissing: !isNonEmptyString(rawDateOfBirth) });
 
-    const labDates = payload.lab_dates && typeof payload.lab_dates === 'object' ? payload.lab_dates : {};
-    const primaryTestDate = isNonEmptyString(labDates.primary_test_date)
-      ? labDates.primary_test_date.trim()
+    const rawGender = isNonEmptyString(payload.patient_gender)
+      ? payload.patient_gender
+      : payload.gender;
+    const gender = isNonEmptyString(rawGender)
+      ? rawGender.trim()
       : 'Missing';
-    const primarySource = isNonEmptyString(labDates.primary_test_date_source)
-      ? labDates.primary_test_date_source.trim()
-      : 'unknown';
-    addRow('Primary Test Date', primaryTestDate, {
-      isMissing: !isNonEmptyString(labDates.primary_test_date),
-    });
-    addRow('Primary Date Source', primarySource, {
-      isMissing: !isNonEmptyString(labDates.primary_test_date_source),
-      isSubRow: true,
-    });
+    addRow('Gender', gender, { isMissing: !isNonEmptyString(rawGender) });
 
-    const secondaryDatesLabel = formatSecondaryDates(labDates.secondary_dates);
-    if (secondaryDatesLabel) {
-      addRow('Additional Dates', secondaryDatesLabel, { isSubRow: true });
+    let testDate = isNonEmptyString(payload.test_date) ? payload.test_date.trim() : '';
+    if (!testDate && payload.lab_dates && typeof payload.lab_dates === 'object') {
+      if (isNonEmptyString(payload.lab_dates.primary_test_date)) {
+        testDate = payload.lab_dates.primary_test_date.trim();
+      } else if (Array.isArray(payload.lab_dates.secondary_dates)) {
+        const fallback = payload.lab_dates.secondary_dates
+          .map((entry) => (entry && isNonEmptyString(entry.value) ? entry.value.trim() : ''))
+          .find((value) => Boolean(value));
+        if (fallback) {
+          testDate = fallback;
+        }
+      }
     }
 
-    const summary = payload.summary && typeof payload.summary === 'object' ? payload.summary : {};
-    const totalParameters = typeof summary.parameters_total === 'number' ? summary.parameters_total : 0;
-    const flaggedParameters = typeof summary.parameters_flagged === 'number' ? summary.parameters_flagged : 0;
-    addRow('Parameters Detected', totalParameters.toString(), { isMissing: totalParameters === 0 });
-    addRow('Parameters Flagged', flaggedParameters.toString(), { isSubRow: true });
+    addRow('Test Date', testDate || 'Missing', {
+      isMissing: !testDate,
+    });
 
     const parameters = Array.isArray(payload.parameters) ? payload.parameters : [];
     const missingData = Array.isArray(payload.missing_data) ? payload.missing_data : [];
@@ -324,14 +294,9 @@
       thead.innerHTML = `
         <tr>
           <th scope="col">Parameter</th>
-          <th scope="col">Result</th>
+          <th scope="col">Value</th>
+          <th scope="col">Unit</th>
           <th scope="col">Reference Interval</th>
-          <th scope="col">Out of Range</th>
-          <th scope="col">Lab Flag</th>
-          <th scope="col">Specimen</th>
-          <th scope="col">Page</th>
-          <th scope="col">Notes</th>
-          <th scope="col">Missing Fields</th>
         </tr>
       `;
 
@@ -340,14 +305,6 @@
       parameters.forEach((parameter, index) => {
         const entry = parameter && typeof parameter === 'object' ? parameter : {};
         const row = document.createElement('tr');
-
-        if (['above', 'below', 'flagged_by_lab'].includes(entry.out_of_range)) {
-          row.classList.add('parameters-table__row--flagged');
-        }
-
-        const name = isNonEmptyString(entry.parameter_name)
-          ? entry.parameter_name.trim()
-          : `Parameter ${index + 1}`;
 
         const buildCell = (text, { isMissing = false } = {}) => {
           const cell = document.createElement('td');
@@ -358,69 +315,15 @@
           return cell;
         };
 
-        row.appendChild(buildCell(name));
-
-        const numericValue = formatNumber(entry.value);
-        const textualValue = isNonEmptyString(entry.value_text) ? entry.value_text.trim() : '';
-        const unit = isNonEmptyString(entry.unit) ? entry.unit.trim() : '';
-
-        const resultParts = [];
-        if (numericValue) {
-          resultParts.push(unit ? `${numericValue} ${unit}` : numericValue);
-        } else if (unit) {
-          resultParts.push(unit);
-        }
-        if (textualValue) {
-          resultParts.push(textualValue);
-        }
-
-        const resultCell = document.createElement('td');
-        if (resultParts.length) {
-          resultParts.forEach((part, partIndex) => {
-            if (partIndex > 0) {
-              resultCell.append(document.createElement('br'));
-            }
-            resultCell.append(part);
-          });
-        } else {
-          resultCell.textContent = '--';
-          resultCell.dataset.missing = 'true';
-        }
-        row.appendChild(resultCell);
-
-        const referenceDisplay = formatReferenceInterval(entry.reference_interval);
-        row.appendChild(buildCell(referenceDisplay || 'Missing', { isMissing: !referenceDisplay }));
-
-        row.appendChild(buildCell(formatOutOfRange(entry.out_of_range)));
-
-        row.appendChild(buildCell(isNonEmptyString(entry.lab_flag) ? entry.lab_flag.trim() : '--', {
-          isMissing: !isNonEmptyString(entry.lab_flag),
-        }));
-
-        row.appendChild(buildCell(isNonEmptyString(entry.specimen) ? entry.specimen.trim() : '--', {
-          isMissing: !isNonEmptyString(entry.specimen),
-        }));
-
-        const pageCell = document.createElement('td');
-        if (typeof entry.page === 'number' && Number.isInteger(entry.page)) {
-          pageCell.textContent = entry.page.toString();
-        } else {
-          pageCell.textContent = '--';
-          pageCell.dataset.missing = 'true';
-        }
-        row.appendChild(pageCell);
-
-        row.appendChild(buildCell(isNonEmptyString(entry.notes) ? entry.notes.trim() : '--', {
-          isMissing: !isNonEmptyString(entry.notes),
-        }));
-
         const missingKey = buildMissingKey(entry.parameter_name);
         const missingForParameter = missingLookup.get(missingKey);
-        let missingFieldsDisplay = '';
+        let missingFieldsForRow = [];
 
         if (missingForParameter && missingForParameter.length) {
           const fieldsForRow = missingForParameter.shift();
-          missingFieldsDisplay = fieldsForRow.join(', ');
+          if (Array.isArray(fieldsForRow)) {
+            missingFieldsForRow = fieldsForRow;
+          }
           if (!missingForParameter.length) {
             missingLookup.delete(missingKey);
           } else {
@@ -428,8 +331,75 @@
           }
         }
 
-        row.appendChild(buildCell(missingFieldsDisplay || '--', {
-          isMissing: Boolean(missingFieldsDisplay),
+        const normalizedMissingFields = missingFieldsForRow
+          .map((field) => (typeof field === 'string' ? field.trim().toLowerCase() : ''))
+          .filter(Boolean);
+        const isFieldMarkedMissing = (fieldName, synonyms = []) => {
+          if (!normalizedMissingFields.length) {
+            return false;
+          }
+
+          const candidates = [fieldName, ...synonyms]
+            .map((candidate) => candidate.toLowerCase())
+            .filter(Boolean);
+
+          return normalizedMissingFields.some((value) => (
+            candidates.some((candidate) => value === candidate || value.startsWith(`${candidate}.`))
+          ));
+        };
+
+        const hasParameterName = isNonEmptyString(entry.parameter_name);
+        const name = hasParameterName ? entry.parameter_name.trim() : `Parameter ${index + 1}`;
+        row.appendChild(buildCell(name, {
+          isMissing: !hasParameterName || isFieldMarkedMissing('parameter_name', ['parameter']),
+        }));
+
+        let resultDisplay = '';
+        if (typeof entry.result === 'number' && Number.isFinite(entry.result)) {
+          resultDisplay = entry.result.toString();
+        } else if (isNonEmptyString(entry.result)) {
+          resultDisplay = entry.result.trim();
+        } else {
+          const fallbackNumeric = formatNumber(entry.value);
+          const fallbackTextual = isNonEmptyString(entry.value_text) ? entry.value_text.trim() : '';
+          const parts = [];
+          if (fallbackNumeric) {
+            parts.push(fallbackNumeric);
+          }
+          if (fallbackTextual) {
+            parts.push(fallbackTextual);
+          }
+          if (parts.length) {
+            resultDisplay = parts.join(' ');
+          }
+        }
+
+        const resultCell = document.createElement('td');
+        if (resultDisplay) {
+          resultDisplay.split(/\r?\n/).forEach((line, lineIndex) => {
+            if (lineIndex > 0) {
+              resultCell.append(document.createElement('br'));
+            }
+            resultCell.append(line);
+          });
+        } else {
+          resultCell.textContent = '--';
+        }
+
+        if (!resultDisplay || isFieldMarkedMissing('result', ['value', 'value_text'])) {
+          resultCell.dataset.missing = 'true';
+        }
+
+        row.appendChild(resultCell);
+
+        const unitText = isNonEmptyString(entry.unit) ? entry.unit.trim() : '--';
+        row.appendChild(buildCell(unitText || '--', {
+          isMissing: !isNonEmptyString(entry.unit) || isFieldMarkedMissing('unit'),
+        }));
+
+        const referenceDisplay = formatReferenceInterval(entry.reference_interval);
+        row.appendChild(buildCell(referenceDisplay || 'Missing', {
+          isMissing: !referenceDisplay || isFieldMarkedMissing('reference_interval'),
         }));
 
         tbody.appendChild(row);
@@ -530,6 +500,8 @@
       return;
     }
 
+    const analysisStartedAt = performance.now();
+
     const formData = new FormData();
     formData.append('analysisFile', file, file.name || 'upload');
 
@@ -558,24 +530,21 @@
         return;
       }
 
-      renderDetails(payload || {});
+      const elapsedMs = performance.now() - analysisStartedAt;
+      renderDetails(payload || {}, elapsedMs);
       renderProgress(payload.progress || []);
 
-      const summary = payload && typeof payload === 'object' ? payload.summary : {};
-      const status = typeof payload.status === 'string' ? payload.status : 'needs_review';
-      const total = typeof summary?.parameters_total === 'number' ? summary.parameters_total : 0;
-      const flagged = typeof summary?.parameters_flagged === 'number' ? summary.parameters_flagged : 0;
+      const parametersForMessage = Array.isArray(payload.parameters) ? payload.parameters : [];
+      const total = parametersForMessage.length;
 
-      let statusMessage = `Extracted ${total} parameter${total === 1 ? '' : 's'}`;
-      if (flagged > 0) {
-        statusMessage += `; ${flagged} flagged out of range`;
-      }
-      statusMessage += '.';
+      let statusMessage;
+      let statusState;
 
-      let statusState = 'success';
-      if (status === 'failed') {
-        statusState = 'error';
-      } else if (status === 'needs_review') {
+      if (total > 0) {
+        statusMessage = `Extracted ${total} parameter${total === 1 ? '' : 's'}.`;
+        statusState = 'success';
+      } else {
+        statusMessage = 'No parameters detected.';
         statusState = 'info';
       }
 

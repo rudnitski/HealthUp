@@ -42,44 +42,32 @@ const userPrompt = [
   'You will receive either images or PDF pages of a laboratory report.',
   'Return JSON with the following top-level fields:',
   '- patient_name (string or null)',
-  '- date_of_birth (string or null)',
-  '- status (string; choose one of: success, needs_review, failed)',
-  '- lab_dates (object with: primary_test_date, primary_test_date_source, secondary_dates)',
-  '- summary (object with: parameters_total, parameters_flagged)',
+  '- patient_date_of_birth (string or null)',
+  '- patient_gender (string or null)',
+  '- test_date (string or null; capture the best available date describing when the test was performed, collected, or validated)',
   '- parameters (array of laboratory parameters)',
   '- missing_data (array describing missing fields per parameter)',
-  '',
-  'lab_dates:',
-  '- primary_test_date: string or null. Prefer the specimen collection or draw date.',
-  '- primary_test_date_source: string or null describing the field name used (e.g., "collection_date", "results_ready").',
-  '- secondary_dates: array of objects with fields type, value, source_text (strings or null) capturing other lab-provided dates such as received, processed, released.',
-  '',
   'Each entry in parameters must include:',
   '- parameter_name (string or null; copy the label as written in the report)',
-  '- canonical_code (string or null; use LOINC or lab code when present)',
-  '- value (number or null for numeric measurements)',
-  '- value_text (string or null for qualitative results)',
-  '- unit (string or null)',
+  '- result (string or null; capture the numeric or qualitative value without repeating the unit when the unit is known)',
+  '- unit (string or null; preserve symbols such as mg/dL)',
   '- reference_interval (object with lower, upper, text; numbers or null for bounds, string or null for text)',
-  '- lab_flag (string or null; include flags like H, L, High, Low, Critical)',
-  '- out_of_range (string or null; allowed values: above, below, within, flagged_by_lab, unknown)',
-  '- specimen (string or null)',
-  '- page (integer or null; page numbers start at 1)',
-  '- notes (string or null; add interpretive comments if present)',
   '',
   'missing_data is an array. Each item has:',
   '- parameter_name (string or null)',
-  '- missing_fields (array of strings indicating absent details such as "unit", "reference_interval", "value")',
+  '- missing_fields (array of strings indicating absent details such as "unit", "reference_interval", "result")',
   '',
   'Rules:',
   '- Only output JSON.',
   '- Include every parameter even if fields are missing.',
   '- Preserve the source language and casing for text.',
   '- Use ISO-8601 (YYYY-MM-DD) when a date is unambiguous; otherwise copy the exact text.',
-  '- Set numeric fields to null when a number is not provided.',
-  '- When a result is qualitative, set value to null and store the phrase in value_text.',
-  '- If you cannot determine out_of_range, use "unknown".',
+  '- For test_date, prefer specimen collection or draw dates; if unavailable, fall back to order, validation, or print dates in that order.',
+  '- Copy numeric measurements exactly as written while omitting the unit if it is captured separately; if the report omits a value, set result to null.',
+  '- When the report provides both numeric and textual context (e.g., "3.1 High"), include the combined text in result without repeating the unit.',
   '- When multiple reference intervals exist, choose the one matching the reported result when possible; otherwise copy the interval text.',
+  '- When the source shows an explicit numeric interval (including zero ranges like "0 - 0"), set lower and upper to those exact numbers and copy the interval into text.',
+  '- Only use inequality-style text (e.g., "< 2.1") when no explicit numeric bounds are provided in the source.',
 ].join('\n');
 
 const structuredOutputFormat = {
@@ -91,42 +79,9 @@ const structuredOutputFormat = {
     additionalProperties: false,
     properties: {
       patient_name: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-      date_of_birth: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-      status: {
-        type: 'string',
-        enum: ['success', 'needs_review', 'failed'],
-      },
-      lab_dates: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          primary_test_date: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-          primary_test_date_source: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-          secondary_dates: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                type: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-                value: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-                source_text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-              },
-              required: ['type', 'value', 'source_text'],
-            },
-          },
-        },
-        required: ['primary_test_date', 'primary_test_date_source', 'secondary_dates'],
-      },
-      summary: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          parameters_total: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
-          parameters_flagged: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
-        },
-        required: ['parameters_total', 'parameters_flagged'],
-      },
+      patient_date_of_birth: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      patient_gender: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      test_date: { anyOf: [{ type: 'string' }, { type: 'null' }] },
       parameters: {
         type: 'array',
         items: {
@@ -134,9 +89,7 @@ const structuredOutputFormat = {
           additionalProperties: false,
           properties: {
             parameter_name: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-            canonical_code: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-            value: { anyOf: [{ type: 'number' }, { type: 'null' }] },
-            value_text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            result: { anyOf: [{ type: 'string' }, { type: 'null' }] },
             unit: { anyOf: [{ type: 'string' }, { type: 'null' }] },
             reference_interval: {
               type: 'object',
@@ -148,32 +101,12 @@ const structuredOutputFormat = {
               },
               required: ['lower', 'upper', 'text'],
             },
-            lab_flag: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-            out_of_range: {
-              anyOf: [
-                { type: 'null' },
-                {
-                  type: 'string',
-                  enum: ['above', 'below', 'within', 'flagged_by_lab', 'unknown'],
-                },
-              ],
-            },
-            specimen: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-            page: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
-            notes: { anyOf: [{ type: 'string' }, { type: 'null' }] },
           },
           required: [
             'parameter_name',
-            'canonical_code',
-            'value',
-            'value_text',
+            'result',
             'unit',
             'reference_interval',
-            'lab_flag',
-            'out_of_range',
-            'specimen',
-            'page',
-            'notes',
           ],
         },
       },
@@ -193,7 +126,7 @@ const structuredOutputFormat = {
         },
       },
     },
-    required: ['patient_name', 'date_of_birth', 'status', 'lab_dates', 'summary', 'parameters', 'missing_data'],
+    required: ['patient_name', 'patient_date_of_birth', 'patient_gender', 'test_date', 'parameters', 'missing_data'],
   },
 };
 
@@ -244,63 +177,25 @@ const sanitizeTextField = (value, { maxLength = 160 } = {}) => {
 
 const sanitizeDateField = (value) => sanitizeTextField(value, { maxLength: 48 });
 
-const sanitizeShortCode = (value, { maxLength = 40 } = {}) => {
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return trimmed.slice(0, maxLength);
-};
-
 const sanitizeUnit = (value) => {
   if (typeof value !== 'string') {
     return null;
   }
 
-  const trimmed = value.trim();
-  if (!trimmed) {
+  const normalized = value.normalize('NFKC').trim();
+  if (!normalized) {
     return null;
   }
 
-  const cleaned = trimmed.replace(/[^a-zA-Z0-9/%().,\-\s]/g, '');
-  if (!cleaned.trim()) {
+  const withoutControls = normalized.replace(/[\p{C}]/gu, '');
+  const cleaned = withoutControls.replace(/[^\p{L}\p{N}\s%/().,\-·+*^_]/gu, '');
+  const finalText = cleaned.trim();
+
+  if (!finalText) {
     return null;
   }
 
-  return cleaned.slice(0, 32);
-};
-
-const sanitizeLabFlag = (value) => {
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return trimmed.slice(0, 24);
-};
-
-const ALLOWED_OUT_OF_RANGE = new Set(['above', 'below', 'within', 'flagged_by_lab', 'unknown']);
-
-const sanitizeOutOfRange = (value) => {
-  if (typeof value !== 'string') {
-    return 'unknown';
-  }
-
-  const trimmed = value.trim().toLowerCase();
-  if (ALLOWED_OUT_OF_RANGE.has(trimmed)) {
-    return trimmed;
-  }
-
-  return 'unknown';
+  return finalText.slice(0, 32);
 };
 
 const toFiniteNumber = (value) => {
@@ -311,21 +206,6 @@ const toFiniteNumber = (value) => {
   if (typeof value === 'string') {
     const numeric = Number(value);
     if (Number.isFinite(numeric)) {
-      return numeric;
-    }
-  }
-
-  return null;
-};
-
-const toInteger = (value) => {
-  if (typeof value === 'number' && Number.isInteger(value)) {
-    return value;
-  }
-
-  if (typeof value === 'string') {
-    const numeric = Number.parseInt(value, 10);
-    if (Number.isInteger(numeric)) {
       return numeric;
     }
   }
@@ -349,78 +229,49 @@ const sanitizeReferenceInterval = (value) => {
   };
 };
 
-const sanitizeSecondaryDates = (items) => {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  return items
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') {
-        return null;
-      }
-
-      const type = sanitizeShortCode(entry.type, { maxLength: 48 });
-      const value = sanitizeDateField(entry.value);
-      const sourceText = sanitizeTextField(entry.source_text, { maxLength: 120 });
-
-      if (!type && !value && !sourceText) {
-        return null;
-      }
-
-      return {
-        type: type || null,
-        value: value || null,
-        source_text: sourceText || null,
-      };
-    })
-    .filter(Boolean);
-};
-
-const sanitizeLabDates = (value) => {
-  const labDates = value && typeof value === 'object' ? value : {};
-
-  const primary = sanitizeDateField(labDates.primary_test_date);
-  const source = sanitizeShortCode(labDates.primary_test_date_source, { maxLength: 48 });
-  const secondary = sanitizeSecondaryDates(labDates.secondary_dates);
-
-  return {
-    primary_test_date: primary || null,
-    primary_test_date_source: source || null,
-    secondary_dates: secondary,
-  };
-};
-
 const sanitizeParameterEntry = (entry) => {
   if (!entry || typeof entry !== 'object') {
     return null;
   }
 
   const parameterName = sanitizeTextField(entry.parameter_name, { maxLength: 120 });
-  const canonicalCode = sanitizeShortCode(entry.canonical_code, { maxLength: 64 });
-  const value = toFiniteNumber(entry.value);
-  const valueText = sanitizeTextField(entry.value_text, { maxLength: 120 });
   const unit = sanitizeUnit(entry.unit);
   const referenceInterval = sanitizeReferenceInterval(entry.reference_interval);
-  const labFlag = sanitizeLabFlag(entry.lab_flag);
-  const outOfRangeRaw = entry.out_of_range === null ? null : sanitizeOutOfRange(entry.out_of_range);
-  const specimen = sanitizeTextField(entry.specimen, { maxLength: 120 });
-  const page = toInteger(entry.page);
-  const notes = sanitizeTextField(entry.notes, { maxLength: 200 });
+  const numericValue = toFiniteNumber(entry.value);
+  const valueText = sanitizeTextField(entry.value_text, { maxLength: 120 });
+
+  let result = null;
+
+  if (typeof entry.result === 'number' && Number.isFinite(entry.result)) {
+    result = entry.result.toString();
+  } else {
+    const cleanedResult = sanitizeTextField(entry.result, { maxLength: 160 });
+    if (cleanedResult) {
+      result = cleanedResult;
+    }
+  }
+
+  if (!result) {
+    const resultParts = [];
+    if (numericValue !== null) {
+      resultParts.push(numericValue.toString());
+    }
+    if (valueText) {
+      resultParts.push(valueText);
+    }
+
+    if (resultParts.length) {
+      result = resultParts.join(' ').trim() || null;
+    }
+  }
 
   const hasContent =
     parameterName !== null
-    || canonicalCode !== null
-    || value !== null
-    || valueText !== null
+    || result !== null
     || unit !== null
     || referenceInterval.lower !== null
     || referenceInterval.upper !== null
-    || referenceInterval.text !== null
-    || labFlag !== null
-    || specimen !== null
-    || page !== null
-    || notes !== null;
+    || referenceInterval.text !== null;
 
   if (!hasContent) {
     return null;
@@ -428,16 +279,9 @@ const sanitizeParameterEntry = (entry) => {
 
   return {
     parameter_name: parameterName,
-    canonical_code: canonicalCode,
-    value,
-    value_text: valueText,
+    result,
     unit,
     reference_interval: referenceInterval,
-    lab_flag: labFlag,
-    out_of_range: outOfRangeRaw,
-    specimen,
-    page,
-    notes,
   };
 };
 
@@ -449,22 +293,6 @@ const sanitizeParameters = (items) => {
   return items
     .map(sanitizeParameterEntry)
     .filter(Boolean);
-};
-
-const sanitizeSummary = (value, parameters) => {
-  const total = Array.isArray(parameters) ? parameters.length : 0;
-  const flagged = Array.isArray(parameters)
-    ? parameters.filter((item) => ['above', 'below', 'flagged_by_lab'].includes(item.out_of_range)).length
-    : 0;
-
-  const summary = value && typeof value === 'object' ? value : {};
-  const providedTotal = toInteger(summary.parameters_total);
-  const providedFlagged = toInteger(summary.parameters_flagged);
-
-  return {
-    parameters_total: providedTotal ?? total,
-    parameters_flagged: providedFlagged ?? flagged,
-  };
 };
 
 const sanitizeMissingData = (items) => {
@@ -535,17 +363,9 @@ const parseVisionResponse = (rawOutput, fallbackText = '') => {
 
   const baseResult = {
     patient_name: null,
-    date_of_birth: null,
-    status: 'needs_review',
-    lab_dates: {
-      primary_test_date: null,
-      primary_test_date_source: null,
-      secondary_dates: [],
-    },
-    summary: {
-      parameters_total: 0,
-      parameters_flagged: 0,
-    },
+    patient_date_of_birth: null,
+    patient_gender: null,
+    test_date: null,
     parameters: [],
     missing_data: [],
     raw_model_output: fallbackString,
@@ -557,14 +377,27 @@ const parseVisionResponse = (rawOutput, fallbackText = '') => {
 
   try {
     const parameters = sanitizeParameters(parsed.parameters);
-    const summary = sanitizeSummary(parsed.summary, parameters);
+
+    const rawDob = parsed.patient_date_of_birth ?? parsed.date_of_birth;
+    const rawGender = parsed.patient_gender ?? parsed.gender;
+
+    let rawTestDate = parsed.test_date;
+    if (!rawTestDate && parsed.lab_dates && typeof parsed.lab_dates === 'object') {
+      const primaryDate = parsed.lab_dates.primary_test_date;
+      const secondaryDate = Array.isArray(parsed.lab_dates.secondary_dates)
+        ? parsed.lab_dates.secondary_dates
+            .map((entry) => (entry && typeof entry === 'object' ? entry.value : null))
+            .find((value) => typeof value === 'string' && value.trim())
+        : null;
+
+      rawTestDate = primaryDate || secondaryDate || null;
+    }
 
     return {
       patient_name: sanitizeTextField(parsed.patient_name, { maxLength: 160 }),
-      date_of_birth: sanitizeDateField(parsed.date_of_birth),
-      status: ['success', 'needs_review', 'failed'].includes(parsed.status) ? parsed.status : 'needs_review',
-      lab_dates: sanitizeLabDates(parsed.lab_dates),
-      summary,
+      patient_date_of_birth: sanitizeDateField(rawDob),
+      patient_gender: sanitizeTextField(rawGender, { maxLength: 24 }),
+      test_date: sanitizeDateField(rawTestDate),
       parameters,
       missing_data: sanitizeMissingData(parsed.missing_data),
       raw_model_output: fallbackString,
