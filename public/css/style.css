@@ -1,8 +1,25 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: "Helvetica Neue", Arial, sans-serif;
   line-height: 1.5;
   font-size: 16px;
+  --color-bg-start: #f5f5f7;
+  --color-bg-end: #ffffff;
+  --color-surface: #ffffff;
+  --color-text: #1c1c1e;
+  --color-muted: #636366;
+  --color-border: #e5e5ea;
+  --color-accent: #34c759;
+  --color-accent-strong: #2cc24f;
+  --color-accent-soft: rgba(52, 199, 89, 0.16);
+  --color-highlight: #ff9bbf;
+  --color-highlight-strong: #ff5f8d;
+  --color-highlight-soft: rgba(255, 155, 191, 0.26);
+  --color-danger: #ff3b30;
+  --color-info: #0a84ff;
+  --color-info-soft: rgba(10, 132, 255, 0.16);
+  --color-danger-soft: rgba(255, 59, 48, 0.18);
+  --color-header: #f2f2f7;
 }
 
 * {
@@ -19,17 +36,17 @@ body {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  background: linear-gradient(180deg, #f7fafc, #edf2f7);
-  color: #1a202c;
+  background: linear-gradient(180deg, var(--color-bg-start), var(--color-bg-end));
+  color: var(--color-text);
   padding: 3rem 1.5rem;
 }
 
 .container {
   width: min(95vw, 1100px);
-  background-color: rgba(255, 255, 255, 0.92);
+  background-color: var(--color-surface);
   padding: 2.75rem 3rem;
   border-radius: 16px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 18px 36px rgba(28, 28, 30, 0.12);
   display: grid;
   gap: 1.75rem;
 }
@@ -55,32 +72,47 @@ h1 {
   height: 10px;
   border-radius: 999px;
   appearance: none;
-  background-color: rgba(128, 90, 213, 0.15);
+  background-color: var(--color-header);
+  border: 1px solid var(--color-border);
   overflow: hidden;
 }
 
 .progress-bar::-webkit-progress-bar {
-  background-color: rgba(128, 90, 213, 0.15);
+  background-color: transparent;
 }
 
 .progress-bar::-webkit-progress-value {
-  background: linear-gradient(90deg, #7c3aed, #4c51bf);
+  background: linear-gradient(
+    90deg,
+    var(--color-highlight-strong) 0%,
+    var(--color-highlight) 32%,
+    var(--color-accent-strong) 50%,
+    var(--color-highlight) 68%,
+    var(--color-highlight-strong) 100%
+  );
   transition: width 0.3s ease;
 }
 
 .progress-bar::-moz-progress-bar {
-  background: linear-gradient(90deg, #7c3aed, #4c51bf);
+  background: linear-gradient(
+    90deg,
+    var(--color-highlight-strong) 0%,
+    var(--color-highlight) 32%,
+    var(--color-accent-strong) 50%,
+    var(--color-highlight) 68%,
+    var(--color-highlight-strong) 100%
+  );
   transition: width 0.3s ease;
 }
 
 .progress-bar[data-status='failed']::-webkit-progress-value,
 .progress-bar[data-status='failed']::-moz-progress-bar {
-  background: linear-gradient(90deg, #f56565, #c53030);
+  background: linear-gradient(90deg, var(--color-danger), #ff6b6b);
 }
 
 .progress-bar[data-status='completed']::-webkit-progress-value,
 .progress-bar[data-status='completed']::-moz-progress-bar {
-  background: linear-gradient(90deg, #38a169, #2f855a);
+  background: linear-gradient(90deg, var(--color-accent-strong), var(--color-accent));
 }
 
 .progress-steps {
@@ -102,23 +134,27 @@ h1 {
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  background-color: rgba(128, 90, 213, 0.12);
-  color: #4c51bf;
+  background-color: var(--color-header);
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
 }
 
 .progress-step[data-status='completed'] .progress-step__badge {
-  background-color: rgba(56, 161, 105, 0.18);
-  color: #2f855a;
+  background-color: var(--color-accent-soft);
+  border-color: rgba(52, 199, 89, 0.35);
+  color: var(--color-accent-strong);
 }
 
 .progress-step[data-status='in_progress'] .progress-step__badge {
-  background-color: rgba(66, 153, 225, 0.18);
-  color: #2b6cb0;
+  background-color: var(--color-info-soft);
+  border-color: rgba(10, 132, 255, 0.25);
+  color: var(--color-info);
 }
 
 .progress-step[data-status='failed'] .progress-step__badge {
-  background-color: rgba(229, 62, 62, 0.15);
-  color: #c53030;
+  background-color: var(--color-danger-soft);
+  border-color: rgba(255, 59, 48, 0.25);
+  color: var(--color-danger);
 }
 
 .progress-step__content {
@@ -128,12 +164,16 @@ h1 {
 
 .progress-step__label {
   font-weight: 600;
-  color: #2d3748;
+  color: var(--color-text);
 }
 
 .progress-step__message {
   font-size: 0.85rem;
-  color: #c53030;
+  color: var(--color-muted);
+}
+
+.progress-step[data-status='failed'] .progress-step__message {
+  color: var(--color-danger);
 }
 
 .upload-form {
@@ -148,7 +188,7 @@ h1 {
   border: none;
   font-size: 1rem;
   font-weight: 600;
-  background: linear-gradient(135deg, #5a67d8, #805ad5);
+  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent));
   color: #fff;
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
@@ -157,7 +197,7 @@ h1 {
 .analyze-button:hover:not(:disabled),
 .analyze-button:focus-visible:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(90, 103, 216, 0.35);
+  box-shadow: 0 10px 22px rgba(52, 199, 89, 0.28);
 }
 
 .analyze-button:disabled {
@@ -172,20 +212,20 @@ label {
 .file-input {
   padding: 0.75rem;
   border-radius: 8px;
-  border: 1px solid #cbd5f5;
+  border: 1px solid var(--color-border);
   font-size: 1rem;
-  background-color: #fff;
+  background-color: var(--color-surface);
   cursor: pointer;
 }
 
 .file-input:focus {
-  outline: 3px solid rgba(99, 102, 241, 0.45);
+  outline: 3px solid rgba(52, 199, 89, 0.3);
   outline-offset: 2px;
 }
 
 .help-text {
   font-size: 0.9rem;
-  color: #4a5568;
+  color: var(--color-muted);
   margin: 0;
 }
 
@@ -197,8 +237,8 @@ label {
 .result-details {
   padding: 1.25rem 1.5rem;
   border-radius: 12px;
-  background-color: rgba(128, 90, 213, 0.08);
-  border: 1px solid rgba(128, 90, 213, 0.25);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
   display: grid;
   gap: 1rem;
   font-size: 0.97rem;
@@ -212,28 +252,28 @@ label {
 
 .result-details__label {
   font-weight: 600;
-  color: #4a5568;
+  color: var(--color-muted);
 }
 
 .result-details__value {
   text-align: right;
   font-weight: 500;
-  color: #1a202c;
+  color: var(--color-text);
 }
 
 .result-details__value--missing {
-  color: #c53030;
+  color: var(--color-danger);
 }
 
 .result-details__section-title {
   margin-top: 1rem;
   font-weight: 700;
-  color: #4a5568;
+  color: var(--color-text);
 }
 
 .result-details__divider {
   height: 1px;
-  background-color: rgba(128, 90, 213, 0.35);
+  background-color: var(--color-border);
   margin: 0.35rem 0;
 }
 
@@ -257,45 +297,49 @@ label {
   overflow: hidden;
 }
 
+.parameters-table tr:nth-child(even):not(.parameters-table__row--flagged) {
+  background-color: #fafafc;
+}
+
 .parameters-table th,
 .parameters-table td {
   padding: 0.75rem 0.95rem;
   text-align: left;
-  border-bottom: 1px solid rgba(128, 90, 213, 0.18);
+  border-bottom: 1px solid var(--color-border);
   font-size: 0.95rem;
   vertical-align: top;
 }
 
 .parameters-table th {
   font-weight: 700;
-  color: #312e81;
-  background-color: rgba(128, 90, 213, 0.15);
+  color: var(--color-muted);
+  background-color: var(--color-header);
   position: sticky;
   top: 0;
   backdrop-filter: blur(6px);
 }
 
 .parameters-table td[data-missing='true'] {
-  color: #c53030;
+  color: var(--color-danger);
   font-weight: 600;
 }
 
 .parameters-table__row--flagged {
-  background-color: rgba(229, 62, 62, 0.12);
+  background-color: var(--color-highlight-soft);
 }
 
 .parameters-table__row--flagged td:first-child {
   font-weight: 700;
-  color: #c53030;
+  color: var(--color-danger);
 }
 
 .raw-output {
   margin-top: 0.5rem;
   padding: 0.75rem;
   border-radius: 8px;
-  background-color: rgba(79, 209, 197, 0.12);
-  border: 1px solid rgba(79, 209, 197, 0.35);
-  color: #234e52;
+  background-color: var(--color-header);
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.85rem;
   white-space: pre-wrap;
@@ -303,133 +347,13 @@ label {
 }
 
 .message[data-state="error"] {
-  color: #c53030;
+  color: var(--color-danger);
 }
 
 .message[data-state="success"] {
-  color: #047857;
+  color: var(--color-accent-strong);
 }
 
 .message[data-state="loading"] {
-  color: #2b6cb0;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background: linear-gradient(180deg, #1f2933, #111827);
-    color: #e2e8f0;
-    padding: 3rem 1.5rem;
-  }
-
-  .container {
-    background-color: rgba(30, 41, 59, 0.85);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
-  }
-
-  .file-input {
-    background-color: #1f2933;
-    border-color: #4a5568;
-    color: #e2e8f0;
-  }
-
-  .help-text {
-    color: #cbd5f5;
-  }
-
-  .message[data-state="error"] {
-    color: #feb2b2;
-  }
-
-  .message[data-state="success"] {
-    color: #9ae6b4;
-  }
-
-  .message[data-state="loading"] {
-    color: #90cdf4;
-  }
-
-  .raw-output {
-    background-color: rgba(45, 212, 191, 0.1);
-    border-color: rgba(45, 212, 191, 0.6);
-    color: #bee3f8;
-  }
-
-  .result-details {
-    background-color: rgba(129, 140, 248, 0.12);
-    border-color: rgba(129, 140, 248, 0.45);
-  }
-  .parameters-table {
-    background-color: rgba(30, 41, 59, 0.85);
-  }
-
-  .progress-step__badge {
-    background-color: rgba(129, 140, 248, 0.2);
-    color: #cbd5f5;
-  }
-
-  .progress-step[data-status='completed'] .progress-step__badge {
-    background-color: rgba(56, 161, 105, 0.28);
-    color: #9ae6b4;
-  }
-
-  .progress-step[data-status='in_progress'] .progress-step__badge {
-    background-color: rgba(66, 153, 225, 0.25);
-    color: #90cdf4;
-  }
-
-  .progress-step[data-status='failed'] .progress-step__badge {
-    background-color: rgba(229, 62, 62, 0.25);
-    color: #feb2b2;
-  }
-
-  .progress-step__label {
-    color: #e2e8f0;
-  }
-
-  .progress-step__message {
-    color: #feb2b2;
-  }
-
-  .progress-bar {
-    background-color: rgba(129, 140, 248, 0.25);
-  }
-
-
-  .parameters-table th {
-    color: #cbd5f5;
-    background-color: rgba(129, 140, 248, 0.18);
-  }
-
-  .parameters-table td {
-    border-bottom-color: rgba(129, 140, 248, 0.25);
-  }
-
-  .parameters-table td[data-missing='true'] {
-    color: #feb2b2;
-  }
-
-  .parameters-table__row--flagged {
-    background-color: rgba(229, 62, 62, 0.18);
-  }
-
-
-  .result-details__label {
-    color: #cbd5f5;
-  }
-
-  .result-details__value {
-    color: #e2e8f0;
-  }
-
-  .result-details__value--missing {
-    color: #feb2b2;
-  }
-
-  .result-details__section-title {
-    color: #cbd5f5;
-  }
-
-  .result-details__divider {
-    background-color: rgba(129, 140, 248, 0.35);
-  }
+  color: var(--color-info);
 }
