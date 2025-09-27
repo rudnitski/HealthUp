@@ -22,7 +22,7 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/gif',
   'image/heic',
 ]);
-const DEFAULT_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
+const DEFAULT_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5-mini';
 
 const PIPELINE_STEPS = [
   { id: 'uploaded', label: 'Upload received' },
