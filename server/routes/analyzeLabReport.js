@@ -42,6 +42,7 @@ const userPrompt = [
   'You will receive either images or PDF pages of a laboratory report.',
   'Return JSON with the following top-level fields:',
   '- patient_name (string or null)',
+  '- patient_age (string or null)',
   '- patient_date_of_birth (string or null)',
   '- patient_gender (string or null)',
   '- test_date (string or null; capture the best available date describing when the test was performed, collected, or validated)',
@@ -51,7 +52,7 @@ const userPrompt = [
   '- parameter_name (string or null; copy the label as written in the report)',
   '- result (string or null; capture the numeric or qualitative value without repeating the unit when the unit is known)',
   '- unit (string or null; preserve symbols such as mg/dL)',
-  '- reference_interval (object with lower, upper, text; numbers or null for bounds, string or null for text)',
+  '- reference_interval (object with lower, upper, lower_operator, upper_operator, text, full_text; numbers or null for bounds, string or null for text fields)',
   '',
   'missing_data is an array. Each item has:',
   '- parameter_name (string or null)',
@@ -68,6 +69,9 @@ const userPrompt = [
   '- When multiple reference intervals exist, choose the one matching the reported result when possible; otherwise copy the interval text.',
   '- When the source shows an explicit numeric interval (including zero ranges like "0 - 0"), set lower and upper to those exact numbers and copy the interval into text.',
   '- Only use inequality-style text (e.g., "< 2.1") when no explicit numeric bounds are provided in the source.',
+  '- When age or date of birth is absent, set that field to null without guessing; capture whichever value is provided, and include both when available.',
+  '- When reference intervals vary by patient attributes (e.g., age or sex), determine the applicable range for this patient using the extracted demographics. Prefer the bracket that exactly matches the demographics. If the patient falls outside all brackets, select the closest adult or widest available range and reflect that choice in text (e.g., "Closest range: women 17-60 лет"). Set lower and upper to that range, provide a concise label in text, and copy the complete source description into full_text. If the patient details are missing, leave lower, upper, and text null while still populating full_text.',
+  '- Normalize inequality phrases (e.g., "до 21", "не более 21", "< 17", "≥ 45") into numeric bounds. Use null for the missing side, populate the other side with the numeric value, and set text to the normalized inequality (such as "≤ 21" or "> 1"). Record the comparator exactly as stated in the source using the tokens ">", ">=", "<", "<=", or "=". Do not replace a strict comparison (" > " or " < ") with an inclusive one.',
 ].join('\n');
 
 const structuredOutputFormat = {
@@ -79,6 +83,7 @@ const structuredOutputFormat = {
     additionalProperties: false,
     properties: {
       patient_name: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      patient_age: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'null' }] },
       patient_date_of_birth: { anyOf: [{ type: 'string' }, { type: 'null' }] },
       patient_gender: { anyOf: [{ type: 'string' }, { type: 'null' }] },
       test_date: { anyOf: [{ type: 'string' }, { type: 'null' }] },
@@ -96,17 +101,24 @@ const structuredOutputFormat = {
               additionalProperties: false,
               properties: {
                 lower: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+                lower_operator: { anyOf: [{ type: 'string' }, { type: 'null' }] },
                 upper: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+                upper_operator: { anyOf: [{ type: 'string' }, { type: 'null' }] },
                 text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+                full_text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
               },
-              required: ['lower', 'upper', 'text'],
+              required: ['lower', 'lower_operator', 'upper', 'upper_operator', 'text', 'full_text'],
             },
+            is_value_out_of_range: { type: 'boolean' },
+            numeric_result: { anyOf: [{ type: 'number' }, { type: 'null' }] },
           },
           required: [
             'parameter_name',
             'result',
             'unit',
             'reference_interval',
+            'is_value_out_of_range',
+            'numeric_result',
           ],
         },
       },
@@ -126,7 +138,7 @@ const structuredOutputFormat = {
         },
       },
     },
-    required: ['patient_name', 'patient_date_of_birth', 'patient_gender', 'test_date', 'parameters', 'missing_data'],
+    required: ['patient_name', 'patient_age', 'patient_date_of_birth', 'patient_gender', 'test_date', 'parameters', 'missing_data'],
   },
 };
 
@@ -177,6 +189,14 @@ const sanitizeTextField = (value, { maxLength = 160 } = {}) => {
 
 const sanitizeDateField = (value) => sanitizeTextField(value, { maxLength: 48 });
 
+const sanitizeAgeField = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toString();
+  }
+
+  return sanitizeTextField(value, { maxLength: 32 });
+};
+
 const sanitizeUnit = (value) => {
   if (typeof value !== 'string') {
     return null;
@@ -198,6 +218,27 @@ const sanitizeUnit = (value) => {
   return finalText.slice(0, 32);
 };
 
+const sanitizeComparator = (value) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const compact = value.replace(/\s+/g, '').toLowerCase();
+  const mapping = {
+    '>': '>',
+    '>=': '>=',
+    '≥': '>=',
+    '=>': '>=',
+    '<': '<',
+    '<=': '<=',
+    '≤': '<=',
+    '=<': '<=',
+    '=': '=',
+  };
+
+  return mapping[compact] || null;
+};
+
 const toFiniteNumber = (value) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -215,17 +256,23 @@ const toFiniteNumber = (value) => {
 
 const sanitizeReferenceInterval = (value) => {
   if (!value || typeof value !== 'object') {
-    return { lower: null, upper: null, text: null };
+    return { lower: null, upper: null, text: null, full_text: null };
   }
 
   const lower = toFiniteNumber(value.lower);
   const upper = toFiniteNumber(value.upper);
-  const text = sanitizeTextField(value.text, { maxLength: 120 });
+  const lowerOperator = sanitizeComparator(value.lower_operator);
+  const upperOperator = sanitizeComparator(value.upper_operator);
+  const text = sanitizeTextField(value.text, { maxLength: 160 });
+  const fullText = sanitizeTextField(value.full_text, { maxLength: 280 });
 
   return {
     lower,
+    lower_operator: lowerOperator,
     upper,
+    upper_operator: upperOperator,
     text,
+    full_text: fullText,
   };
 };
 
@@ -241,13 +288,19 @@ const sanitizeParameterEntry = (entry) => {
   const valueText = sanitizeTextField(entry.value_text, { maxLength: 120 });
 
   let result = null;
+  let numericResult = null;
 
   if (typeof entry.result === 'number' && Number.isFinite(entry.result)) {
     result = entry.result.toString();
+    numericResult = entry.result;
   } else {
     const cleanedResult = sanitizeTextField(entry.result, { maxLength: 160 });
     if (cleanedResult) {
       result = cleanedResult;
+      const numericCandidate = Number(cleanedResult.replace(',', '.'));
+      if (Number.isFinite(numericCandidate)) {
+        numericResult = numericCandidate;
+      }
     }
   }
 
@@ -255,6 +308,7 @@ const sanitizeParameterEntry = (entry) => {
     const resultParts = [];
     if (numericValue !== null) {
       resultParts.push(numericValue.toString());
+      numericResult = numericValue;
     }
     if (valueText) {
       resultParts.push(valueText);
@@ -270,18 +324,55 @@ const sanitizeParameterEntry = (entry) => {
     || result !== null
     || unit !== null
     || referenceInterval.lower !== null
+    || referenceInterval.lower_operator !== null
     || referenceInterval.upper !== null
-    || referenceInterval.text !== null;
+    || referenceInterval.upper_operator !== null
+    || referenceInterval.text !== null
+    || referenceInterval.full_text !== null;
 
   if (!hasContent) {
     return null;
   }
+
+  const lowerOperator = referenceInterval.lower_operator;
+  const upperOperator = referenceInterval.upper_operator;
+  const lowerBound = referenceInterval.lower;
+  const upperBound = referenceInterval.upper;
+
+  const evaluateBound = (value, bound, operator, { fallback } = {}) => {
+    if (value === null || bound === null) {
+      return true;
+    }
+
+    const effectiveOperator = operator || (fallback === 'lower' ? '>=' : fallback === 'upper' ? '<=' : '=');
+
+    switch (effectiveOperator) {
+      case '>':
+        return value > bound;
+      case '>=':
+        return value >= bound;
+      case '<':
+        return value < bound;
+      case '<=':
+        return value <= bound;
+      case '=':
+        return value === bound;
+      default:
+        return true;
+    }
+  };
+
+  const isWithinLower = evaluateBound(numericResult, lowerBound, lowerOperator, { fallback: 'lower' });
+  const isWithinUpper = evaluateBound(numericResult, upperBound, upperOperator, { fallback: 'upper' });
+  const isWithinRange = numericResult === null ? true : (isWithinLower && isWithinUpper);
 
   return {
     parameter_name: parameterName,
     result,
     unit,
     reference_interval: referenceInterval,
+    is_value_out_of_range: !isWithinRange,
+    numeric_result: numericResult,
   };
 };
 
@@ -363,6 +454,7 @@ const parseVisionResponse = (rawOutput, fallbackText = '') => {
 
   const baseResult = {
     patient_name: null,
+    patient_age: null,
     patient_date_of_birth: null,
     patient_gender: null,
     test_date: null,
@@ -381,6 +473,19 @@ const parseVisionResponse = (rawOutput, fallbackText = '') => {
     const rawDob = parsed.patient_date_of_birth ?? parsed.date_of_birth;
     const rawGender = parsed.patient_gender ?? parsed.gender;
 
+    const ageCandidates = [
+      parsed.patient_age,
+      parsed.age,
+      parsed.patient_age_years,
+      parsed?.demographics?.age,
+    ];
+    const rawAge = ageCandidates.find((candidate) => {
+      if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+        return true;
+      }
+      return typeof candidate === 'string' && candidate.trim();
+    });
+
     let rawTestDate = parsed.test_date;
     if (!rawTestDate && parsed.lab_dates && typeof parsed.lab_dates === 'object') {
       const primaryDate = parsed.lab_dates.primary_test_date;
@@ -395,6 +500,7 @@ const parseVisionResponse = (rawOutput, fallbackText = '') => {
 
     return {
       patient_name: sanitizeTextField(parsed.patient_name, { maxLength: 160 }),
+      patient_age: sanitizeAgeField(rawAge),
       patient_date_of_birth: sanitizeDateField(rawDob),
       patient_gender: sanitizeTextField(rawGender, { maxLength: 24 }),
       test_date: sanitizeDateField(rawTestDate),

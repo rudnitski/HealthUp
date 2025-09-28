@@ -324,6 +324,12 @@ label {
   font-weight: 600;
 }
 
+.parameters-table td[data-out-of-range='true'] {
+  outline: 2px solid var(--color-danger);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
 .parameters-table__row--flagged {
   background-color: var(--color-highlight-soft);
 }

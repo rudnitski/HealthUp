@@ -21,6 +21,7 @@
     { id: 'parsing', label: 'Parsing results' },
     { id: 'completed', label: 'Completed' },
   ];
+  const UNAVAILABLE_LABEL = 'Unavailable';
   const stepLookup = pipelineSteps.reduce((acc, step, index) => {
     acc[step.id] = { ...step, index };
     return acc;
@@ -138,32 +139,71 @@
     progressStepsEl.replaceChildren(fragment);
   };
 
-  const formatReferenceInterval = (referenceInterval) => {
+  const buildReferenceIntervalDisplay = (referenceInterval) => {
     if (!referenceInterval || typeof referenceInterval !== 'object') {
       return '';
     }
 
-    const text = isNonEmptyString(referenceInterval.text) ? referenceInterval.text.trim() : '';
-    if (text) {
-      return text;
-    }
-
     const lower = formatNumber(referenceInterval.lower);
     const upper = formatNumber(referenceInterval.upper);
+    const lowerOperator = typeof referenceInterval.lower_operator === 'string'
+      ? referenceInterval.lower_operator.trim()
+      : null;
+    const upperOperator = typeof referenceInterval.upper_operator === 'string'
+      ? referenceInterval.upper_operator.trim()
+      : null;
+    const text = isNonEmptyString(referenceInterval.text) ? referenceInterval.text.trim() : '';
+
+    const operatorToSymbol = (operator, { fallback } = {}) => {
+      switch (operator) {
+        case '>':
+          return '>';
+        case '>=':
+          return '≥';
+        case '<':
+          return '<';
+        case '<=':
+          return '≤';
+        case '=':
+          return '=';
+        default:
+          if (fallback === 'lower') {
+            return '≥';
+          }
+          if (fallback === 'upper') {
+            return '≤';
+          }
+          return '=';
+      }
+    };
 
     if (lower && upper) {
-      return `${lower} - ${upper}`;
+      const lowerSymbol = operatorToSymbol(lowerOperator, { fallback: 'lower' });
+      const upperSymbol = operatorToSymbol(upperOperator, { fallback: 'upper' });
+      const isInclusiveLower = lowerSymbol === '≥' || lowerSymbol === '=';
+      const isInclusiveUpper = upperSymbol === '≤' || upperSymbol === '=';
+
+      if (isInclusiveLower && isInclusiveUpper) {
+        return `${lower} - ${upper}`;
+      }
+
+      const parts = [];
+      parts.push(`${lowerSymbol} ${lower}`);
+      parts.push(`${upperSymbol} ${upper}`);
+      return parts.join(', ');
     }
 
     if (lower) {
-      return `>= ${lower}`;
+      const symbol = operatorToSymbol(lowerOperator, { fallback: 'lower' });
+      return `${symbol} ${lower}`;
     }
 
     if (upper) {
-      return `<= ${upper}`;
+      const symbol = operatorToSymbol(upperOperator, { fallback: 'upper' });
+      return `${symbol} ${upper}`;
     }
 
-    return '';
+    return text;
   };
 
   const renderDetails = (payload, elapsedMs = null) => {
@@ -217,13 +257,34 @@
       : 'Missing';
     addRow('Patient Name', patientName, { isMissing: !isNonEmptyString(payload.patient_name) });
 
+    const ageCandidates = [
+      payload.patient_age,
+      payload.age,
+      payload.demographics && payload.demographics.age,
+    ];
+    let ageValue = '';
+    for (let index = 0; index < ageCandidates.length; index += 1) {
+      const candidate = ageCandidates[index];
+      if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+        ageValue = candidate.toString();
+        break;
+      }
+      if (isNonEmptyString(candidate)) {
+        ageValue = candidate.trim();
+        break;
+      }
+    }
+
+    const ageDisplay = ageValue || UNAVAILABLE_LABEL;
+    addRow('Age', ageDisplay, { isMissing: ageDisplay === UNAVAILABLE_LABEL });
+
     const rawDateOfBirth = isNonEmptyString(payload.patient_date_of_birth)
       ? payload.patient_date_of_birth
       : payload.date_of_birth;
     const dateOfBirth = isNonEmptyString(rawDateOfBirth)
       ? rawDateOfBirth.trim()
-      : 'Missing';
-    addRow('Date of Birth', dateOfBirth, { isMissing: !isNonEmptyString(rawDateOfBirth) });
+      : UNAVAILABLE_LABEL;
+    addRow('Date of Birth', dateOfBirth, { isMissing: dateOfBirth === UNAVAILABLE_LABEL });
 
     const rawGender = isNonEmptyString(payload.patient_gender)
       ? payload.patient_gender
@@ -390,6 +451,10 @@
           resultCell.dataset.missing = 'true';
         }
 
+        if (entry && entry.is_value_out_of_range === true) {
+          resultCell.dataset.outOfRange = 'true';
+        }
+
         row.appendChild(resultCell);
 
         const unitText = isNonEmptyString(entry.unit) ? entry.unit.trim() : '--';
@@ -397,10 +462,20 @@
           isMissing: !isNonEmptyString(entry.unit) || isFieldMarkedMissing('unit'),
         }));
 
-        const referenceDisplay = formatReferenceInterval(entry.reference_interval);
-        row.appendChild(buildCell(referenceDisplay || 'Missing', {
-          isMissing: !referenceDisplay || isFieldMarkedMissing('reference_interval'),
-        }));
+        const referenceDisplay = buildReferenceIntervalDisplay(entry.reference_interval);
+        const referenceCell = document.createElement('td');
+
+        if (isNonEmptyString(referenceDisplay)) {
+          referenceCell.textContent = referenceDisplay;
+        } else {
+          referenceCell.textContent = UNAVAILABLE_LABEL;
+        }
+
+        if (!isNonEmptyString(referenceDisplay) || isFieldMarkedMissing('reference_interval')) {
+          referenceCell.dataset.missing = 'true';
+        }
+
+        row.appendChild(referenceCell);
 
         tbody.appendChild(row);
       });
