@@ -19,6 +19,7 @@
     { id: 'pdf_processing', label: 'Processing document' },
     { id: 'openai_request', label: 'Analyzing with AI' },
     { id: 'parsing', label: 'Parsing results' },
+    { id: 'persistence', label: 'Saving results' },
     { id: 'completed', label: 'Completed' },
   ];
   const UNAVAILABLE_LABEL = 'Unavailable';
@@ -42,6 +43,25 @@
     }
 
     return '';
+  };
+
+  const fetchPersistedReport = async (reportId) => {
+    if (typeof reportId !== 'string' || !reportId) {
+      return null;
+    }
+
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}`);
+      if (!response.ok) {
+        return null;
+      }
+
+      return await response.json();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[ui] Unable to fetch persisted report', error);
+      return null;
+    }
   };
 
   const hideDetails = () => {
@@ -606,10 +626,21 @@
       }
 
       const elapsedMs = performance.now() - analysisStartedAt;
-      renderDetails(payload || {}, elapsedMs);
-      renderProgress(payload.progress || []);
+      let persistedPayload = null;
 
-      const parametersForMessage = Array.isArray(payload.parameters) ? payload.parameters : [];
+      if (typeof payload.report_id === 'string' && payload.report_id) {
+        setResultMessage('Saving your results…', 'loading');
+        persistedPayload = await fetchPersistedReport(payload.report_id);
+      }
+
+      const displayPayload = persistedPayload || payload || {};
+
+      renderDetails(displayPayload, elapsedMs);
+      renderProgress((payload && payload.progress) || []);
+
+      const parametersForMessage = Array.isArray(displayPayload.parameters)
+        ? displayPayload.parameters
+        : [];
       const total = parametersForMessage.length;
 
       let statusMessage;
@@ -624,7 +655,11 @@
       }
 
       setResultMessage(statusMessage, statusState);
-      setRawOutput(payload.raw_model_output || '');
+      setRawOutput(
+        typeof displayPayload.raw_model_output === 'string'
+          ? displayPayload.raw_model_output
+          : '',
+      );
     } catch (error) {
       setResultMessage('Unable to analyze right now. Please try again later.', 'error');
       setRawOutput('');

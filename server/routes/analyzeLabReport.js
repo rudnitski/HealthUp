@@ -6,7 +6,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { promisify } = require('util');
 const { execFile } = require('child_process');
-const { randomUUID } = require('crypto');
+const { persistLabReport } = require('../services/reportPersistence');
 
 const router = express.Router();
 
@@ -29,6 +29,7 @@ const PIPELINE_STEPS = [
   { id: 'pdf_processing', label: 'Processing document' },
   { id: 'openai_request', label: 'Analyzing with AI' },
   { id: 'parsing', label: 'Parsing results' },
+  { id: 'persistence', label: 'Saving results' },
   { id: 'completed', label: 'Completed' },
 ];
 
@@ -784,17 +785,40 @@ router.post('/', async (req, res) => {
     ? parseVisionResponse(parsedPayload, outputText)
     : parseVisionResponse(outputText, outputText);
   markStep('parsing', 'completed');
-  markStep('completed');
+  markStep('persistence', 'in_progress');
 
-  const responsePayload = {
-    report_id: randomUUID(),
-    user_id: null,
-    processed_at: new Date().toISOString(),
-    ...coreResult,
-    progress: pipelineProgress,
-  };
+  const processedAt = new Date();
 
-  return res.json(responsePayload);
+  try {
+    const persistenceResult = await persistLabReport({
+      fileBuffer,
+      filename: sanitizedFilename,
+      parserVersion: requestPayload.model,
+      processedAt,
+      coreResult,
+    });
+
+    markStep('persistence', 'completed');
+    markStep('completed');
+
+    const responsePayload = {
+      report_id: persistenceResult.reportId,
+      patient_id: persistenceResult.patientId,
+      checksum: persistenceResult.checksum,
+      user_id: null,
+      processed_at: processedAt.toISOString(),
+      ...coreResult,
+      progress: pipelineProgress,
+    };
+
+    return res.json(responsePayload);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[analyzeLabReport] Failed to persist lab report:', error);
+    markStep('persistence', 'failed', 'Unable to save results');
+    markStep('completed', 'failed', 'Unable to save results');
+    return res.status(500).json({ error: 'Unable to save lab report results. Please try again.', progress: pipelineProgress });
+  }
 });
 
 module.exports = router;

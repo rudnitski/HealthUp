@@ -9,9 +9,11 @@ if (process.env.NODE_ENV !== 'production') {
 const express = require('express');
 const fileUpload = require('express-fileupload');
 const { healthcheck } = require('./db');
+const { ensureSchema } = require('./db/schema');
 
 (async () => {
   try {
+    await ensureSchema();
     const ok = await healthcheck();
     if (!ok) throw new Error('DB healthcheck failed');
     console.log('[db] Healthcheck OK');
@@ -22,6 +24,7 @@ const { healthcheck } = require('./db');
 })();
 
 const analyzeLabReportRouter = require('./routes/analyzeLabReport');
+const reportsRouter = require('./routes/reports');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -42,6 +45,7 @@ app.use(
 );
 
 app.use('/api/analyze-labs', analyzeLabReportRouter);
+app.use('/api', reportsRouter);
 
 app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
