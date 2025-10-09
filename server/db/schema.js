@@ -66,6 +66,26 @@ const schemaStatements = [
   ALTER TABLE lab_results
     ADD COLUMN IF NOT EXISTS position INT;
   `,
+  `
+  CREATE TABLE IF NOT EXISTS sql_generation_logs (
+    id UUID PRIMARY KEY,
+    status TEXT NOT NULL,
+    user_id_hash TEXT,
+    prompt TEXT,
+    prompt_language TEXT,
+    generated_sql TEXT,
+    model TEXT,
+    confidence NUMERIC,
+    latency_ms INT,
+    error TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_sql_generation_logs_created_at
+    ON sql_generation_logs (created_at DESC);
+  `,
 ];
 
 async function ensureSchema() {

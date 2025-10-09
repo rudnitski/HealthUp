@@ -30,6 +30,56 @@
     </section>
     <section id="analysis-details" class="result-details" aria-live="polite" hidden></section>
     <pre id="analysis-raw" class="raw-output" hidden></pre>
+    <section class="sql-generator" aria-labelledby="sql-generator-title">
+      <div class="sql-generator__header">
+        <h2 id="sql-generator-title">Ask the Database</h2>
+        <p class="help-text">
+          Type a question in English or Russian and get a copyable read-only SQL statement for our Postgres warehouse.
+        </p>
+      </div>
+      <div class="sql-generator__grid">
+        <div class="sql-generator__panel">
+          <label class="sql-generator__label" for="sql-question">Your question</label>
+          <textarea
+            id="sql-question"
+            class="sql-generator__textarea"
+            name="sqlQuestion"
+            maxlength="500"
+            rows="6"
+            placeholder="Show me all cholesterol tests I've made during last year"
+            aria-describedby="sql-question-help"
+          ></textarea>
+          <p id="sql-question-help" class="help-text">
+            Examples: “Show me cholesterol tests for the last 12 months” / “Покажи все анализы пациента с высоким уровнем сахара за июнь”.
+          </p>
+          <div class="sql-generator__actions">
+            <button id="sql-generate-btn" class="analyze-button" type="button">Generate SQL</button>
+            <button id="sql-regenerate-btn" class="secondary-button" type="button" hidden>Regenerate</button>
+          </div>
+          <p id="sql-status" class="message" aria-live="polite" hidden></p>
+        </div>
+        <div class="sql-generator__panel">
+          <div class="sql-generator__banner" role="note">
+            <span class="sql-generator__banner-title">Reminder:</span>
+            <span>Review the SQL before running it externally. Ensure tenant filters and PHI safeguards remain in place.</span>
+          </div>
+          <div id="sql-result" class="sql-generator__result" hidden>
+            <div class="sql-generator__meta">
+              <span id="sql-model" class="sql-generator__meta-item"></span>
+              <span id="sql-confidence" class="sql-generator__meta-item"></span>
+              <time id="sql-generated-at" class="sql-generator__meta-item" aria-live="polite"></time>
+            </div>
+            <div class="sql-generator__result-actions">
+              <button id="sql-copy-btn" class="secondary-button" type="button">Copy SQL</button>
+              <span id="sql-copy-feedback" class="sql-generator__copy-feedback" hidden>Copied!</span>
+            </div>
+            <pre id="sql-output" class="sql-generator__output" aria-live="polite"></pre>
+            <ul id="sql-warnings" class="sql-generator__warnings" hidden></ul>
+            <p id="sql-notes" class="sql-generator__notes" hidden></p>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
   <script src="js/app.js" defer></script>
 </body>

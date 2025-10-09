@@ -668,4 +668,293 @@
       resetAnalyzeButton();
     }
   });
+
+  const sqlQuestionInput = document.querySelector('#sql-question');
+  const sqlGenerateBtn = document.querySelector('#sql-generate-btn');
+  const sqlRegenerateBtn = document.querySelector('#sql-regenerate-btn');
+  const sqlCopyBtn = document.querySelector('#sql-copy-btn');
+  const sqlStatusEl = document.querySelector('#sql-status');
+  const sqlResultEl = document.querySelector('#sql-result');
+  const sqlOutputEl = document.querySelector('#sql-output');
+  const sqlModelEl = document.querySelector('#sql-model');
+  const sqlConfidenceEl = document.querySelector('#sql-confidence');
+  const sqlGeneratedAtEl = document.querySelector('#sql-generated-at');
+  const sqlWarningsEl = document.querySelector('#sql-warnings');
+  const sqlNotesEl = document.querySelector('#sql-notes');
+  const sqlCopyFeedbackEl = document.querySelector('#sql-copy-feedback');
+
+  if (
+    sqlQuestionInput
+    && sqlGenerateBtn
+    && sqlCopyBtn
+    && sqlResultEl
+    && sqlOutputEl
+  ) {
+    let lastQuestion = '';
+    let isGeneratingSql = false;
+    let copyFeedbackTimeout = null;
+
+    const normalizeInput = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+
+    const setSqlStatus = (message, state) => {
+      if (!sqlStatusEl) {
+        return;
+      }
+
+      if (!message) {
+        sqlStatusEl.hidden = true;
+        sqlStatusEl.textContent = '';
+        delete sqlStatusEl.dataset.state;
+        return;
+      }
+
+      sqlStatusEl.hidden = false;
+      sqlStatusEl.textContent = message;
+      if (state) {
+        sqlStatusEl.dataset.state = state;
+      } else {
+        delete sqlStatusEl.dataset.state;
+      }
+    };
+
+    const setSqlLoadingState = (isLoading) => {
+      isGeneratingSql = isLoading;
+      sqlGenerateBtn.disabled = isLoading;
+
+      if (sqlRegenerateBtn) {
+        sqlRegenerateBtn.disabled = isLoading;
+      }
+
+      if (sqlCopyBtn) {
+        sqlCopyBtn.disabled = isLoading;
+      }
+    };
+
+    const renderWarnings = (warnings) => {
+      if (!sqlWarningsEl) {
+        return;
+      }
+
+      if (!Array.isArray(warnings) || warnings.length === 0) {
+        sqlWarningsEl.hidden = true;
+        sqlWarningsEl.replaceChildren();
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+      let appended = 0;
+      warnings.forEach((warning) => {
+        if (!isNonEmptyString(warning)) {
+          return;
+        }
+        const item = document.createElement('li');
+        item.textContent = warning.trim();
+        fragment.append(item);
+        appended += 1;
+      });
+
+      if (appended === 0) {
+        sqlWarningsEl.hidden = true;
+        sqlWarningsEl.replaceChildren();
+        return;
+      }
+
+      sqlWarningsEl.replaceChildren(fragment);
+      sqlWarningsEl.hidden = false;
+    };
+
+    const renderNotes = (notes) => {
+      if (!sqlNotesEl) {
+        return;
+      }
+
+      if (!isNonEmptyString(notes)) {
+        sqlNotesEl.hidden = true;
+        sqlNotesEl.textContent = '';
+        return;
+      }
+
+      sqlNotesEl.hidden = false;
+      sqlNotesEl.textContent = notes.trim();
+    };
+
+    const renderSqlResult = (payload) => {
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+
+      if (sqlOutputEl) {
+        const sqlText = isNonEmptyString(payload.sql) ? payload.sql.trim() : '';
+        sqlOutputEl.textContent = sqlText;
+      }
+
+      if (sqlResultEl) {
+        sqlResultEl.hidden = !isNonEmptyString(payload.sql);
+      }
+
+      if (sqlModelEl) {
+        sqlModelEl.textContent = isNonEmptyString(payload.model) ? `Model: ${payload.model}` : '';
+      }
+
+      if (sqlConfidenceEl) {
+        if (typeof payload.confidence === 'number' && Number.isFinite(payload.confidence)) {
+          const clamped = Math.max(0, Math.min(payload.confidence, 1));
+          const percent = Math.round(clamped * 100);
+          sqlConfidenceEl.textContent = `Confidence: ${percent}%`;
+        } else {
+          sqlConfidenceEl.textContent = '';
+        }
+      }
+
+      if (sqlGeneratedAtEl) {
+        if (isNonEmptyString(payload.generated_at)) {
+          const generatedDate = new Date(payload.generated_at);
+          if (!Number.isNaN(generatedDate.getTime())) {
+            sqlGeneratedAtEl.textContent = generatedDate.toLocaleString();
+          } else {
+            sqlGeneratedAtEl.textContent = '';
+          }
+        } else {
+          sqlGeneratedAtEl.textContent = '';
+        }
+      }
+
+      renderWarnings(payload.warnings);
+      renderNotes(payload.notes);
+
+      if (sqlRegenerateBtn) {
+        sqlRegenerateBtn.hidden = false;
+      }
+
+      if (sqlCopyFeedbackEl) {
+        sqlCopyFeedbackEl.hidden = true;
+        sqlCopyFeedbackEl.textContent = 'Copied!';
+      }
+    };
+
+    const performSqlGeneration = async ({ regenerate = false } = {}) => {
+      if (isGeneratingSql) {
+        return;
+      }
+
+      const inputValue = regenerate ? lastQuestion : normalizeInput(sqlQuestionInput.value);
+
+      if (!isNonEmptyString(inputValue)) {
+        setSqlStatus('Enter a question in English or Russian.', 'error');
+        return;
+      }
+
+      if (inputValue.length > 500) {
+        setSqlStatus('Questions are limited to 500 characters.', 'error');
+        return;
+      }
+
+      if (!regenerate) {
+        lastQuestion = inputValue;
+      }
+
+      if (!regenerate && sqlQuestionInput.value !== inputValue) {
+        sqlQuestionInput.value = inputValue;
+      }
+
+      setSqlStatus('Generating SQL…', 'loading');
+      setSqlLoadingState(true);
+
+      try {
+        const response = await fetch('/api/sql-generator', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ question: inputValue }),
+        });
+
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          const errorMessage = payload && isNonEmptyString(payload.error)
+            ? payload.error
+            : 'Unable to generate SQL right now.';
+          throw new Error(errorMessage);
+        }
+
+        lastQuestion = payload && isNonEmptyString(payload.question)
+          ? payload.question
+          : inputValue;
+
+        renderSqlResult(payload);
+        setSqlStatus('SQL generated. Review before using externally.', 'success');
+      } catch (error) {
+        setSqlStatus(error?.message || 'Unable to generate SQL right now.', 'error');
+      } finally {
+        setSqlLoadingState(false);
+      }
+    };
+
+    sqlGenerateBtn.addEventListener('click', () => performSqlGeneration({ regenerate: false }));
+
+    if (sqlRegenerateBtn) {
+      sqlRegenerateBtn.addEventListener('click', () => {
+        if (!isNonEmptyString(lastQuestion)) {
+          setSqlStatus('Generate a query before requesting a new version.', 'error');
+          return;
+        }
+        performSqlGeneration({ regenerate: true });
+      });
+    }
+
+    sqlQuestionInput.addEventListener('keydown', (event) => {
+      if (!event) {
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        performSqlGeneration({ regenerate: false });
+      }
+    });
+
+    if (sqlCopyBtn) {
+      sqlCopyBtn.addEventListener('click', async () => {
+        if (!sqlOutputEl || !isNonEmptyString(sqlOutputEl.textContent)) {
+          return;
+        }
+
+        const sqlText = sqlOutputEl.textContent;
+
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(sqlText);
+          } else {
+            const tempTextArea = document.createElement('textarea');
+            tempTextArea.value = sqlText;
+            tempTextArea.setAttribute('readonly', '');
+            tempTextArea.style.position = 'absolute';
+            tempTextArea.style.left = '-9999px';
+            document.body.appendChild(tempTextArea);
+            tempTextArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempTextArea);
+          }
+
+          if (sqlCopyFeedbackEl) {
+            sqlCopyFeedbackEl.hidden = false;
+            sqlCopyFeedbackEl.textContent = 'Copied!';
+
+            if (copyFeedbackTimeout) {
+              clearTimeout(copyFeedbackTimeout);
+            }
+
+            copyFeedbackTimeout = setTimeout(() => {
+              if (sqlCopyFeedbackEl) {
+                sqlCopyFeedbackEl.hidden = true;
+              }
+            }, 2000);
+          }
+        } catch (_copyError) {
+          setSqlStatus('Unable to copy to clipboard. Copy manually if needed.', 'error');
+        }
+      });
+    }
+  }
 })();

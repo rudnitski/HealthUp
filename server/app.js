@@ -23,6 +23,7 @@ const { ensureSchema } = require('./db/schema');
   }
 })();
 
+const sqlGeneratorRouter = require('./routes/sqlGenerator');
 const analyzeLabReportRouter = require('./routes/analyzeLabReport');
 const reportsRouter = require('./routes/reports');
 
@@ -44,6 +45,7 @@ app.use(
   }),
 );
 
+app.use('/api/sql-generator', sqlGeneratorRouter);
 app.use('/api/analyze-labs', analyzeLabReportRouter);
 app.use('/api', reportsRouter);
 
