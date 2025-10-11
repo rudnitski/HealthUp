@@ -1,6 +1,21 @@
 const { randomUUID, createHash } = require('crypto');
 const { pool } = require('../db');
 
+class PersistLabReportError extends Error {
+  constructor(message, {
+    status = 500,
+    code = 'persist_lab_report_failed',
+    context = {},
+    cause,
+  } = {}) {
+    super(message, { cause });
+    this.name = 'PersistLabReportError';
+    this.status = status;
+    this.code = code;
+    this.context = context;
+  }
+}
+
 const normalizePatientName = (value) => {
   if (typeof value !== 'string') {
     return null;
@@ -154,20 +169,25 @@ async function persistLabReport({
   const patientName = safeCoreResult.patient_name ?? null;
   const patientDateOfBirth = safeCoreResult.patient_date_of_birth ?? null;
   const patientGender = safeCoreResult.patient_gender ?? null;
+  const parameters = Array.isArray(safeCoreResult.parameters)
+    ? safeCoreResult.parameters
+    : [];
 
   const client = await pool.connect();
+  const reportId = randomUUID();
+  let patientId;
+  let persistedReportId;
+  const parameterCount = parameters.length;
 
   try {
     await client.query('BEGIN');
 
-    const patientId = await upsertPatient(client, {
+    patientId = await upsertPatient(client, {
       fullName: patientName,
       dateOfBirth: patientDateOfBirth,
       gender: patientGender,
       recognizedAt,
     });
-
-    const reportId = randomUUID();
 
     const missingDataArray = Array.isArray(safeCoreResult.missing_data)
       ? safeCoreResult.missing_data
@@ -233,13 +253,13 @@ async function persistLabReport({
       ],
     );
 
-    const persistedReportId = reportResult.rows[0].id;
+    persistedReportId = reportResult.rows[0].id;
 
     await client.query('DELETE FROM lab_results WHERE report_id = $1', [persistedReportId]);
 
     const { text: insertLabResultsQuery, values: labResultValues } = buildLabResultTuples(
       persistedReportId,
-      Array.isArray(safeCoreResult.parameters) ? safeCoreResult.parameters : [],
+      parameters,
     );
 
     if (insertLabResultsQuery) {
@@ -255,7 +275,18 @@ async function persistLabReport({
     };
   } catch (error) {
     await client.query('ROLLBACK');
-    throw error;
+    throw new PersistLabReportError('Failed to persist lab report', {
+      cause: error,
+      context: {
+        filename: filename ?? null,
+        parserVersion: parserVersion ?? null,
+        checksum,
+        patientId,
+        attemptedReportId: reportId,
+        persistedReportId,
+        parameterCount,
+      },
+    });
   } finally {
     client.release();
   }
@@ -263,4 +294,5 @@ async function persistLabReport({
 
 module.exports = {
   persistLabReport,
+  PersistLabReportError,
 };

@@ -1,0 +1,14 @@
+User question ({{LANGUAGE_LABEL}}):
+{{QUESTION}}
+
+Available tables and columns:
+{{SCHEMA_SUMMARY}}
+
+Return JSON with fields:
+- query: the SQL statement (string)
+- confidence: optional number between 0 and 1 (use null if unsure)
+- notes: optional short explanation or caveats
+- warnings: optional array of cautionary strings
+
+Always respond in JSON adhering to the requested schema.
+{{LANGUAGE_NOTE}}

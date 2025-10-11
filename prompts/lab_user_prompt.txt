@@ -1,0 +1,33 @@
+You will receive either images or PDF pages of a laboratory report.
+Return JSON with the following top-level fields:
+- patient_name (string or null)
+- patient_age (string or null)
+- patient_date_of_birth (string or null)
+- patient_gender (string or null)
+- test_date (string or null; capture the best available date describing when the test was performed, collected, or validated)
+- parameters (array of laboratory parameters)
+- missing_data (array describing missing fields per parameter)
+Each entry in parameters must include:
+- parameter_name (string or null; copy the label as written in the report)
+- result (string or null; capture the numeric or qualitative value without repeating the unit when the unit is known)
+- unit (string or null; preserve symbols such as mg/dL)
+- reference_interval (object with lower, upper, lower_operator, upper_operator, text, full_text; numbers or null for bounds, string or null for text fields)
+
+missing_data is an array. Each item has:
+- parameter_name (string or null)
+- missing_fields (array of strings indicating absent details such as "unit", "reference_interval", "result")
+
+Rules:
+- Only output JSON.
+- Include every parameter even if fields are missing.
+- Preserve the source language and casing for text.
+- Use ISO-8601 (YYYY-MM-DD) when a date is unambiguous; otherwise copy the exact text.
+- For test_date, prefer specimen collection or draw dates; if unavailable, fall back to order, validation, or print dates in that order.
+- Copy numeric measurements exactly as written while omitting the unit if it is captured separately; if the report omits a value, set result to null.
+- When the report provides both numeric and textual context (e.g., "3.1 High"), include the combined text in result without repeating the unit.
+- When multiple reference intervals exist, choose the one matching the reported result when possible; otherwise copy the interval text.
+- When the source shows an explicit numeric interval (including zero ranges like "0 - 0"), set lower and upper to those exact numbers and copy the interval into text.
+- Only use inequality-style text (e.g., "< 2.1") when no explicit numeric bounds are provided in the source.
+- When age or date of birth is absent, set that field to null without guessing; capture whichever value is provided, and include both when available.
+- When reference intervals vary by patient attributes (e.g., age or sex), determine the applicable range for this patient using the extracted demographics. Prefer the bracket that exactly matches the demographics. If the patient falls outside all brackets, select the closest adult or widest available range and reflect that choice in text (e.g., "Closest range: women 17-60 лет"). Set lower and upper to that range, provide a concise label in text, and copy the complete source description into full_text. If the patient details are missing, leave lower, upper, and text null while still populating full_text.
+- Normalize inequality phrases (e.g., "до 21", "не более 21", "< 17", "≥ 45") into numeric bounds. Use null for the missing side, populate the other side with the numeric value, and set text to the normalized inequality (such as "≤ 21" or "> 1"). Record the comparator exactly as stated in the source using the tokens ">", ">=", "<", "<=", or "=". Do not replace a strict comparison (" > " or " < ") with an inclusive one.

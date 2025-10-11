@@ -1,6 +1,7 @@
 const OpenAI = require('openai');
 const crypto = require('crypto');
 const { pool } = require('../db');
+const { loadPrompt } = require('../utils/promptLoader');
 
 const DEFAULT_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
 const SCHEMA_CACHE_TTL_MS = Number.isFinite(Number(process.env.SQL_SCHEMA_CACHE_TTL_MS))
@@ -135,37 +136,30 @@ const structuredOutputFormat = {
   },
 };
 
-const systemPrompt = [
-  'You are a senior analytics engineer for HealthUp.',
-  'Generate safe, read-only PostgreSQL queries that analysts can copy and run later.',
-  'Never produce statements that modify data (`INSERT`, `UPDATE`, `DELETE`, DDL, etc.).',
-  'If the request cannot be answered, return an empty string for query and explain why in notes.',
-  'Prefer explicit column selection over `SELECT *` when feasible.',
-  'If no LIMIT is provided, add `LIMIT 200` as a safeguard unless aggregation makes it unnecessary.',
-  'Ensure temporal phrases use CURRENT_DATE and appropriate intervals.',
-  'Assume all tables live in the public schema.',
-].join(' ');
+const systemPrompt = loadPrompt('sql_generator_system_prompt.txt');
+const userPromptTemplate = loadPrompt('sql_generator_user_prompt.txt');
+
+const applyTemplate = (template, values) => template.replace(/{{(\w+)}}/g, (_match, key) => {
+  if (Object.prototype.hasOwnProperty.call(values, key)) {
+    return values[key];
+  }
+
+  return '';
+});
 
 const buildUserPrompt = ({ question, language, schemaSummary }) => {
   const languageLabel = language === 'ru' ? 'Russian' : 'English';
-  return [
-    `User question (${languageLabel}):`,
-    question,
-    '',
-    'Available tables and columns:',
-    schemaSummary,
-    '',
-    'Return JSON with fields:',
-    '- query: the SQL statement (string)',
-    '- confidence: optional number between 0 and 1 (use null if unsure)',
-    '- notes: optional short explanation or caveats',
-    '- warnings: optional array of cautionary strings',
-    '',
-    'Always respond in JSON adhering to the requested schema.',
-    language === 'ru'
-      ? 'Use Russian comments only when necessary for clarity; SQL keywords remain in English.'
-      : 'Use English for SQL keywords.',
-  ].join('\n');
+  const safeQuestion = question || '';
+  const languageNote = language === 'ru'
+    ? 'Use Russian comments only when necessary for clarity; SQL keywords remain in English.'
+    : 'Use English for SQL keywords.';
+
+  return applyTemplate(userPromptTemplate, {
+    LANGUAGE_LABEL: languageLabel,
+    QUESTION: safeQuestion,
+    SCHEMA_SUMMARY: schemaSummary,
+    LANGUAGE_NOTE: languageNote,
+  });
 };
 
 const logGeneration = async ({
