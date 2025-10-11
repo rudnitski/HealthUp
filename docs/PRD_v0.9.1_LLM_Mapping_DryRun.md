@@ -159,9 +159,10 @@ async function proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema) {
     const response = await openai.responses.create({
       model: 'gpt-5-mini',
       input: inputPrompt,
-      temperature: 0.2,
       max_output_tokens: 1000,
-      response_format: { type: 'json_object' }  // Ensures valid JSON
+      text: {
+        format: { type: 'json_object' }  // Responses API format structure
+      }
     });
 
     return parseLLMBatchOutput(response.output_text, unmappedRows);

@@ -4,7 +4,7 @@
   "description": "MVP upload form that lists a selected file name",
   "main": "server/app.js",
   "scripts": {
-    "dev": "node server/app.js",
+    "dev": "cross-env NODE_ENV=development node server/app.js",
     "test": "jest"
   },
   "keywords": [],
@@ -21,6 +21,7 @@
     "pino-pretty": "^13.1.2"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "jest": "^30.2.0"
   }
 }

@@ -1,9 +1,11 @@
 // server/services/MappingApplier.js
-// PRD v0.9: Mapping Applier (Dry-Run Mode)
+// PRD v0.9 + v0.9.1: Mapping Applier (Dry-Run Mode)
 // Performs read-only analyte mapping with structured logging
+// v0.9.1: Adds Tier C (LLM-based mapping)
 
 const pino = require('pino');
 const { pool } = require('../db');
+const OpenAI = require('openai');
 
 // Configure Pino logger
 const logger = pino({
@@ -22,6 +24,14 @@ const logger = pino({
     },
   } : undefined,
 });
+
+// Initialize OpenAI client (only if API key is provided)
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+} else {
+  logger.warn('OPENAI_API_KEY not set; Tier C (LLM mapping) will be skipped');
+}
 
 // Configuration thresholds
 const CONFIG = {
@@ -177,6 +187,206 @@ async function getAnalyteById(analyteId) {
 }
 
 /**
+ * Fetch all analytes from database for LLM schema
+ *
+ * @returns {Promise<Array>} - Array of { code, name, category }
+ */
+async function getAnalyteSchema() {
+  const { rows } = await pool.query(
+    `SELECT code, name, category FROM analytes ORDER BY code`
+  );
+  return rows;
+}
+
+/**
+ * Classify OpenAI API errors into categories
+ *
+ * @param {Error} error - OpenAI API error
+ * @returns {string} - Error category
+ */
+function classifyError(error) {
+  if (error.message?.includes('timeout')) return 'API_TIMEOUT';
+  if (error.status === 429) return 'RATE_LIMIT';
+  if (error.status === 401 || error.status === 403) return 'AUTH_ERROR';
+  return 'API_ERROR';
+}
+
+/**
+ * Build batch prompt for LLM mapping
+ *
+ * @param {Array} unmappedRows - Rows to map
+ * @param {Array} categoryContext - Already-mapped analyte codes
+ * @param {string} schemaText - Formatted analyte schema
+ * @returns {string} - Formatted prompt
+ */
+function buildBatchPrompt(unmappedRows, categoryContext, schemaText) {
+  return `You are a medical LIMS specialist. Map lab parameters to canonical analyte codes.
+
+Available analytes:
+${schemaText}
+
+Context: This report already contains: ${categoryContext.join(', ') || 'none'}
+
+Rules:
+- decision "MATCH": code exists in schema above
+- decision "NEW": valid analyte but not in schema (propose new code + name)
+- decision "ABSTAIN": cannot determine mapping
+- For AMBIGUOUS rows, pick the best match from candidates provided
+
+Return JSON array with one object per parameter:
+{
+  "results": [
+    {
+      "label": "parameter name",
+      "decision": "MATCH" | "NEW" | "ABSTAIN",
+      "code": "string or null",
+      "name": "string or null (only for NEW)",
+      "confidence": 0.95,
+      "comment": "brief reason"
+    }
+  ]
+}
+
+Parameters to map:
+${unmappedRows.map((row, i) => `
+${i + 1}. Label: "${row.label_raw}"
+   Unit: ${row.unit || 'none'}
+   Reference: ${row.reference_hint || 'none'}
+   ${row.tiers?.fuzzy?.candidates ?
+     `Ambiguous matches: ${row.tiers.fuzzy.candidates.map(c =>
+       `${c.analyte_id} (sim: ${c.similarity})`).join(', ')}` : ''}
+`).join('\n')}`;
+}
+
+/**
+ * Parse LLM batch output and map to rows
+ *
+ * @param {string} outputText - Raw LLM JSON output
+ * @param {Array} unmappedRows - Original unmapped rows
+ * @returns {Array} - Parsed results
+ */
+function parseLLMBatchOutput(outputText, unmappedRows) {
+  try {
+    const parsed = JSON.parse(outputText);
+    if (!parsed.results || !Array.isArray(parsed.results)) {
+      throw new Error('Invalid JSON structure: missing results array');
+    }
+    return parsed.results;
+  } catch (error) {
+    logger.error({ error: error.message, outputText }, 'Failed to parse LLM output');
+    return unmappedRows.map(row => ({
+      result_id: row.result_id,
+      label: row.label_raw,
+      decision: null,
+      error: 'INVALID_JSON',
+      code: null,
+      confidence: 0,
+      comment: 'Failed to parse LLM response'
+    }));
+  }
+}
+
+/**
+ * Call LLM to map unmapped/ambiguous parameters (Tier C)
+ * PRD v0.9.1 - Batch processing strategy
+ *
+ * @param {Array} unmappedRows - Rows with UNMAPPED or AMBIGUOUS_FUZZY decisions
+ * @param {Array} mappedRows - Already-mapped rows for context
+ * @param {Array} analyteSchema - All available analytes from DB
+ * @returns {Promise<Array>} - Array of LLM suggestions per row
+ */
+async function proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema) {
+  if (!unmappedRows || unmappedRows.length === 0) {
+    return [];
+  }
+
+  if (!openai) {
+    logger.warn('OpenAI client not initialized; skipping LLM mapping');
+    return unmappedRows.map(row => ({
+      result_id: row.result_id,
+      label: row.label_raw,
+      decision: null,
+      error: 'NO_API_KEY',
+      code: null,
+      confidence: 0,
+      comment: 'OPENAI_API_KEY not configured'
+    }));
+  }
+
+  // Build category context from already-mapped rows
+  const categoryContext = mappedRows
+    .map(r => r.final_analyte?.code)
+    .filter(Boolean);
+
+  // Build analyte schema string
+  const schemaText = analyteSchema
+    .map(a => `${a.code} (${a.name})`)
+    .join('\n');
+
+  // Build batch prompt
+  const inputPrompt = buildBatchPrompt(unmappedRows, categoryContext, schemaText);
+
+  try {
+    // Log full input prompt for debugging
+    logger.info({
+      model: 'gpt-5-mini',
+      unmapped_count: unmappedRows.length,
+      prompt_length: inputPrompt.length,
+      full_prompt: inputPrompt
+    }, 'Calling LLM API with full prompt');
+
+    const response = await openai.responses.create({
+      model: 'gpt-5-mini',
+      input: inputPrompt,
+      max_output_tokens: 2000,
+      reasoning: {
+        effort: 'minimal'  // Limit reasoning tokens to force structured output
+      },
+      text: {
+        format: { type: 'json_object' }  // Responses API format structure
+      }
+    });
+
+    // Log the full response structure for debugging
+    logger.info({
+      response_keys: Object.keys(response),
+      response_type: typeof response,
+      full_response: JSON.stringify(response, null, 2),
+      output_text_value: response.output_text,
+      output_text_length: response.output_text?.length || 0
+    }, 'LLM full response received');
+
+    // Try different property names for the output
+    const outputText = response.output_text || response.text || response.output ||
+                       (response.choices && response.choices[0]?.message?.content) ||
+                       (response.choices && response.choices[0]?.text);
+
+    // Check if we got any output
+    if (!outputText || outputText.trim() === '') {
+      logger.warn({
+        response,
+        attempted_properties: ['output_text', 'text', 'output', 'choices[0].message.content', 'choices[0].text']
+      }, 'LLM returned empty output - no valid output property found');
+      throw new Error('LLM returned empty response');
+    }
+
+    return parseLLMBatchOutput(outputText, unmappedRows);
+  } catch (error) {
+    logger.error({ error: error.message }, 'LLM API call failed');
+    // Return error placeholders for all rows
+    return unmappedRows.map(row => ({
+      result_id: row.result_id,
+      label: row.label_raw,
+      decision: null,
+      error: classifyError(error),
+      code: null,
+      confidence: 0,
+      comment: error.message
+    }));
+  }
+}
+
+/**
  * Process a single lab result row and determine mapping decision
  *
  * @param {Object} row - Lab result row
@@ -289,9 +499,10 @@ async function processRow(row, hasPgTrgm, analyteSuggestions) {
     };
   }
 
-  // Tier C: LLM suggestions (stub for v0.9)
-  const llmMatch = await findLLMMatch(analyteSuggestions, labelRaw);
-  result.tiers.llm = llmMatch;
+  // Tier C: LLM suggestions
+  // Note: LLM is called in batch mode after all rows are processed
+  // This placeholder will be updated in dryRun()
+  result.tiers.llm = { present: false };
 
   // No matches found
   result.duration_ms = Date.now() - startTime;
@@ -394,9 +605,94 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
       };
     }
 
-    // Log individual row (for observability)
-    logger.info(rowResult);
+    // Don't log yet - we'll log after LLM tier
   }
+
+  // Tier C: LLM Mapping (v0.9.1) - Batch processing
+  const llmStartTime = Date.now();
+  let llmMetrics = {
+    total_tokens: { prompt: 0, completion: 0 },
+    total_cost_usd: 0,
+    duration_ms: 0,
+    errors: 0
+  };
+
+  // Collect unmapped and ambiguous rows
+  const unmappedRows = rowLogs.filter(r =>
+    r.final_decision === 'UNMAPPED' || r.final_decision === 'AMBIGUOUS_FUZZY'
+  );
+
+  const mappedRows = rowLogs.filter(r =>
+    r.final_decision === 'MATCH_EXACT' || r.final_decision === 'MATCH_FUZZY'
+  );
+
+  if (unmappedRows.length > 0) {
+    try {
+      // Fetch analyte schema
+      const analyteSchema = await getAnalyteSchema();
+
+      // Call LLM
+      const llmResults = await proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema);
+
+      // Merge LLM results back into rowLogs
+      llmResults.forEach((llmResult, idx) => {
+        const originalRow = unmappedRows[idx];
+        const rowLogIndex = rowLogs.findIndex(r => r.result_id === originalRow.result_id);
+
+        if (rowLogIndex !== -1) {
+          const rowLog = rowLogs[rowLogIndex];
+
+          // Update LLM tier
+          if (llmResult.error) {
+            rowLog.tiers.llm = {
+              present: true,
+              error: llmResult.error,
+              decision: null,
+              comment: llmResult.comment
+            };
+            llmMetrics.errors += 1;
+          } else {
+            rowLog.tiers.llm = {
+              present: true,
+              decision: llmResult.decision,
+              code: llmResult.code,
+              name: llmResult.name,
+              confidence: llmResult.confidence,
+              comment: llmResult.comment
+            };
+
+            // Update final decision if LLM provided a match
+            if (llmResult.decision === 'MATCH' && llmResult.code) {
+              rowLog.final_decision = 'MATCH_LLM';
+              rowLog.confidence = llmResult.confidence;
+              // Note: We don't fetch full analyte details in dry-run
+              rowLog.final_analyte = {
+                code: llmResult.code,
+                source: 'llm'
+              };
+              counters.llm_matches += 1;
+            } else if (llmResult.decision === 'NEW') {
+              rowLog.final_decision = 'NEW_LLM';
+              rowLog.confidence = llmResult.confidence;
+              counters.new_llm += 1;
+            } else if (llmResult.decision === 'ABSTAIN') {
+              rowLog.final_decision = 'ABSTAIN_LLM';
+              counters.abstain_llm += 1;
+            }
+          }
+        }
+      });
+
+      llmMetrics.duration_ms = Date.now() - llmStartTime;
+    } catch (error) {
+      logger.error({ error: error.message, report_id }, 'LLM tier failed');
+      llmMetrics.errors = unmappedRows.length;
+      llmMetrics.duration_ms = Date.now() - llmStartTime;
+    }
+  }
+
+  // Now log individual rows (after LLM processing)
+  rowLogs.forEach(rowResult => logger.info(rowResult));
 
   // Calculate summary statistics
   const totalDuration = Date.now() - startTime;
@@ -447,6 +743,19 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
         llm_avg_ms: parseFloat(avgDuration(durations.llm).toFixed(1)),
       },
       slowest_row: slowestRow,
+    },
+    llm: {
+      matches: counters.llm_matches,
+      new: counters.new_llm,
+      abstain: counters.abstain_llm,
+      errors: llmMetrics.errors,
+      avg_confidence: counters.llm_matches > 0
+        ? rowLogs.filter(r => r.final_decision === 'MATCH_LLM')
+            .reduce((sum, r) => sum + (r.confidence || 0), 0) / counters.llm_matches
+        : 0,
+      total_cost_usd: llmMetrics.total_cost_usd,
+      total_tokens: llmMetrics.total_tokens,
+      duration_ms: llmMetrics.duration_ms
     },
     data_quality: dataQuality,
     thresholds_used: {
