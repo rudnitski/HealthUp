@@ -799,6 +799,28 @@ router.post('/', async (req, res) => {
     });
 
     markStep('persistence', 'completed');
+
+    // Run dry-run mapping if enabled (PRD v0.9)
+    if (process.env.ENABLE_MAPPING_DRY_RUN === 'true') {
+      try {
+        const { dryRun } = require('../services/MappingApplier');
+
+        await dryRun({
+          report_id: persistenceResult.reportId,
+          patient_id: persistenceResult.patientId,
+          // Optional: pass LLM suggestions if available (v1.0+)
+          analyte_suggestions: null,
+        });
+
+        // Logs are emitted via Pino logger (structured JSON)
+        // No need to include in HTTP response
+      } catch (mappingError) {
+        // eslint-disable-next-line no-console
+        console.error('[analyzeLabReport] Mapping dry-run failed (non-fatal):', mappingError);
+        // Continue - don't fail the request if mapping dry-run fails
+      }
+    }
+
     markStep('completed');
 
     const responsePayload = {
