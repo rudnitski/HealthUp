@@ -1,18 +1,32 @@
 const OpenAI = require('openai');
 const crypto = require('crypto');
+const pino = require('pino');
 const { pool } = require('../db');
-const { loadPrompt } = require('../utils/promptLoader');
+const { getSchemaSnapshot, updateMRU } = require('./schemaSnapshot');
+const { validateSQL } = require('./sqlValidator');
+const { buildSchemaSection, buildPrompt } = require('./promptBuilder');
 
+// Configuration
+const SQL_GENERATION_ENABLED = process.env.SQL_GENERATION_ENABLED !== 'false';
 const DEFAULT_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
-const SCHEMA_CACHE_TTL_MS = Number.isFinite(Number(process.env.SQL_SCHEMA_CACHE_TTL_MS))
-  ? Number(process.env.SQL_SCHEMA_CACHE_TTL_MS)
-  : 24 * 60 * 60 * 1000; // 24 hours
+const ALLOW_MODEL_OVERRIDE = process.env.ALLOW_MODEL_OVERRIDE === 'true';
 const QUESTION_MAX_LENGTH = 500;
-const DISALLOWED_KEYWORD_PATTERN = /\b(insert|update|delete|drop|alter|truncate|grant|revoke)\b/i;
 const RUSSIAN_CHAR_PATTERN = /[А-Яа-яЁё]/;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// Logger with pretty printing in development
+const logger = pino({
+  transport: NODE_ENV === 'development' ? {
+    target: 'pino-pretty',
+    options: {
+      colorize: true,
+      translateTime: 'HH:MM:ss',
+      ignore: 'pid,hostname',
+    },
+  } : undefined,
+});
 
 let openAiClient;
-let cachedSchemaSummary = null;
 
 class SqlGeneratorError extends Error {
   constructor(message, { status = 500, code } = {}) {
@@ -23,9 +37,12 @@ class SqlGeneratorError extends Error {
   }
 }
 
+/**
+ * Get OpenAI client
+ */
 const getOpenAiClient = () => {
   if (!process.env.OPENAI_API_KEY) {
-    throw new SqlGeneratorError('OpenAI API key is not configured', { status: 500, code: 'missing_api_key' });
+    throw new SqlGeneratorError('OpenAI API key is not configured', { status: 500, code: 'MISSING_API_KEY' });
   }
 
   if (!openAiClient) {
@@ -35,222 +52,92 @@ const getOpenAiClient = () => {
   return openAiClient;
 };
 
+/**
+ * Create hash
+ */
 const createHash = (value) => {
-  if (!value) {
-    return null;
-  }
-
+  if (!value) return null;
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 };
 
+/**
+ * Normalize question
+ */
 const normalizeQuestion = (input) => {
-  if (typeof input !== 'string') {
-    return '';
-  }
-
+  if (typeof input !== 'string') return '';
   return input.replace(/\s+/g, ' ').trim();
 };
 
+/**
+ * Detect language
+ */
 const detectLanguage = (question) => (RUSSIAN_CHAR_PATTERN.test(question) ? 'ru' : 'en');
 
-const fetchSchemaFromDb = async () => {
-  const { rows } = await pool.query(
-    `
-    SELECT
-      table_name,
-      column_name,
-      data_type
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-    ORDER BY table_name, ordinal_position
-    `,
-  );
-
-  const tables = rows.reduce((acc, row) => {
-    const tableName = row.table_name;
-    if (!acc[tableName]) {
-      acc[tableName] = [];
-    }
-
-    acc[tableName].push({ column: row.column_name, type: row.data_type });
-    return acc;
-  }, {});
-
-  const formatted = Object.entries(tables)
-    .sort(([tableA], [tableB]) => tableA.localeCompare(tableB))
-    .map(([tableName, columns]) => {
-      const columnDescriptions = columns
-        .slice(0, 24)
-        .map((entry) => `${entry.column} (${entry.type})`)
-        .join(', ');
-
-      const extraColumns = columns.length > 24 ? ` … +${columns.length - 24} more` : '';
-      return `- ${tableName}: ${columnDescriptions}${extraColumns}`;
-    })
-    .join('\n');
-
-  return {
-    summary: formatted || 'No schema information available.',
-    fetchedAt: Date.now(),
+/**
+ * Audit log SQL generation
+ */
+async function auditLog({ userHash, requestId, question, sql, sqlHash, validationOutcome, schemaSnapshotId, metadata }) {
+  const logEntry = {
+    event_type: 'sql_generation',
+    timestamp: new Date().toISOString(),
+    request_id: requestId,
+    user_hash: userHash,
+    question,
+    sql_hash: sqlHash,
+    validation_outcome: validationOutcome,
+    schema_snapshot_id: schemaSnapshotId,
+    metadata,
   };
-};
 
-const getSchemaSummary = async () => {
-  const now = Date.now();
+  logger.info(logEntry, '[sqlGenerator] SQL generation audit log');
 
-  if (cachedSchemaSummary && now - cachedSchemaSummary.fetchedAt < SCHEMA_CACHE_TTL_MS) {
-    return cachedSchemaSummary.summary;
-  }
+  // TODO: Optionally write to security.audit.jsonl file
+}
 
-  try {
-    cachedSchemaSummary = await fetchSchemaFromDb();
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('[sqlGenerator] Failed to fetch schema metadata:', error);
-    cachedSchemaSummary = {
-      summary: 'Schema metadata is temporarily unavailable.',
-      fetchedAt: now,
-    };
-  }
-
-  return cachedSchemaSummary.summary;
-};
-
-const structuredOutputFormat = {
-  type: 'json_schema',
-  name: 'healthup_sql_generation',
-  strict: true,
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      query: { type: 'string' },
-      confidence: { anyOf: [{ type: 'number' }, { type: 'null' }] },
-      notes: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-      warnings: {
-        type: 'array',
-        items: { type: 'string' },
-      },
-    },
-    required: ['query', 'confidence', 'notes', 'warnings'],
-  },
-};
-
-const systemPrompt = loadPrompt('sql_generator_system_prompt.txt');
-const userPromptTemplate = loadPrompt('sql_generator_user_prompt.txt');
-
-const applyTemplate = (template, values) => template.replace(/{{(\w+)}}/g, (_match, key) => {
-  if (Object.prototype.hasOwnProperty.call(values, key)) {
-    return values[key];
-  }
-
-  return '';
-});
-
-const buildUserPrompt = ({ question, language, schemaSummary }) => {
-  const languageLabel = language === 'ru' ? 'Russian' : 'English';
-  const safeQuestion = question || '';
-  const languageNote = language === 'ru'
-    ? 'Use Russian comments only when necessary for clarity; SQL keywords remain in English.'
-    : 'Use English for SQL keywords.';
-
-  return applyTemplate(userPromptTemplate, {
-    LANGUAGE_LABEL: languageLabel,
-    QUESTION: safeQuestion,
-    SCHEMA_SUMMARY: schemaSummary,
-    LANGUAGE_NOTE: languageNote,
-  });
-};
-
-const logGeneration = async ({
-  status,
-  userHash,
-  question,
-  language,
-  sql,
-  model,
-  confidence,
-  latencyMs,
-  error,
-  metadata,
-}) => {
-  const id = crypto.randomUUID();
-  const payload = [
-    'INSERT INTO sql_generation_logs (id, status, user_id_hash, prompt, prompt_language, generated_sql, model, confidence, latency_ms, error, metadata)',
-    'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-  ].join(' ');
-
-  try {
-    await pool.query(payload, [
-      id,
-      status,
-      userHash,
-      question,
-      language,
-      sql,
-      model,
-      confidence,
-      latencyMs,
-      error,
-      metadata ? JSON.stringify(metadata) : null,
-    ]);
-  } catch (loggingError) {
-    // eslint-disable-next-line no-console
-    console.error('[sqlGenerator] Failed to log generation:', loggingError);
-  }
-};
-
-const ensureQueryIsSafe = (sql) => {
-  if (!sql) {
-    throw new SqlGeneratorError('The model did not return a SQL query', { status: 502, code: 'empty_query' });
-  }
-
-  if (DISALLOWED_KEYWORD_PATTERN.test(sql)) {
-    throw new SqlGeneratorError('Generated SQL contains disallowed operations', { status: 502, code: 'unsafe_sql' });
-  }
-
-  if (!/^\s*(select|with)\b/i.test(sql)) {
-    throw new SqlGeneratorError('Generated SQL must start with SELECT or WITH', { status: 502, code: 'invalid_sql' });
-  }
-
-  if (sql.includes(';')) {
-    throw new SqlGeneratorError('Generated SQL must not contain semicolons', { status: 502, code: 'multi_statement' });
-  }
-};
-
-const stripTrailingSemicolons = (sql) => {
-  if (typeof sql !== 'string') {
-    return '';
-  }
-
-  return sql.replace(/;+(\s*)$/, '$1').trim();
-};
-
-const generateSqlQuery = async ({ question, userIdentifier }) => {
+/**
+ * Generate SQL query
+ */
+const generateSqlQuery = async ({ question, userIdentifier, model }) => {
   const startedAt = Date.now();
+  const requestId = crypto.randomUUID();
   const normalizedQuestion = normalizeQuestion(question);
 
+  // Check feature flag
+  if (!SQL_GENERATION_ENABLED) {
+    throw new SqlGeneratorError('SQL generation is currently disabled', { status: 503, code: 'FEATURE_DISABLED' });
+  }
+
+  // Validate input
   if (!normalizedQuestion) {
-    throw new SqlGeneratorError('Question is required', { status: 400, code: 'missing_question' });
+    throw new SqlGeneratorError('Question is required', { status: 400, code: 'BAD_REQUEST' });
   }
 
   if (normalizedQuestion.length > QUESTION_MAX_LENGTH) {
     throw new SqlGeneratorError(`Question exceeds ${QUESTION_MAX_LENGTH} characters`, {
       status: 400,
-      code: 'question_too_long',
+      code: 'BAD_REQUEST',
     });
   }
 
-  if (DISALLOWED_KEYWORD_PATTERN.test(normalizedQuestion)) {
-    throw new SqlGeneratorError('Only read-only queries are supported', { status: 400, code: 'disallowed_keywords' });
-  }
-
   const language = detectLanguage(normalizedQuestion);
-  const schemaSummary = await getSchemaSummary();
-  const client = getOpenAiClient();
 
+  // Get schema snapshot
+  const { manifest, snapshotId: schemaSnapshotId } = await getSchemaSnapshot();
+
+  // Build schema section with table ranking
+  const schemaSummary = buildSchemaSection(manifest, normalizedQuestion);
+
+  // Build prompt
+  const { systemPrompt, userPrompt } = buildPrompt({
+    question: normalizedQuestion,
+    schemaSummary,
+    language,
+  });
+
+  // Call OpenAI
+  const client = getOpenAiClient();
   const requestPayload = {
-    model: DEFAULT_MODEL,
+    model: ALLOW_MODEL_OVERRIDE && model ? model : DEFAULT_MODEL,
     input: [
       {
         role: 'system',
@@ -258,23 +145,57 @@ const generateSqlQuery = async ({ question, userIdentifier }) => {
       },
       {
         role: 'user',
-        content: [{ type: 'input_text', text: buildUserPrompt({ question: normalizedQuestion, language, schemaSummary }) }],
+        content: [{ type: 'input_text', text: userPrompt }],
       },
     ],
+    reasoning: {
+      effort: 'medium',
+    },
     text: {
-      format: structuredOutputFormat,
+      format: {
+        type: 'json_schema',
+        name: 'healthup_sql_generation',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            sql: { type: 'string' },
+            explanation: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          },
+          required: ['sql', 'explanation'],
+        },
+      },
     },
     metadata: {
       source: 'sql-generator',
       language,
+      request_id: requestId,
     },
   };
 
-  let response;
+  // Log the full LLM request
+  logger.info({
+    request_id: requestId,
+    model: requestPayload.model,
+    system_prompt: systemPrompt,
+    user_prompt: userPrompt,
+    schema_snapshot_id: schemaSnapshotId,
+  }, '[sqlGenerator] LLM Request');
 
+  let response;
   try {
     response = await client.responses.parse(requestPayload);
+
+    // Log the LLM response
+    logger.info({
+      request_id: requestId,
+      model: response?.model,
+      response: response?.output_parsed,
+    }, '[sqlGenerator] LLM Response');
   } catch (error) {
+    logger.error({ request_id: requestId, error: error.message }, '[sqlGenerator] LLM Request Failed');
+
     if (error instanceof SyntaxError) {
       response = await client.responses.create(requestPayload);
     } else {
@@ -283,76 +204,128 @@ const generateSqlQuery = async ({ question, userIdentifier }) => {
   }
 
   const parsed = response?.output_parsed;
-  const rawQuery = typeof parsed?.query === 'string' ? parsed.query.trim() : '';
-  const confidence = Number.isFinite(parsed?.confidence) ? parsed.confidence : null;
-  const notes = typeof parsed?.notes === 'string' ? parsed.notes.trim() : null;
-  const warnings = Array.isArray(parsed?.warnings)
-    ? parsed.warnings.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim())
-    : [];
+  const rawSql = typeof parsed?.sql === 'string' ? parsed.sql.trim() : '';
+  const explanation = typeof parsed?.explanation === 'string' ? parsed.explanation.trim() : null;
 
-  const sanitizedQuery = stripTrailingSemicolons(rawQuery);
+  if (!rawSql) {
+    throw new SqlGeneratorError('The model did not return a SQL query', { status: 502, code: 'EMPTY_QUERY' });
+  }
 
-  ensureQueryIsSafe(sanitizedQuery);
+  // Log generated SQL for debugging
+  logger.debug({ rawSql, question: normalizedQuestion }, '[sqlGenerator] Generated SQL before validation');
 
-  const latencyMs = Date.now() - startedAt;
+  // Validate SQL
+  const validationResult = await validateSQL(rawSql, { schemaSnapshotId });
 
-  const metadata = warnings.length ? { warnings } : null;
+  if (!validationResult.valid) {
+    const durationMs = Date.now() - startedAt;
+    const userHash = createHash(userIdentifier || 'anonymous');
+    const sqlHash = createHash(rawSql);
+
+    // Audit log validation failure
+    await auditLog({
+      userHash,
+      requestId,
+      question: normalizedQuestion,
+      sql: rawSql,
+      sqlHash,
+      validationOutcome: 'rejected',
+      schemaSnapshotId,
+      metadata: {
+        violations: validationResult.violations,
+        rule_version: validationResult.validator.ruleVersion,
+      },
+    });
+
+    // Return 422 with structured error
+    const hint = validationResult.violations.some((v) => v.code === 'FORBIDDEN_KEYWORD')
+      ? 'Rephrase your question without administrative keywords.'
+      : 'Try simplifying your question or breaking it into smaller parts.';
+
+    return {
+      ok: false,
+      error: {
+        code: 'VALIDATION_FAILED',
+        message: 'Only single read-only SELECT statements are allowed.',
+      },
+      details: {
+        violations: validationResult.violations,
+        rule_version: validationResult.validator.ruleVersion,
+        hint,
+      },
+      metadata: {
+        model: response?.model || DEFAULT_MODEL,
+        tokens: {
+          prompt: 0, // TODO: Extract from response if available
+          completion: 0,
+          total: 0,
+        },
+        duration_ms: durationMs,
+        schema_snapshot_id: schemaSnapshotId,
+      },
+    };
+  }
+
+  // SQL is valid
+  const safeSql = validationResult.sqlWithLimit;
+  const durationMs = Date.now() - startedAt;
   const userHash = createHash(userIdentifier || 'anonymous');
+  const sqlHash = createHash(safeSql);
 
-  await logGeneration({
-    status: 'success',
+  // Audit log success
+  await auditLog({
     userHash,
+    requestId,
     question: normalizedQuestion,
-    language,
-    sql: rawQuery,
-    model: response?.model || DEFAULT_MODEL,
-    confidence,
-    latencyMs,
-    error: null,
-    metadata,
+    sql: safeSql,
+    sqlHash,
+    validationOutcome: 'accepted',
+    schemaSnapshotId,
+    metadata: {
+      model: response?.model || DEFAULT_MODEL,
+      explanation,
+    },
   });
 
+  // Update MRU cache with tables mentioned in the query
+  // Extract table names from SQL (simple regex match)
+  const tablePattern = /FROM\s+([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)/gi;
+  let match;
+  while ((match = tablePattern.exec(safeSql)) !== null) {
+    updateMRU(match[1]);
+  }
+
   return {
-    question: normalizedQuestion,
-    language,
-    sql: sanitizedQuery,
-    confidence,
-    notes: notes || null,
-    warnings,
-    model: response?.model || DEFAULT_MODEL,
-    latency_ms: latencyMs,
-    generated_at: new Date().toISOString(),
+    ok: true,
+    sql: safeSql,
+    explanation: explanation || null,
+    metadata: {
+      model: response?.model || DEFAULT_MODEL,
+      tokens: {
+        prompt: 0, // TODO: Extract from response if available
+        completion: 0,
+        total: 0,
+      },
+      duration_ms: durationMs,
+      schema_snapshot_id: schemaSnapshotId,
+      validator: validationResult.validator,
+    },
   };
 };
 
+/**
+ * Handle SQL generation with error handling
+ */
 const handleGeneration = async (params) => {
   try {
     return await generateSqlQuery(params);
   } catch (error) {
-    const latencyMs = Date.now() - (params.startedAt || Date.now());
-    const userHash = createHash(params.userIdentifier || 'anonymous');
-    const normalizedQuestion = normalizeQuestion(params.question);
-
-    await logGeneration({
-      status: 'error',
-      userHash,
-      question: normalizedQuestion,
-      language: normalizedQuestion ? detectLanguage(normalizedQuestion) : 'unknown',
-      sql: null,
-      model: DEFAULT_MODEL,
-      confidence: null,
-      latencyMs,
-      error: error?.message || 'Unknown error',
-      metadata: null,
-    });
-
     if (error instanceof SqlGeneratorError) {
       throw error;
     }
 
-    // eslint-disable-next-line no-console
-    console.error('[sqlGenerator] Unexpected error during SQL generation:', error);
-    throw new SqlGeneratorError('Unable to generate SQL at this time', { status: 502, code: 'generation_failed' });
+    logger.error({ error }, '[sqlGenerator] Unexpected error during SQL generation');
+    throw new SqlGeneratorError('Unexpected error generating SQL', { status: 500, code: 'UNEXPECTED_ERROR' });
   }
 };
 

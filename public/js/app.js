@@ -792,11 +792,16 @@
         sqlResultEl.hidden = !isNonEmptyString(payload.sql);
       }
 
+      // Handle new metadata structure (PRD v0.9.2)
       if (sqlModelEl) {
-        sqlModelEl.textContent = isNonEmptyString(payload.model) ? `Model: ${payload.model}` : '';
+        const model = payload.metadata && isNonEmptyString(payload.metadata.model)
+          ? payload.metadata.model
+          : payload.model; // Fallback to old format
+        sqlModelEl.textContent = isNonEmptyString(model) ? `Model: ${model}` : '';
       }
 
       if (sqlConfidenceEl) {
+        // Old format compatibility
         if (typeof payload.confidence === 'number' && Number.isFinite(payload.confidence)) {
           const clamped = Math.max(0, Math.min(payload.confidence, 1));
           const percent = Math.round(clamped * 100);
@@ -819,8 +824,15 @@
         }
       }
 
+      // Display explanation (new in PRD v0.9.2)
+      if (isNonEmptyString(payload.explanation)) {
+        renderNotes(payload.explanation);
+      } else {
+        renderNotes(payload.notes); // Fallback to old format
+      }
+
+      // Warnings are deprecated in new format, but keep for compatibility
       renderWarnings(payload.warnings);
-      renderNotes(payload.notes);
 
       if (sqlRegenerateBtn) {
         sqlRegenerateBtn.hidden = false;
@@ -871,9 +883,30 @@
 
         const payload = await response.json().catch(() => null);
 
+        // Handle validation failure (HTTP 422) with structured error
+        if (response.status === 422 && payload && payload.ok === false) {
+          const errorDetails = payload.error && isNonEmptyString(payload.error.message)
+            ? payload.error.message
+            : 'Generated SQL failed validation.';
+          const hint = payload.details && isNonEmptyString(payload.details.hint)
+            ? ` ${payload.details.hint}`
+            : '';
+          throw new Error(`${errorDetails}${hint}`);
+        }
+
         if (!response.ok) {
-          const errorMessage = payload && isNonEmptyString(payload.error)
-            ? payload.error
+          const errorMessage = payload && payload.error && isNonEmptyString(payload.error.message)
+            ? payload.error.message
+            : payload && isNonEmptyString(payload.error)
+              ? payload.error
+              : 'Unable to generate SQL right now.';
+          throw new Error(errorMessage);
+        }
+
+        // New format returns ok: true/false
+        if (payload.ok === false) {
+          const errorMessage = payload.error && isNonEmptyString(payload.error.message)
+            ? payload.error.message
             : 'Unable to generate SQL right now.';
           throw new Error(errorMessage);
         }
