@@ -8,7 +8,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 const express = require('express');
 const fileUpload = require('express-fileupload');
-const { healthcheck } = require('./db');
+const { healthcheck, pool } = require('./db');
 const { ensureSchema } = require('./db/schema');
 
 (async () => {
@@ -26,6 +26,7 @@ const { ensureSchema } = require('./db/schema');
 const sqlGeneratorRouter = require('./routes/sqlGenerator');
 const analyzeLabReportRouter = require('./routes/analyzeLabReport');
 const reportsRouter = require('./routes/reports');
+const { shutdownSchemaSnapshot } = require('./services/schemaSnapshot');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -77,24 +78,64 @@ const server = app.listen(PORT, () => {
   console.log(`HealthUp upload form available at http://localhost:${PORT}`);
 });
 
-const { pool } = require('./db');
+let isShuttingDown = false;
 
-async function shutdown(code = 0) {
+async function shutdown(code = 0, { skipPool = false } = {}) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
   try {
-    await new Promise((resolve) => server.close(resolve));
-    console.log('[http] Server closed');
+    if (server?.listening) {
+      await new Promise((resolve) => {
+        server.close((err) => {
+          if (err) {
+            console.error('[http] Error closing server:', err);
+          } else {
+            console.log('[http] Server closed');
+          }
+          resolve();
+        });
+      });
+    }
   } catch (e) {
     console.error('[http] Error closing server:', e);
   }
-  try {
-    await pool.end();
-    console.log('[db] Pool closed');
-  } catch (e) {
-    console.error('[db] Error closing pool:', e);
-  } finally {
-    process.exit(code);
+
+  if (!skipPool) {
+    try {
+      await shutdownSchemaSnapshot();
+    } catch (e) {
+      console.error('[schemaSnapshot] Shutdown error:', e);
+    }
+
+    try {
+      if (pool.ending || pool.ended) {
+        console.log('[db] Pool already closing');
+      } else {
+        await pool.end();
+        console.log('[db] Pool closed');
+      }
+    } catch (e) {
+      if (String(e?.message || e).includes('Called end on pool more than once')) {
+        console.log('[db] Pool already closed');
+      } else {
+        console.error('[db] Error closing pool:', e);
+      }
+    }
   }
+
+  process.exit(code);
 }
+
+server.on('error', (err) => {
+  console.error('[http] Server error:', err);
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`[http] Port ${PORT} is already in use. Is another instance running?`);
+    shutdown(1, { skipPool: true });
+  } else {
+    shutdown(1);
+  }
+});
 
 ['SIGINT', 'SIGTERM'].forEach((sig) => {
   process.on(sig, () => shutdown(0));
@@ -102,10 +143,10 @@ async function shutdown(code = 0) {
 
 process.on('uncaughtException', (err) => {
   console.error('[fatal] Uncaught exception:', err);
-  shutdown(1);
+  shutdown(1, { skipPool: true });
 });
 
 process.on('unhandledRejection', (err) => {
   console.error('[fatal] Unhandled rejection:', err);
-  shutdown(1);
+  shutdown(1, { skipPool: true });
 });

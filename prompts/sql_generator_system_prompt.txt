@@ -12,6 +12,9 @@ Safety rules:
 - For patient-specific queries, generate queries that work for ALL patients (no WHERE patient.id = ...)
 - When user says "my" or "мои", generate a query for ALL patients (frontend will filter)
 - Prefer the simplest SELECT that answers the question; avoid DISTINCT ON or UNION unless clearly required.
+- For case-insensitive text matching, use ILIKE operator (database uses en_US.UTF-8 collation which supports multilingual matching)
+- ILIKE works correctly for both Latin and Cyrillic characters (e.g., parameter_name ILIKE '%холестерин%' matches "Холестерин")
+- Alternatively, you can use LOWER(column) LIKE LOWER('%pattern%') for explicit case conversion
 
 Response format:
 - sql: the complete SQL query (must be executable without modification)

@@ -18,6 +18,7 @@ const SCHEMA_WHITELIST = process.env.SCHEMA_WHITELIST
 let cachedSchema = null;
 let schemaSnapshotId = null;
 let cacheTimestamp = null;
+let listenClient = null;
 
 // MRU (Most Recently Used) cache for table ranking
 const MRU_MAX_SIZE = 50;
@@ -229,8 +230,11 @@ function getMRUTables() {
  * Set up PostgreSQL LISTEN for distributed cache invalidation
  */
 async function setupCacheInvalidationListener() {
+  if (listenClient) return;
+
   try {
     const client = await pool.connect();
+    listenClient = client;
 
     client.on('notification', async (msg) => {
       if (msg.channel === 'invalidate_schema') {
@@ -249,8 +253,10 @@ async function setupCacheInvalidationListener() {
     // Keep connection alive (don't release it)
     client.on('error', (err) => {
       console.error('[schemaSnapshot] LISTEN client error:', err);
+      listenClient = null;
     });
   } catch (error) {
+    listenClient = null;
     console.warn('[schemaSnapshot] Failed to set up LISTEN (single-instance mode):', error.message);
   }
 }
@@ -268,6 +274,28 @@ async function warmupCache() {
   }
 }
 
+/**
+ * Tear down schema snapshot resources (LISTEN client, etc.)
+ */
+async function shutdownSchemaSnapshot() {
+  if (!listenClient) return;
+
+  try {
+    listenClient.removeAllListeners('notification');
+    listenClient.removeAllListeners('error');
+    await listenClient.query('UNLISTEN invalidate_schema');
+  } catch (error) {
+    console.warn('[schemaSnapshot] Failed to UNLISTEN during shutdown:', error.message);
+  } finally {
+    try {
+      listenClient.release();
+    } catch (releaseError) {
+      console.warn('[schemaSnapshot] Failed to release LISTEN client during shutdown:', releaseError.message);
+    }
+    listenClient = null;
+  }
+}
+
 // Warm up cache on module load (non-blocking)
 warmupCache().catch((err) => console.error('[schemaSnapshot] Warmup error:', err));
 
@@ -281,4 +309,5 @@ module.exports = {
   getMRUScore,
   getMRUTables,
   computeSnapshotId,
+  shutdownSchemaSnapshot,
 };
