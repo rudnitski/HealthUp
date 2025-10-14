@@ -5,9 +5,11 @@ const { pool } = require('../db');
 const { getSchemaSnapshot, updateMRU } = require('./schemaSnapshot');
 const { validateSQL } = require('./sqlValidator');
 const { buildSchemaSection, buildPrompt } = require('./promptBuilder');
+const { generateSqlWithAgenticLoop } = require('./agenticSqlGenerator');
 
 // Configuration
 const SQL_GENERATION_ENABLED = process.env.SQL_GENERATION_ENABLED !== 'false';
+const AGENTIC_SQL_ENABLED = process.env.AGENTIC_SQL_ENABLED === 'true';
 const DEFAULT_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
 const ALLOW_MODEL_OVERRIDE = process.env.ALLOW_MODEL_OVERRIDE === 'true';
 const QUESTION_MAX_LENGTH = 500;
@@ -126,6 +128,22 @@ const generateSqlQuery = async ({ question, userIdentifier, model }) => {
 
   // Build schema section with table ranking
   const schemaSummary = buildSchemaSection(manifest, normalizedQuestion);
+
+  // NEW: Check if agentic mode is enabled
+  if (AGENTIC_SQL_ENABLED) {
+    logger.info({ request_id: requestId, mode: 'agentic' }, '[sqlGenerator] Using agentic mode');
+
+    return await generateSqlWithAgenticLoop({
+      question: normalizedQuestion,
+      userIdentifier,
+      model: ALLOW_MODEL_OVERRIDE && model ? model : DEFAULT_MODEL,
+      schemaContext: schemaSummary,
+      schemaSnapshotId,
+    });
+  }
+
+  // Existing single-shot generation
+  logger.info({ request_id: requestId, mode: 'single-shot' }, '[sqlGenerator] Using single-shot mode');
 
   // Build prompt
   const { systemPrompt, userPrompt } = buildPrompt({
