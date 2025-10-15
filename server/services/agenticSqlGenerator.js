@@ -31,7 +31,7 @@ const logger = pino({
 
 // Configuration
 const AGENTIC_MAX_ITERATIONS = parseInt(process.env.AGENTIC_MAX_ITERATIONS) || 5;
-const AGENTIC_TIMEOUT_MS = parseInt(process.env.AGENTIC_TIMEOUT_MS) || 15000;
+const AGENTIC_TIMEOUT_MS = parseInt(process.env.AGENTIC_TIMEOUT_MS) || 120000; // 2 minutes default
 const DEFAULT_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
 
 let openAiClient;
@@ -45,7 +45,10 @@ const getOpenAiClient = () => {
   }
 
   if (!openAiClient) {
-    openAiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    openAiClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: 30000, // 30 second timeout for all API calls
+    });
   }
 
   return openAiClient;
@@ -403,6 +406,7 @@ async function generateSqlWithAgenticLoop({
 
     // 3b. Call OpenAI with function calling
     let response;
+    const llmCallStart = Date.now();
     try {
       response = await client.chat.completions.create({
         model: model || DEFAULT_MODEL,
@@ -411,11 +415,29 @@ async function generateSqlWithAgenticLoop({
         tool_choice: 'auto',
         // Note: temperature not supported with gpt-5-mini in function calling mode
       });
+
+      const llmCallDuration = Date.now() - llmCallStart;
+      logger.info({
+        request_id: requestId,
+        iteration,
+        llm_call_duration_ms: llmCallDuration,
+      }, '[agenticSql] OpenAI API call completed');
+
+      // Warn if LLM call is slow
+      if (llmCallDuration > 10000) {
+        logger.warn({
+          request_id: requestId,
+          iteration,
+          llm_call_duration_ms: llmCallDuration,
+        }, '[agenticSql] Slow OpenAI API call detected (>10s)');
+      }
     } catch (error) {
+      const llmCallDuration = Date.now() - llmCallStart;
       logger.error({
         request_id: requestId,
         iteration,
         error: error.message,
+        llm_call_duration_ms: llmCallDuration,
       }, '[agenticSql] OpenAI API call failed');
 
       return formatErrorResponse('API_ERROR', iterationLog, iteration, startTime);
@@ -475,12 +497,14 @@ async function generateSqlWithAgenticLoop({
         params,
       }, '[agenticSql] Executing tool');
 
+      const toolCallStart = Date.now();
       try {
         let result;
 
         // Execute tool based on name
         if (toolName === 'fuzzy_search_parameter_names') {
           result = await fuzzySearchParameterNames(params.search_term, params.limit);
+          const toolDuration = Date.now() - toolCallStart;
 
           iterationLog.push({
             iteration,
@@ -488,11 +512,30 @@ async function generateSqlWithAgenticLoop({
             params,
             results_count: result.matches_found,
             results_preview: result.matches?.slice(0, 3),
+            duration_ms: toolDuration,
             timestamp: new Date().toISOString()
           });
+
+          logger.info({
+            request_id: requestId,
+            iteration,
+            tool_name: toolName,
+            duration_ms: toolDuration,
+            results_count: result.matches_found,
+          }, '[agenticSql] Tool execution completed');
+
+          if (toolDuration > 5000) {
+            logger.warn({
+              request_id: requestId,
+              iteration,
+              tool_name: toolName,
+              duration_ms: toolDuration,
+            }, '[agenticSql] Slow tool execution detected (>5s)');
+          }
 
         } else if (toolName === 'fuzzy_search_analyte_names') {
           result = await fuzzySearchAnalyteNames(params.search_term, params.limit);
+          const toolDuration = Date.now() - toolCallStart;
 
           iterationLog.push({
             iteration,
@@ -500,11 +543,30 @@ async function generateSqlWithAgenticLoop({
             params,
             results_count: result.matches_found,
             results_preview: result.matches?.slice(0, 3),
+            duration_ms: toolDuration,
             timestamp: new Date().toISOString()
           });
 
+          logger.info({
+            request_id: requestId,
+            iteration,
+            tool_name: toolName,
+            duration_ms: toolDuration,
+            results_count: result.matches_found,
+          }, '[agenticSql] Tool execution completed');
+
+          if (toolDuration > 5000) {
+            logger.warn({
+              request_id: requestId,
+              iteration,
+              tool_name: toolName,
+              duration_ms: toolDuration,
+            }, '[agenticSql] Slow tool execution detected (>5s)');
+          }
+
         } else if (toolName === 'execute_exploratory_sql') {
           result = await executeExploratorySql(params.sql, params.reasoning, { schemaSnapshotId });
+          const toolDuration = Date.now() - toolCallStart;
 
           iterationLog.push({
             iteration,
@@ -512,8 +574,26 @@ async function generateSqlWithAgenticLoop({
             params: { sql_preview: params.sql?.substring(0, 100), reasoning: params.reasoning },
             results_count: result.row_count,
             results_preview: result.rows?.slice(0, 3),
+            duration_ms: toolDuration,
             timestamp: new Date().toISOString()
           });
+
+          logger.info({
+            request_id: requestId,
+            iteration,
+            tool_name: toolName,
+            duration_ms: toolDuration,
+            results_count: result.row_count,
+          }, '[agenticSql] Tool execution completed');
+
+          if (toolDuration > 5000) {
+            logger.warn({
+              request_id: requestId,
+              iteration,
+              tool_name: toolName,
+              duration_ms: toolDuration,
+            }, '[agenticSql] Slow tool execution detected (>5s)');
+          }
 
         } else if (toolName === 'generate_final_query') {
           // Final query - handle with validation
@@ -575,17 +655,20 @@ async function generateSqlWithAgenticLoop({
 
       } catch (error) {
         // Tool execution error - give LLM error feedback
+        const toolDuration = Date.now() - toolCallStart;
         logger.error({
           request_id: requestId,
           iteration,
           tool_name: toolName,
           error: error.message,
+          duration_ms: toolDuration,
         }, '[agenticSql] Tool execution failed');
 
         iterationLog.push({
           iteration,
           tool: toolName,
           error: error.message,
+          duration_ms: toolDuration,
           timestamp: new Date().toISOString()
         });
 
