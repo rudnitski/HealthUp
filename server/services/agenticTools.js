@@ -383,6 +383,10 @@ const TOOL_DEFINITIONS = [
             enum: ["data_query", "plot_query"],
             description: "Type of query: 'data_query' for tables, 'plot_query' for time-series visualization. Default is 'data_query'."
           },
+          plot_title: {
+            type: "string",
+            description: "REQUIRED if query_type='plot_query'. Short plot title (max 30 chars): ONLY the parameter name, NO extra words. Examples: 'Vitamin D', 'Холестерин', 'Glucose'. NOT 'Vitamin D over time' or 'Cholesterol trend'."
+          },
           plot_metadata: {
             type: "object",
             description: "REQUIRED if query_type='plot_query'. Specifies column mapping for plotting. Always include this when generating plot queries to avoid retry overhead.",

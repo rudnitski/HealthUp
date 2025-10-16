@@ -864,7 +864,7 @@
           return;
         }
 
-        // Validate data structure
+        // Validate data structure and preserve all reference range fields
         const validRows = rows.filter(row => {
           const hasT = row.t !== null && row.t !== undefined;
           const hasY = row.y !== null && row.y !== undefined && !isNaN(parseFloat(row.y));
@@ -872,12 +872,27 @@
             console.warn('[app] Invalid row:', row);
           }
           return hasT && hasY;
-        });
+        }).map(row => ({
+          // Core required fields
+          t: row.t,
+          y: row.y,
+          unit: row.unit || 'unknown',
+          // Reference range fields (preserve for band rendering)
+          reference_lower: row.reference_lower,
+          reference_lower_operator: row.reference_lower_operator,
+          reference_upper: row.reference_upper,
+          reference_upper_operator: row.reference_upper_operator,
+          is_value_out_of_range: row.is_value_out_of_range,
+          // Optional context
+          patient_age_snapshot: row.patient_age_snapshot,
+          patient_gender_snapshot: row.patient_gender_snapshot
+        }));
 
         console.log('[app] Valid rows after filtering:', {
           total: rows.length,
           valid: validRows.length,
-          sample: validRows.slice(0, 3)
+          sample: validRows.slice(0, 3),
+          hasReferenceBands: validRows.some(r => r.reference_lower !== null || r.reference_upper !== null)
         });
 
         if (!validRows.length) {
@@ -890,18 +905,20 @@
           return;
         }
 
-        // Extract parameter name from explanation or use default title
-        // Use a simpler title for plots instead of full explanation
-        let plotTitle = 'Cholesterol Over Time'; // Default simple title
+        // Extract meaningful title from plot_title or explanation
+        let plotTitle = 'Lab Results Over Time'; // Fallback
 
-        // Try to extract parameter name from explanation
-        if (payload.explanation && payload.explanation.includes('холестерин')) {
-          plotTitle = 'Изменение холестерина';
+        // Prefer plot_title if provided by LLM
+        if (payload.plot_title && typeof payload.plot_title === 'string') {
+          plotTitle = payload.plot_title.trim();
         } else if (payload.explanation) {
-          // Keep first sentence only if using explanation
-          const firstSentence = payload.explanation.split('.')[0];
-          if (firstSentence.length <= 80) {
+          // Fallback: Use first sentence from explanation (up to 100 chars)
+          const firstSentence = payload.explanation.split(/[.!?]/)[0].trim();
+          if (firstSentence.length > 0 && firstSentence.length <= 100) {
             plotTitle = firstSentence;
+          } else if (firstSentence.length > 100) {
+            // Truncate long explanations
+            plotTitle = firstSentence.substring(0, 97) + '...';
           }
         }
 

@@ -252,11 +252,17 @@ function checkComplexity(sql) {
 
 /**
  * Inject or clamp LIMIT clause
+ * @param {string} sql - SQL query
+ * @param {string} queryType - Query type ('plot_query' or 'data_query')
+ * @returns {string} SQL with enforced LIMIT clause
  */
-function enforceLimitClause(sql) {
+function enforceLimitClause(sql, queryType = 'data_query') {
   const trimmed = sql.trim();
   const hasTrailingSemicolon = /;+\s*$/.test(trimmed);
   const withoutTrailingSemicolon = trimmed.replace(/;+\s*$/, '');
+
+  // Different limits for different query types
+  const maxLimit = queryType === 'plot_query' ? 5000 : 50;
 
   // Check if LIMIT exists
   const limitPattern = /\bLIMIT\s+(\d+)/i;
@@ -266,15 +272,15 @@ function enforceLimitClause(sql) {
 
   if (match) {
     const limitValue = parseInt(match[1], 10);
-    if (limitValue > 50) {
-      // Clamp to 50
-      result = withoutTrailingSemicolon.replace(limitPattern, 'LIMIT 50');
+    if (limitValue > maxLimit) {
+      // Clamp to max limit
+      result = withoutTrailingSemicolon.replace(limitPattern, `LIMIT ${maxLimit}`);
     } else {
       result = withoutTrailingSemicolon;
     }
   } else {
     // No LIMIT, inject it
-    result = `${withoutTrailingSemicolon} LIMIT 50`;
+    result = `${withoutTrailingSemicolon} LIMIT ${maxLimit}`;
   }
 
   return hasTrailingSemicolon ? `${result};` : result;
@@ -282,6 +288,8 @@ function enforceLimitClause(sql) {
 
 /**
  * Validate plot query structure
+ * Ensures plot queries meet the contract required by plotRenderer.js
+ * PRD Reference: docs/PRD_v2_2_lab_plot_with_reference_band.md
  */
 function validatePlotQuery(sql, queryType) {
   if (queryType !== 'plot_query') {
@@ -291,34 +299,44 @@ function validatePlotQuery(sql, queryType) {
   const violations = [];
   const lowerSql = sql.toLowerCase();
 
-  // Check for required columns 't' and 'y'
-  if (!lowerSql.includes(' as t') && !lowerSql.includes(' as t,')) {
+  // Required columns validation
+  const hasColumnT = lowerSql.includes(' as t') || lowerSql.includes(' as t,') || lowerSql.includes(' as t\n');
+  const hasColumnY = lowerSql.includes(' as y') || lowerSql.includes(' as y,') || lowerSql.includes(' as y\n');
+
+  if (!hasColumnT) {
     violations.push({
-      code: 'PLOT_MISSING_COLUMNS',
-      message: 'Plot queries must include column named "t" (Unix timestamp in milliseconds)'
+      code: 'PLOT_MISSING_COLUMN_T',
+      message: 'Plot queries must include column "t" (Unix timestamp in milliseconds). Example: EXTRACT(EPOCH FROM timestamp)::bigint * 1000 AS t'
     });
   }
 
-  if (!lowerSql.includes(' as y') && !lowerSql.includes(' as y,')) {
+  if (!hasColumnY) {
     violations.push({
-      code: 'PLOT_MISSING_COLUMNS',
-      message: 'Plot queries must include column named "y" (numeric values)'
+      code: 'PLOT_MISSING_COLUMN_Y',
+      message: 'Plot queries must include column "y" (numeric measurement value). Example: value::numeric AS y'
     });
+  }
+
+  // Check for unit column (recommended)
+  const hasUnit = lowerSql.includes(' unit') && (lowerSql.includes('as unit') || lowerSql.includes('unit,'));
+  if (!hasUnit) {
+    // Warning, not a hard failure
+    console.warn('[sqlValidator] Plot query missing recommended "unit" column');
   }
 
   // Check for ORDER BY t
   if (!lowerSql.includes('order by t')) {
     violations.push({
       code: 'PLOT_MISSING_ORDER',
-      message: 'Plot queries must include ORDER BY t'
+      message: 'Plot queries must include "ORDER BY t ASC" for chronological ordering'
     });
   }
 
-  // Check for numeric casting (::numeric)
+  // Check for numeric casting (::numeric) - required for y column
   if (!lowerSql.includes('::numeric')) {
     violations.push({
-      code: 'PLOT_MISSING_CAST',
-      message: 'Plot queries must cast y column to numeric (::numeric)'
+      code: 'PLOT_MISSING_NUMERIC_CAST',
+      message: 'Plot queries must cast y column to numeric type (::numeric)'
     });
   }
 
@@ -326,8 +344,17 @@ function validatePlotQuery(sql, queryType) {
   if (!lowerSql.includes('extract(epoch')) {
     violations.push({
       code: 'PLOT_MISSING_TIMESTAMP_CONVERSION',
-      message: 'Plot queries must convert timestamp using EXTRACT(EPOCH FROM ...)'
+      message: 'Plot queries must convert timestamp to Unix milliseconds using EXTRACT(EPOCH FROM ...)::bigint * 1000'
     });
+  }
+
+  // Check for reference range columns (recommended but not required)
+  const hasReferenceLower = lowerSql.includes('reference_lower');
+  const hasReferenceUpper = lowerSql.includes('reference_upper');
+
+  if (!hasReferenceLower && !hasReferenceUpper) {
+    // Log warning about missing reference bands
+    console.warn('[sqlValidator] Plot query missing reference band columns (reference_lower, reference_upper). Plot will not show healthy range bands.');
   }
 
   return violations.length > 0 ? { valid: false, violations } : { valid: true };
@@ -474,8 +501,8 @@ async function validateSQL(sql, { schemaSnapshotId, queryType } = {}) {
     };
   }
 
-  // Enforce LIMIT
-  const sqlWithLimit = enforceLimitClause(cleanedSQL);
+  // Enforce LIMIT (pass queryType for correct limit)
+  const sqlWithLimit = enforceLimitClause(cleanedSQL, queryType);
 
   // Layer 2: EXPLAIN Validation
   const explainResult = await validateWithExplain(sqlWithLimit);

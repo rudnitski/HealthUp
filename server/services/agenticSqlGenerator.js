@@ -5,6 +5,8 @@
 const OpenAI = require('openai');
 const crypto = require('crypto');
 const pino = require('pino');
+const fs = require('fs');
+const path = require('path');
 const { pool } = require('../db');
 const { validateSQL } = require('./sqlValidator');
 const { updateMRU } = require('./schemaSnapshot');
@@ -36,6 +38,19 @@ const DEFAULT_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
 
 let openAiClient;
 
+// Load agentic system prompt template from file
+const PROMPTS_DIR = path.join(__dirname, '../../prompts');
+const AGENTIC_SYSTEM_PROMPT_PATH = path.join(PROMPTS_DIR, 'agentic_sql_generator_system_prompt.txt');
+
+let agenticSystemPromptTemplate = null;
+
+try {
+  agenticSystemPromptTemplate = fs.readFileSync(AGENTIC_SYSTEM_PROMPT_PATH, 'utf8');
+  logger.info('[agenticSqlGenerator] Loaded agentic system prompt template');
+} catch (error) {
+  logger.warn('[agenticSqlGenerator] Failed to load agentic system prompt template:', error.message);
+}
+
 /**
  * Get OpenAI client
  */
@@ -66,111 +81,14 @@ const createHash = (value) => {
  * Build system prompt for agentic mode
  */
 function buildAgenticSystemPrompt(schemaContext, maxIterations) {
-  return `You are an intelligent SQL query generator with exploration tools.
-
-Your goal: Generate a perfect SQL query to answer the user's question about their lab results.
-
-Database: PostgreSQL health lab results database (international, multilingual)
-Challenge: Labs from different countries use different naming conventions. Parameter names may mix scripts (e.g., "витамин D" uses Cyrillic + Latin).
-
-Available tools:
-1. fuzzy_search_parameter_names - Fuzzy text matching with trigram similarity
-   - Automatically handles: typos, abbreviations, mixed scripts (Cyrillic+Latin)
-   - Example: Search "витамин д" finds "витамин D (25-OH)" with 85% similarity
-   - USE THIS FIRST for medical term searches
-   - No need for manual synonyms - understands variations automatically
-
-2. fuzzy_search_analyte_names - Search canonical analyte names
-   - Similar to parameter search but on standardized analyte table
-   - Use when you need analyte identifiers
-
-3. execute_exploratory_sql - General data exploration
-   - Use when you need to understand data structure, patterns, or value distributions
-   - Limited to 20 rows per query
-
-4. generate_final_query - Submit your final answer
-   - Use when confident you have enough information
-   - Include SQL, explanation, and confidence level
-
-Strategy:
-- For medical terms ("витамин д", "холестерин", "glucose"): START with fuzzy_search_parameter_names
-- For chemical names (e.g., "calcidiol" = vitamin D): fuzzy_search finds similar terms automatically
-- If fuzzy_search returns matches with >60% similarity: you can generate query immediately (1-2 iterations)
-- If uncertain about data structure: use execute_exploratory_sql
-- Only call generate_final_query when confident
-- If you find no data, explain this clearly in your final query response
-
-Important:
-- fuzzy_search replaces manual term matching - trust its similarity scores
-- Be efficient: aim to complete in 2-3 iterations for simple queries
-- For complex queries requiring JOINs, use exploratory_sql to verify relationships
-
-CRITICAL - SQL Generation Rules:
-- Generate COMPLETE, EXECUTABLE queries (not templates or examples)
-- DO NOT use parameters like :param, :patient_id, or placeholders
-- DO NOT use $1, $2 style parameters
-- DO NOT add comments after the query (inline comments in SELECT are OK, but no trailing comments after semicolon)
-- User questions like "what is MY vitamin D" mean: return ALL vitamin D results from the database
-- Do not filter by specific patient unless the user provides exact patient name/ID
-- The query should be ready to execute immediately without modification
-- Keep queries simple and avoid complex CTEs when a simple SELECT will work
-
-Plot Query Detection:
-- Detect if user is asking about trends, changes over time, or visualization
-- Keywords to watch for: "график", "динамика", "изменение", "trend", "over time", "как менялся", "покажи график", "plot", "chart"
-- When detected, generate time-series SQL and set query_type='plot_query'
-- Plot queries MUST return columns: t (bigint ms timestamp), y (numeric), unit (text)
-- Use EXTRACT(EPOCH FROM timestamp)::bigint * 1000 for t column
-- Use multi-step sanitization for y column to handle non-numeric values
-- Always ORDER BY t ASC
-- IMPORTANT: Always include plot_metadata when query_type='plot_query' to avoid retry overhead
-
-Value Sanitization Pattern (handles "< 2", "0.04 R", "25,3", negative values):
-WITH sanitized AS (
-  SELECT
-    COALESCE(pr.test_date_text::timestamp, pr.recognized_at) AS test_date,
-    lr.unit,
-    regexp_replace(lr.result_value, '^[<>≤≥]\\s*', '', 'g') AS cleaned
-  FROM lab_results lr
-  JOIN patient_reports pr ON pr.id = lr.report_id
-  WHERE lr.parameter_name % 'search_term'
-)
-SELECT
-  EXTRACT(EPOCH FROM test_date)::bigint * 1000 AS t,
-  NULLIF(
-    regexp_replace(
-      regexp_replace(cleaned, ',', '.', 'g'),
-      '\\s*[A-Za-zА-Яа-я/*+_-]+$', '', 'g'
-    ),
-    ''
-  )::numeric AS y,
-  unit
-FROM sanitized
-WHERE NULLIF(
-  regexp_replace(
-    regexp_replace(cleaned, ',', '.', 'g'),
-    '\\s*[A-Za-zА-Яа-я/*+_-]+$', '', 'g'
-  ),
-  ''
-) IS NOT NULL AND cleaned ~ '^-?[0-9]'
-ORDER BY t ASC;
-
-IMPORTANT: Use test_date (from test_date_text::timestamp or recognized_at as fallback) for time axis, not recognized_at directly!
-
-When calling generate_final_query with plot intent, include:
-{
-  "query_type": "plot_query",
-  "plot_metadata": {
-    "x_axis": "t",
-    "y_axis": "y",
-    "series_by": "unit"
+  if (!agenticSystemPromptTemplate) {
+    throw new Error('Agentic system prompt template not loaded. Check prompts/agentic_sql_generator_system_prompt.txt');
   }
-}
 
-You have ${maxIterations} iterations maximum. Use them wisely.
-
-Database schema:
-${schemaContext}`;
+  // Replace placeholders in template
+  return agenticSystemPromptTemplate
+    .replace(/\{\{MAX_ITERATIONS\}\}/g, maxIterations)
+    .replace(/\{\{SCHEMA_CONTEXT\}\}/g, schemaContext);
 }
 
 /**
@@ -238,7 +156,14 @@ async function handleFinalQuery(
   startTime,
   forcedCompletion = false
 ) {
-  let { sql, explanation, confidence, query_type, plot_metadata } = params;
+  let { sql, explanation, confidence, query_type, plot_metadata, plot_title } = params;
+
+  // Extract plot_title from plot_metadata if nested there (LLM sometimes puts it there)
+  if (!plot_title && plot_metadata && plot_metadata.plot_title) {
+    plot_title = plot_metadata.plot_title;
+    // Remove from metadata to avoid duplication
+    delete plot_metadata.plot_title;
+  }
 
   // Default query_type to 'data_query' if not specified (backward compatibility)
   query_type = query_type || 'data_query';
@@ -412,6 +337,10 @@ async function handleFinalQuery(
   if (query_type === 'plot_query') {
     response.query_type = 'plot_query';
     response.plot_metadata = plot_metadata;
+    // Include plot_title if provided
+    if (plot_title) {
+      response.plot_title = plot_title;
+    }
   } else {
     // Optional: Include query_type for backward compatibility tracking
     response.query_type = 'data_query';
