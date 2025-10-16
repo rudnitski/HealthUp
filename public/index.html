@@ -78,9 +78,23 @@
             <p id="sql-notes" class="sql-generator__notes" hidden></p>
           </div>
         </div>
+        <!-- Plot visualization container -->
+        <div id="plot-container" class="plot-container" hidden>
+          <div class="plot-toolbar">
+            <span class="plot-toolbar__hint">Scroll to zoom. Shift + drag to pan.</span>
+            <button id="plot-reset-btn" class="plot-toolbar__button" type="button" hidden>Reset zoom</button>
+          </div>
+          <canvas id="plot-canvas" aria-label="Lab results time-series plot"></canvas>
+        </div>
       </div>
     </section>
   </main>
-  <script src="js/app.js" defer></script>
+  <!-- Chart.js and date adapter for time-series plots (must load before our scripts) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <!-- Our application scripts -->
+  <script src="js/plotRenderer.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>

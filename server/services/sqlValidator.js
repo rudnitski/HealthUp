@@ -81,7 +81,13 @@ function checkForPlaceholders(sql) {
   }
 
   // Check for question mark placeholders (?)
-  if (/\?(?!\w)/.test(sql)) {
+  // But ignore ? inside string literals (e.g., regex patterns like '^-?[0-9]')
+  // Remove all string literals first, then check for standalone ?
+  const withoutStrings = sql.replace(/'[^']*'/g, '""'); // Replace strings with empty quotes
+
+  // Now check for ? outside of string literals
+  // A standalone ? would be used as a placeholder, not inside a string
+  if (/\?(?!\w)/.test(withoutStrings)) {
     violations.push({
       code: 'PLACEHOLDER_SYNTAX',
       pattern: '?',
@@ -249,22 +255,82 @@ function checkComplexity(sql) {
  */
 function enforceLimitClause(sql) {
   const trimmed = sql.trim();
+  const hasTrailingSemicolon = /;+\s*$/.test(trimmed);
+  const withoutTrailingSemicolon = trimmed.replace(/;+\s*$/, '');
 
   // Check if LIMIT exists
   const limitPattern = /\bLIMIT\s+(\d+)/i;
-  const match = trimmed.match(limitPattern);
+  const match = withoutTrailingSemicolon.match(limitPattern);
+
+  let result;
 
   if (match) {
     const limitValue = parseInt(match[1], 10);
     if (limitValue > 50) {
       // Clamp to 50
-      return trimmed.replace(limitPattern, 'LIMIT 50');
+      result = withoutTrailingSemicolon.replace(limitPattern, 'LIMIT 50');
+    } else {
+      result = withoutTrailingSemicolon;
     }
-    return trimmed;
+  } else {
+    // No LIMIT, inject it
+    result = `${withoutTrailingSemicolon} LIMIT 50`;
   }
 
-  // No LIMIT, inject it
-  return `${trimmed} LIMIT 50`;
+  return hasTrailingSemicolon ? `${result};` : result;
+}
+
+/**
+ * Validate plot query structure
+ */
+function validatePlotQuery(sql, queryType) {
+  if (queryType !== 'plot_query') {
+    return { valid: true };
+  }
+
+  const violations = [];
+  const lowerSql = sql.toLowerCase();
+
+  // Check for required columns 't' and 'y'
+  if (!lowerSql.includes(' as t') && !lowerSql.includes(' as t,')) {
+    violations.push({
+      code: 'PLOT_MISSING_COLUMNS',
+      message: 'Plot queries must include column named "t" (Unix timestamp in milliseconds)'
+    });
+  }
+
+  if (!lowerSql.includes(' as y') && !lowerSql.includes(' as y,')) {
+    violations.push({
+      code: 'PLOT_MISSING_COLUMNS',
+      message: 'Plot queries must include column named "y" (numeric values)'
+    });
+  }
+
+  // Check for ORDER BY t
+  if (!lowerSql.includes('order by t')) {
+    violations.push({
+      code: 'PLOT_MISSING_ORDER',
+      message: 'Plot queries must include ORDER BY t'
+    });
+  }
+
+  // Check for numeric casting (::numeric)
+  if (!lowerSql.includes('::numeric')) {
+    violations.push({
+      code: 'PLOT_MISSING_CAST',
+      message: 'Plot queries must cast y column to numeric (::numeric)'
+    });
+  }
+
+  // Check for EXTRACT(EPOCH...) pattern for timestamp conversion
+  if (!lowerSql.includes('extract(epoch')) {
+    violations.push({
+      code: 'PLOT_MISSING_TIMESTAMP_CONVERSION',
+      message: 'Plot queries must convert timestamp using EXTRACT(EPOCH FROM ...)'
+    });
+  }
+
+  return violations.length > 0 ? { valid: false, violations } : { valid: true };
 }
 
 /**
@@ -323,9 +389,9 @@ async function validateWithExplain(sql) {
 }
 
 /**
- * Validate SQL query (Layer 1: Regex + Layer 2: EXPLAIN)
+ * Validate SQL query (Layer 1: Regex + Layer 2: EXPLAIN + Layer 3: Plot-specific)
  */
-async function validateSQL(sql, { schemaSnapshotId } = {}) {
+async function validateSQL(sql, { schemaSnapshotId, queryType } = {}) {
   if (VALIDATION_BYPASS) {
     const trimmed = typeof sql === 'string' ? sql.trim() : '';
     return {
@@ -384,7 +450,25 @@ async function validateSQL(sql, { schemaSnapshotId } = {}) {
       durationMs: Date.now() - startedAt,
       validator: {
         ruleVersion: VALIDATION_RULE_VERSION,
-        strategy: 'regex+explain_ro',
+        strategy: 'regex+explain_ro+plot',
+      },
+      schemaSnapshotId: schemaSnapshotId || null,
+    };
+  }
+
+  // Check plot-specific requirements (before LIMIT injection)
+  const plotValidation = validatePlotQuery(cleanedSQL, queryType);
+  if (!plotValidation.valid) {
+    violations = violations.concat(plotValidation.violations);
+    return {
+      valid: false,
+      violations,
+      sql: cleanedSQL,
+      sqlWithLimit: null,
+      durationMs: Date.now() - startedAt,
+      validator: {
+        ruleVersion: VALIDATION_RULE_VERSION,
+        strategy: 'regex+explain_ro+plot',
       },
       schemaSnapshotId: schemaSnapshotId || null,
     };
@@ -414,7 +498,7 @@ async function validateSQL(sql, { schemaSnapshotId } = {}) {
       durationMs: Date.now() - startedAt,
       validator: {
         ruleVersion: VALIDATION_RULE_VERSION,
-        strategy: 'regex+explain_ro',
+        strategy: 'regex+explain_ro+plot',
       },
       schemaSnapshotId: schemaSnapshotId || null,
     };
@@ -429,7 +513,7 @@ async function validateSQL(sql, { schemaSnapshotId } = {}) {
     durationMs: Date.now() - startedAt,
     validator: {
       ruleVersion: VALIDATION_RULE_VERSION,
-      strategy: 'regex+explain_ro',
+      strategy: 'regex+explain_ro+plot',
     },
     schemaSnapshotId: schemaSnapshotId || null,
   };

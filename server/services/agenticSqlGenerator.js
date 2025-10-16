@@ -115,6 +115,58 @@ CRITICAL - SQL Generation Rules:
 - The query should be ready to execute immediately without modification
 - Keep queries simple and avoid complex CTEs when a simple SELECT will work
 
+Plot Query Detection:
+- Detect if user is asking about trends, changes over time, or visualization
+- Keywords to watch for: "график", "динамика", "изменение", "trend", "over time", "как менялся", "покажи график", "plot", "chart"
+- When detected, generate time-series SQL and set query_type='plot_query'
+- Plot queries MUST return columns: t (bigint ms timestamp), y (numeric), unit (text)
+- Use EXTRACT(EPOCH FROM timestamp)::bigint * 1000 for t column
+- Use multi-step sanitization for y column to handle non-numeric values
+- Always ORDER BY t ASC
+- IMPORTANT: Always include plot_metadata when query_type='plot_query' to avoid retry overhead
+
+Value Sanitization Pattern (handles "< 2", "0.04 R", "25,3", negative values):
+WITH sanitized AS (
+  SELECT
+    COALESCE(pr.test_date_text::timestamp, pr.recognized_at) AS test_date,
+    lr.unit,
+    regexp_replace(lr.result_value, '^[<>≤≥]\\s*', '', 'g') AS cleaned
+  FROM lab_results lr
+  JOIN patient_reports pr ON pr.id = lr.report_id
+  WHERE lr.parameter_name % 'search_term'
+)
+SELECT
+  EXTRACT(EPOCH FROM test_date)::bigint * 1000 AS t,
+  NULLIF(
+    regexp_replace(
+      regexp_replace(cleaned, ',', '.', 'g'),
+      '\\s*[A-Za-zА-Яа-я/*+_-]+$', '', 'g'
+    ),
+    ''
+  )::numeric AS y,
+  unit
+FROM sanitized
+WHERE NULLIF(
+  regexp_replace(
+    regexp_replace(cleaned, ',', '.', 'g'),
+    '\\s*[A-Za-zА-Яа-я/*+_-]+$', '', 'g'
+  ),
+  ''
+) IS NOT NULL AND cleaned ~ '^-?[0-9]'
+ORDER BY t ASC;
+
+IMPORTANT: Use test_date (from test_date_text::timestamp or recognized_at as fallback) for time axis, not recognized_at directly!
+
+When calling generate_final_query with plot intent, include:
+{
+  "query_type": "plot_query",
+  "plot_metadata": {
+    "x_axis": "t",
+    "y_axis": "y",
+    "series_by": "unit"
+  }
+}
+
 You have ${maxIterations} iterations maximum. Use them wisely.
 
 Database schema:
@@ -186,7 +238,41 @@ async function handleFinalQuery(
   startTime,
   forcedCompletion = false
 ) {
-  let { sql, explanation, confidence } = params;
+  let { sql, explanation, confidence, query_type, plot_metadata } = params;
+
+  // Default query_type to 'data_query' if not specified (backward compatibility)
+  query_type = query_type || 'data_query';
+
+  // Validate plot_metadata presence (first attempt only, then apply defaults)
+  if (query_type === 'plot_query' && !plot_metadata && retryCount === 0) {
+    logger.warn({
+      request_id: requestId,
+      message: 'plot_metadata missing, requesting retry'
+    }, '[agenticSql] Plot metadata validation failed');
+
+    return {
+      retry: true,
+      retryCount: retryCount + 1,
+      validationError: [{
+        code: 'PLOT_METADATA_MISSING',
+        message: 'plot_metadata is required when query_type is plot_query. Please include: { x_axis: "t", y_axis: "y", series_by: "unit" }'
+      }]
+    };
+  }
+
+  // Apply defaults if still missing after retry (safety net)
+  if (query_type === 'plot_query' && !plot_metadata) {
+    logger.info({
+      request_id: requestId,
+      message: 'Applying default plot_metadata after retry'
+    }, '[agenticSql] Using fallback plot metadata');
+
+    plot_metadata = {
+      x_axis: 't',
+      y_axis: 'y',
+      series_by: 'unit'
+    };
+  }
 
   // Strip trailing comments (safety measure)
   // Comments after the final semicolon break LIMIT injection
@@ -207,11 +293,12 @@ async function handleFinalQuery(
   logger.debug({
     sql_preview: sql?.substring(0, 100),
     confidence,
+    query_type,
     forced_completion: forcedCompletion,
   }, '[agenticSql] Handling final query');
 
-  // Validate SQL
-  const validation = await validateSQL(sql, { schemaSnapshotId });
+  // Validate SQL (pass queryType for plot-specific validation)
+  const validation = await validateSQL(sql, { schemaSnapshotId, queryType: query_type });
 
   if (!validation.valid) {
     // Validation failed
@@ -302,8 +389,8 @@ async function handleFinalQuery(
     }
   });
 
-  // Return successful response (matches existing format)
-  return {
+  // Build response object
+  const response = {
     ok: true,
     sql: safeSql,
     explanation: explanation || null,
@@ -320,6 +407,17 @@ async function handleFinalQuery(
       }
     }
   };
+
+  // Add query_type and plot_metadata for plot queries
+  if (query_type === 'plot_query') {
+    response.query_type = 'plot_query';
+    response.plot_metadata = plot_metadata;
+  } else {
+    // Optional: Include query_type for backward compatibility tracking
+    response.query_type = 'data_query';
+  }
+
+  return response;
 }
 
 /**

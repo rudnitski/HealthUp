@@ -778,9 +778,195 @@
       sqlNotesEl.textContent = notes.trim();
     };
 
+    // Track current chart instance for cleanup
+    let currentChart = null;
+
+    /**
+     * Render plot visualization for plot_query responses
+     * Executes SQL and displays Chart.js plot
+     */
+    const renderPlotVisualization = async (payload) => {
+      console.log('[app] renderPlotVisualization called', {
+        hasPayload: !!payload,
+        queryType: payload?.query_type,
+        hasPlotRenderer: !!window.plotRenderer,
+        hasChart: !!window.Chart
+      });
+
+      const plotContainer = document.getElementById('plot-container');
+      const plotCanvas = document.getElementById('plot-canvas');
+      const plotResetBtn = document.getElementById('plot-reset-btn');
+
+      if (!plotContainer || !plotCanvas) {
+        console.error('[app] Plot container or canvas not found', {
+          hasContainer: !!plotContainer,
+          hasCanvas: !!plotCanvas
+        });
+        return;
+      }
+
+      if (!payload.sql || !window.plotRenderer) {
+        console.error('[app] Cannot render plot: missing SQL or plotRenderer', {
+          hasSql: !!payload.sql,
+          hasPlotRenderer: !!window.plotRenderer
+        });
+        return;
+      }
+
+      try {
+        console.log('[app] Starting plot rendering...');
+
+        // Hide reset button until chart is ready
+        if (plotResetBtn) {
+          plotResetBtn.hidden = true;
+          plotResetBtn.disabled = true;
+          plotResetBtn.onclick = null;
+        }
+
+        // IMPORTANT: Unhide the plot container BEFORE rendering
+        // Chart.js needs the canvas to be visible to calculate dimensions
+        plotContainer.hidden = false;
+
+        // Show loading state
+        setSqlStatus('Executing query and generating plot...', 'loading');
+
+        // Execute SQL via backend
+        const response = await fetch('/api/execute-sql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ sql: payload.sql })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const errorMessage = errorData.error?.message || 'Failed to execute plot query';
+          throw new Error(errorMessage);
+        }
+
+        const result = await response.json();
+        const rows = result.rows || [];
+
+        console.log('[app] Received data from API:', {
+          rowCount: rows.length,
+          firstRow: rows[0],
+          fields: result.fields
+        });
+
+        if (!rows.length) {
+          setSqlStatus('No data available for plotting', 'info');
+          plotContainer.hidden = true;
+          if (plotResetBtn) {
+            plotResetBtn.hidden = true;
+            plotResetBtn.disabled = true;
+          }
+          return;
+        }
+
+        // Validate data structure
+        const validRows = rows.filter(row => {
+          const hasT = row.t !== null && row.t !== undefined;
+          const hasY = row.y !== null && row.y !== undefined && !isNaN(parseFloat(row.y));
+          if (!hasT || !hasY) {
+            console.warn('[app] Invalid row:', row);
+          }
+          return hasT && hasY;
+        });
+
+        console.log('[app] Valid rows after filtering:', {
+          total: rows.length,
+          valid: validRows.length,
+          sample: validRows.slice(0, 3)
+        });
+
+        if (!validRows.length) {
+          setSqlStatus('No valid data points for plotting (all values are null or invalid)', 'info');
+          plotContainer.hidden = true;
+          if (plotResetBtn) {
+            plotResetBtn.hidden = true;
+            plotResetBtn.disabled = true;
+          }
+          return;
+        }
+
+        // Extract parameter name from explanation or use default title
+        // Use a simpler title for plots instead of full explanation
+        let plotTitle = 'Cholesterol Over Time'; // Default simple title
+
+        // Try to extract parameter name from explanation
+        if (payload.explanation && payload.explanation.includes('холестерин')) {
+          plotTitle = 'Изменение холестерина';
+        } else if (payload.explanation) {
+          // Keep first sentence only if using explanation
+          const firstSentence = payload.explanation.split('.')[0];
+          if (firstSentence.length <= 80) {
+            plotTitle = firstSentence;
+          }
+        }
+
+        // Render plot with validated data
+        currentChart = window.plotRenderer.renderPlot('plot-canvas', validRows, {
+          title: plotTitle,
+          xAxisLabel: 'Date',
+          yAxisLabel: 'Value',
+          timeUnit: 'day'
+        });
+
+        if (currentChart) {
+          plotContainer.hidden = false;
+          if (plotResetBtn && typeof currentChart.resetZoom === 'function') {
+            plotResetBtn.hidden = false;
+            plotResetBtn.disabled = false;
+            plotResetBtn.onclick = () => {
+              if (currentChart && typeof currentChart.resetZoom === 'function') {
+                currentChart.resetZoom();
+              }
+            };
+          }
+          console.log('[app] Chart created, showing container:', {
+            chartId: currentChart.id,
+            containerHidden: plotContainer.hidden,
+            canvasVisible: document.getElementById('plot-canvas')?.offsetWidth > 0
+          });
+          setSqlStatus('Plot generated successfully. SQL query shown above.', 'success');
+        } else {
+          console.error('[app] Chart creation returned null');
+          throw new Error('Failed to create chart');
+        }
+      } catch (error) {
+        console.error('[app] Plot rendering error:', error);
+        setSqlStatus(`Plot generation failed: ${error.message}. Showing SQL query only.`, 'error');
+        plotContainer.hidden = true;
+        if (plotResetBtn) {
+          plotResetBtn.hidden = true;
+          plotResetBtn.disabled = true;
+          plotResetBtn.onclick = null;
+        }
+      }
+    };
+
     const renderSqlResult = (payload) => {
       if (!payload || typeof payload !== 'object') {
         return;
+      }
+
+      // Cleanup previous chart if exists
+      if (currentChart && window.plotRenderer) {
+        window.plotRenderer.destroyChart(currentChart);
+        currentChart = null;
+      }
+
+      // Hide plot container by default
+      const plotContainer = document.getElementById('plot-container');
+      if (plotContainer) {
+        plotContainer.hidden = true;
+      }
+      const plotResetBtn = document.getElementById('plot-reset-btn');
+      if (plotResetBtn) {
+        plotResetBtn.hidden = true;
+        plotResetBtn.disabled = true;
+        plotResetBtn.onclick = null;
       }
 
       if (sqlOutputEl) {
@@ -841,6 +1027,21 @@
       if (sqlCopyFeedbackEl) {
         sqlCopyFeedbackEl.hidden = true;
         sqlCopyFeedbackEl.textContent = 'Copied!';
+      }
+
+      // Check if this is a plot query (render plot after all other UI updates)
+      const isPlotQuery = payload.query_type === 'plot_query';
+      if (isPlotQuery) {
+        // Use setTimeout to ensure DOM is updated before rendering plot
+        setTimeout(() => {
+          if (window.plotRenderer) {
+            renderPlotVisualization(payload).catch(err => {
+              console.error('[app] Plot rendering failed:', err);
+            });
+          } else {
+            console.error('[app] plotRenderer not available');
+          }
+        }, 100);
       }
     };
 

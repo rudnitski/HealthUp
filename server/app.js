@@ -26,6 +26,7 @@ const { ensureSchema } = require('./db/schema');
 const sqlGeneratorRouter = require('./routes/sqlGenerator');
 const analyzeLabReportRouter = require('./routes/analyzeLabReport');
 const reportsRouter = require('./routes/reports');
+const executeSqlRouter = require('./routes/executeSql');
 const { shutdownSchemaSnapshot } = require('./services/schemaSnapshot');
 
 const app = express();
@@ -48,6 +49,7 @@ app.use(
 
 app.use('/api/sql-generator', sqlGeneratorRouter);
 app.use('/api/analyze-labs', analyzeLabReportRouter);
+app.use('/api/execute-sql', executeSqlRouter);
 app.use('/api', reportsRouter);
 
 app.get('/', (_req, res) => {

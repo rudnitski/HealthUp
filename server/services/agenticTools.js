@@ -361,7 +361,7 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "generate_final_query",
-      description: "Generate the final SQL query to answer the user's question. Call this when you have enough information and are confident in your answer. The query will be validated before being returned to the user.",
+      description: "Generate the final SQL query to answer the user's question. Specify query_type='plot_query' if generating time-series data for visualization (e.g., when user asks about trends, changes over time, or wants a plot/график). Call this when you have enough information and are confident in your answer. The query will be validated before being returned to the user.",
       parameters: {
         type: "object",
         properties: {
@@ -377,6 +377,29 @@ const TOOL_DEFINITIONS = [
             type: "string",
             enum: ["high", "medium", "low"],
             description: "Your confidence level in this answer"
+          },
+          query_type: {
+            type: "string",
+            enum: ["data_query", "plot_query"],
+            description: "Type of query: 'data_query' for tables, 'plot_query' for time-series visualization. Default is 'data_query'."
+          },
+          plot_metadata: {
+            type: "object",
+            description: "REQUIRED if query_type='plot_query'. Specifies column mapping for plotting. Always include this when generating plot queries to avoid retry overhead.",
+            properties: {
+              x_axis: {
+                type: "string",
+                description: "Name of the time column (should be 't' for Unix timestamp in milliseconds)"
+              },
+              y_axis: {
+                type: "string",
+                description: "Name of the value column (should be 'y' for numeric values)"
+              },
+              series_by: {
+                type: "string",
+                description: "Name of the column to group series by (typically 'unit' for different measurement units)"
+              }
+            }
           }
         },
         required: ["sql", "explanation", "confidence"]

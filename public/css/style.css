@@ -533,3 +533,68 @@ label {
     padding: 1.5rem;
   }
 }
+
+/* Plot container styles - PRD v2.1 */
+.plot-container {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  background-color: var(--color-header);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.sql-generator__grid > #plot-container {
+  grid-column: 1 / -1;
+}
+
+.plot-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.plot-toolbar__hint {
+  font-size: 0.85rem;
+  color: var(--color-muted);
+}
+
+.plot-toolbar__button {
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background-color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-info);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.plot-toolbar__button:hover:not(:disabled),
+.plot-toolbar__button:focus-visible:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(28, 28, 30, 0.12);
+  border-color: rgba(10, 132, 255, 0.35);
+  outline: none;
+}
+
+.plot-toolbar__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+#plot-canvas {
+  width: 100% !important;
+  height: 400px !important;
+  max-height: 400px;
+}
+
+@media (max-width: 768px) {
+  #plot-canvas {
+    height: 300px !important;
+    max-height: 300px;
+  }
+}
