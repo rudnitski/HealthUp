@@ -78,13 +78,24 @@
             <p id="sql-notes" class="sql-generator__notes" hidden></p>
           </div>
         </div>
-        <!-- Plot visualization container -->
-        <div id="plot-container" class="plot-container" hidden>
-          <div class="plot-toolbar">
-            <span class="plot-toolbar__hint">Scroll to zoom. Shift + drag to pan.</span>
-            <button id="plot-reset-btn" class="plot-toolbar__button" type="button" hidden>Reset zoom</button>
+        <!-- Plot visualization with parameter selector (v2.3) -->
+        <div id="plot-visualization-container" class="plot-visualization-container" hidden>
+          <!-- Left panel: Parameter selector -->
+          <div id="parameter-selector-panel" class="parameter-selector-panel">
+            <h4 class="parameter-selector-panel__title">Select Parameter</h4>
+            <div id="parameter-list" class="parameter-selector-list">
+              <!-- Dynamically populated by app.js -->
+            </div>
           </div>
-          <canvas id="plot-canvas" aria-label="Lab results time-series plot"></canvas>
+
+          <!-- Right panel: Plot (existing structure preserved) -->
+          <div id="plot-container" class="plot-container">
+            <div class="plot-toolbar">
+              <span class="plot-toolbar__hint">Scroll to zoom. Shift + drag to pan.</span>
+              <button id="plot-reset-btn" class="plot-toolbar__button" type="button" hidden>Reset zoom</button>
+            </div>
+            <canvas id="plot-canvas" aria-label="Lab results time-series plot"></canvas>
+          </div>
         </div>
       </div>
     </section>

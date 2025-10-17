@@ -780,6 +780,92 @@
 
     // Track current chart instance for cleanup
     let currentChart = null;
+    // Track parameter selector listener to avoid duplicate bindings
+    let parameterSelectorChangeHandler = null;
+
+    /**
+     * Build parameter selector UI from plot data
+     * @param {Array} rows - Full dataset with parameter_name field
+     * @param {string} containerId - ID of selector container element
+     * @returns {string|null} - Selected parameter name (default: first alphabetically)
+     */
+    const renderParameterSelector = (rows, containerId) => {
+      const container = document.getElementById(containerId);
+      if (!container) return null;
+
+      // Extract unique parameters, sorted alphabetically
+      const paramCounts = {};
+      rows.forEach(row => {
+        const param = row.parameter_name;
+        if (param) {
+          paramCounts[param] = (paramCounts[param] || 0) + 1;
+        }
+      });
+
+      const parameters = Object.keys(paramCounts).sort();
+      if (parameters.length === 0) return null;
+
+      // Build radio button list
+      const fragment = document.createDocumentFragment();
+      parameters.forEach((param, index) => {
+        const label = document.createElement('label');
+        label.className = 'parameter-selector-item';
+
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'parameter';
+        radio.value = param;
+        radio.checked = index === 0; // Default: first alphabetically
+
+        const text = document.createTextNode(` ${param} (${paramCounts[param]})`);
+
+        label.appendChild(radio);
+        label.appendChild(text);
+        fragment.appendChild(label);
+      });
+
+      container.replaceChildren(fragment);
+
+      return parameters[0]; // Return default selection
+    };
+
+    /**
+     * Attach event listener for parameter switching
+     * @param {Array} allRows - Full dataset with all parameters
+     * @param {string} plotTitle - Base plot title
+     */
+    const attachParameterSelectorListener = (allRows, plotTitle) => {
+      const container = document.getElementById('parameter-list');
+      if (!container) return;
+
+      if (parameterSelectorChangeHandler) {
+        container.removeEventListener('change', parameterSelectorChangeHandler);
+      }
+
+      parameterSelectorChangeHandler = (event) => {
+        if (event.target.type === 'radio' && event.target.name === 'parameter') {
+          const selectedParameter = event.target.value;
+
+          // Filter data client-side
+          const filteredRows = allRows.filter(row => row.parameter_name === selectedParameter);
+
+          // Destroy existing chart
+          if (currentChart && window.plotRenderer) {
+            window.plotRenderer.destroyChart(currentChart);
+          }
+
+          // Re-render with filtered data
+          currentChart = window.plotRenderer.renderPlot('plot-canvas', filteredRows, {
+            title: selectedParameter || plotTitle,
+            xAxisLabel: 'Date',
+            yAxisLabel: 'Value',
+            timeUnit: 'day'
+          });
+        }
+      };
+
+      container.addEventListener('change', parameterSelectorChangeHandler);
+    };
 
     /**
      * Render plot visualization for plot_query responses
@@ -856,7 +942,14 @@
 
         if (!rows.length) {
           setSqlStatus('No data available for plotting', 'info');
+
+          // Hide both the plot container and wrapper
+          const visualizationContainer = document.getElementById('plot-visualization-container');
+          if (visualizationContainer) {
+            visualizationContainer.hidden = true;
+          }
           plotContainer.hidden = true;
+
           if (plotResetBtn) {
             plotResetBtn.hidden = true;
             plotResetBtn.disabled = true;
@@ -876,6 +969,7 @@
           // Core required fields
           t: row.t,
           y: row.y,
+          parameter_name: row.parameter_name,
           unit: row.unit || 'unknown',
           // Reference range fields (preserve for band rendering)
           reference_lower: row.reference_lower,
@@ -897,7 +991,14 @@
 
         if (!validRows.length) {
           setSqlStatus('No valid data points for plotting (all values are null or invalid)', 'info');
+
+          // Hide both the plot container and wrapper
+          const visualizationContainer = document.getElementById('plot-visualization-container');
+          if (visualizationContainer) {
+            visualizationContainer.hidden = true;
+          }
           plotContainer.hidden = true;
+
           if (plotResetBtn) {
             plotResetBtn.hidden = true;
             plotResetBtn.disabled = true;
@@ -922,16 +1023,33 @@
           }
         }
 
-        // Render plot with validated data
-        currentChart = window.plotRenderer.renderPlot('plot-canvas', validRows, {
-          title: plotTitle,
+        // Show parameter selector and filter data
+        const selectedParameter = renderParameterSelector(validRows, 'parameter-list');
+
+        // Filter to selected parameter (or use all data if no parameter_name)
+        let filteredRows = validRows;
+        if (selectedParameter) {
+          filteredRows = validRows.filter(row => row.parameter_name === selectedParameter);
+        }
+
+        // Render plot with filtered data
+        currentChart = window.plotRenderer.renderPlot('plot-canvas', filteredRows, {
+          title: selectedParameter || plotTitle,
           xAxisLabel: 'Date',
           yAxisLabel: 'Value',
           timeUnit: 'day'
         });
 
         if (currentChart) {
+          // Show the wrapper container instead of just plot-container
+          const visualizationContainer = document.getElementById('plot-visualization-container');
+          if (visualizationContainer) {
+            visualizationContainer.hidden = false;
+          }
           plotContainer.hidden = false;
+
+          // Attach parameter selector event listener
+          attachParameterSelectorListener(validRows, plotTitle);
           if (plotResetBtn && typeof currentChart.resetZoom === 'function') {
             plotResetBtn.hidden = false;
             plotResetBtn.disabled = false;
@@ -954,11 +1072,24 @@
       } catch (error) {
         console.error('[app] Plot rendering error:', error);
         setSqlStatus(`Plot generation failed: ${error.message}. Showing SQL query only.`, 'error');
+
+        // Hide both the plot container and wrapper
+        const visualizationContainer = document.getElementById('plot-visualization-container');
+        if (visualizationContainer) {
+          visualizationContainer.hidden = true;
+        }
         plotContainer.hidden = true;
+
         if (plotResetBtn) {
           plotResetBtn.hidden = true;
           plotResetBtn.disabled = true;
           plotResetBtn.onclick = null;
+        }
+
+        const parameterListEl = document.getElementById('parameter-list');
+        if (parameterListEl && parameterSelectorChangeHandler) {
+          parameterListEl.removeEventListener('change', parameterSelectorChangeHandler);
+          parameterSelectorChangeHandler = null;
         }
       }
     };
@@ -974,8 +1105,18 @@
         currentChart = null;
       }
 
-      // Hide plot container by default
+      const parameterListEl = document.getElementById('parameter-list');
+      if (parameterListEl && parameterSelectorChangeHandler) {
+        parameterListEl.removeEventListener('change', parameterSelectorChangeHandler);
+        parameterSelectorChangeHandler = null;
+      }
+
+      // Hide plot container and wrapper by default
       const plotContainer = document.getElementById('plot-container');
+      const visualizationContainer = document.getElementById('plot-visualization-container');
+      if (visualizationContainer) {
+        visualizationContainer.hidden = true;
+      }
       if (plotContainer) {
         plotContainer.hidden = true;
       }

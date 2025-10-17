@@ -262,7 +262,7 @@ function enforceLimitClause(sql, queryType = 'data_query') {
   const withoutTrailingSemicolon = trimmed.replace(/;+\s*$/, '');
 
   // Different limits for different query types
-  const maxLimit = queryType === 'plot_query' ? 5000 : 50;
+  const maxLimit = queryType === 'plot_query' ? 10000 : 50;
 
   // Check if LIMIT exists
   const limitPattern = /\bLIMIT\s+(\d+)/i;
@@ -358,6 +358,200 @@ function validatePlotQuery(sql, queryType) {
   }
 
   return violations.length > 0 ? { valid: false, violations } : { valid: true };
+}
+
+/**
+ * Validate required columns for plot queries by inspecting EXPLAIN output columns
+ * @param {string} sql - SQL query to validate
+ * @param {string} queryType - 'data_query' or 'plot_query'
+ * @returns {Promise<{valid: boolean, violations: Array, detectedColumns: Array<string>}>}
+ */
+function extractFinalSelectClause(sql) {
+  const lowerSql = sql.toLowerCase();
+  const selectIndex = lowerSql.lastIndexOf('select');
+  if (selectIndex === -1) {
+    return '';
+  }
+
+  let clause = '';
+  let depth = 0;
+  let i = selectIndex + 'select'.length;
+
+  while (i < lowerSql.length) {
+    const char = lowerSql[i];
+
+    if (char === '(') {
+      depth += 1;
+    } else if (char === ')') {
+      depth = Math.max(depth - 1, 0);
+    }
+
+    if (
+      depth === 0 &&
+      lowerSql.startsWith('from', i) &&
+      /\s/.test(lowerSql[i - 1] || ' ')
+    ) {
+      break;
+    }
+
+    clause += sql[i]; // keep original casing/layout for readability
+    i += 1;
+  }
+
+  return clause;
+}
+
+function detectMissingPlotColumnsWithRegex(sql) {
+  const selectClause = extractFinalSelectClause(sql);
+  if (!selectClause) {
+    return ['t', 'y', 'parameter_name', 'unit'];
+  }
+
+  const clauseLower = selectClause.toLowerCase().replace(/\s+/g, ' ');
+
+  const aliasPatterns = {
+    t: /\bas\s+t\b/,
+    y: /\bas\s+y\b/,
+    parameter_name: /\bas\s+parameter_name\b/,
+    unit: /\bas\s+unit\b/,
+  };
+
+  const directColumnPatterns = {
+    t: /(^|,)\s*(?:[\w".]+\.)?t\s*(?:,|$)/,
+    y: /(^|,)\s*(?:[\w".]+\.)?y\s*(?:,|$)/,
+    parameter_name: /(^|,)\s*(?:[\w".]+\.)?parameter_name\b/,
+    unit: /(^|,)\s*(?:[\w".]+\.)?unit\b/,
+  };
+
+  return ['t', 'y', 'parameter_name', 'unit'].filter((column) => {
+    const hasAlias = aliasPatterns[column].test(clauseLower);
+    const hasDirect = directColumnPatterns[column].test(clauseLower);
+    return !(hasAlias || hasDirect);
+  });
+}
+
+async function validatePlotQueryColumns(sql, queryType) {
+  if (queryType !== 'plot_query') {
+    return { valid: true, violations: [], detectedColumns: [] };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('SET LOCAL statement_timeout = 1000');
+    const { rows } = await client.query(`EXPLAIN (FORMAT JSON, VERBOSE) ${sql}`);
+    const planNode = rows?.[0]?.['QUERY PLAN']?.[0];
+    const planRoot = planNode?.Plan;
+    const outputColumns = Array.isArray(planNode?.Output)
+      ? planNode.Output
+      : Array.isArray(planRoot?.Output)
+        ? planRoot.Output
+        : [];
+
+    // Normalize column identifiers from EXPLAIN output
+    const normalized = outputColumns
+      .map((col) => {
+        if (typeof col !== 'string') return '';
+        let cleaned = col.toLowerCase();
+        cleaned = cleaned.replace(/["']/g, '');
+        if (cleaned.includes(' as ')) {
+          cleaned = cleaned.split(' as ').pop();
+        }
+        if (cleaned.includes(':=')) {
+          cleaned = cleaned.split(':= ').pop();
+        }
+        if (cleaned.includes('::')) {
+          cleaned = cleaned.split('::')[0];
+        }
+        if (cleaned.includes('.')) {
+          cleaned = cleaned.split('.').pop();
+        }
+        return cleaned.trim();
+      })
+      .filter(Boolean);
+
+    // Fallback to regex detection if EXPLAIN did not surface output columns
+    if (!normalized.length) {
+      const missingViaRegex = detectMissingPlotColumnsWithRegex(sql);
+      if (missingViaRegex.length > 0) {
+        return {
+          valid: false,
+          violations: [{
+            code: 'PLOT_MISSING_REQUIRED_COLUMNS',
+            message: `Plot query missing required columns: ${missingViaRegex.join(', ')}. ` +
+                     `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
+            missingColumns: missingViaRegex,
+          }],
+          detectedColumns: outputColumns,
+        };
+      }
+
+      return {
+        valid: true,
+        violations: [],
+        detectedColumns: outputColumns,
+      };
+    }
+
+    const requiredColumns = ['t', 'y', 'parameter_name', 'unit'];
+    const missingColumns = requiredColumns.filter(
+      (col) => !normalized.includes(col)
+    );
+
+    if (missingColumns.length > 0) {
+      const regexMissing = detectMissingPlotColumnsWithRegex(sql);
+      const stillMissing = missingColumns.filter((col) => regexMissing.includes(col));
+      if (stillMissing.length > 0) {
+        return {
+          valid: false,
+          violations: [{
+            code: 'PLOT_MISSING_REQUIRED_COLUMNS',
+            message: `Plot query missing required columns: ${stillMissing.join(', ')}. ` +
+                     `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
+            missingColumns: stillMissing,
+            detectedColumns: outputColumns
+          }],
+          detectedColumns: outputColumns
+        };
+      }
+
+      return {
+        valid: true,
+        violations: [],
+        detectedColumns: outputColumns,
+      };
+    }
+
+    return {
+      valid: true,
+      violations: [],
+      detectedColumns: outputColumns
+    };
+  } catch (error) {
+    console.error('[sqlValidator] Failed to inspect plot query columns via EXPLAIN:', error.message);
+
+    // Attempt regex fallback before failing hard
+    const missingViaRegex = detectMissingPlotColumnsWithRegex(sql);
+    if (missingViaRegex.length > 0) {
+      return {
+        valid: false,
+        violations: [{
+          code: 'PLOT_MISSING_REQUIRED_COLUMNS',
+          message: `Plot query missing required columns: ${missingViaRegex.join(', ')}. ` +
+                   `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
+          missingColumns: missingViaRegex,
+        }],
+        detectedColumns: [],
+      };
+    }
+
+    return {
+      valid: true,
+      violations: [],
+      detectedColumns: [],
+    };
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -503,6 +697,23 @@ async function validateSQL(sql, { schemaSnapshotId, queryType } = {}) {
 
   // Enforce LIMIT (pass queryType for correct limit)
   const sqlWithLimit = enforceLimitClause(cleanedSQL, queryType);
+
+  // Validate plot query columns (inspect EXPLAIN output)
+  const columnValidation = await validatePlotQueryColumns(sqlWithLimit, queryType);
+  if (!columnValidation.valid) {
+    return {
+      valid: false,
+      violations: columnValidation.violations,
+      sql: cleanedSQL,
+      sqlWithLimit: null,
+      durationMs: Date.now() - startedAt,
+      validator: {
+        ruleVersion: VALIDATION_RULE_VERSION,
+        strategy: 'regex+explain_ro+plot',
+      },
+      schemaSnapshotId: schemaSnapshotId || null
+    };
+  }
 
   // Layer 2: EXPLAIN Validation
   const explainResult = await validateWithExplain(sqlWithLimit);

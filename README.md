@@ -8,7 +8,7 @@ HealthUp transforms raw lab reports into structured longitudinal data and provid
 - Lab result retrieval APIs for downstream tooling.
 - Agentic natural-language SQL generation with schema-aware tooling, validation, and audit logging.
 - Optional mapping dry-run pipeline that aligns extracted parameters to canonical analytes.
-- Plot-ready SQL responses and client-side visualization for time-series lab trends.
+- Plot-ready SQL responses and client-side visualization (with parameter selector) for multi-parameter time-series lab trends.
 
 ## Architecture Overview
 
@@ -86,7 +86,8 @@ When `ENABLE_MAPPING_DRY_RUN` is `true`, the route invokes the Mapping Applier (
 - Normalizes and checks SQL statements before execution.
 - Rejects multi-statement payloads, write operations, disallowed functions (`pg_sleep`, `pg_read_file`, etc.), and placeholder syntax.
 - Enforces configurable ceilings: `SQLGEN_MAX_JOINS` (default 5), `SQLGEN_MAX_SUBQUERIES` (default 2), `SQLGEN_MAX_AGG_FUNCS` (default 10).
-- Automatically appends a `LIMIT` clause if the model omitted it, ensuring `/api/execute-sql` only runs bounded queries.
+- Automatically appends a `LIMIT` clause if the model omitted it (cap: `LIMIT 10000` for `plot_query`, `LIMIT 50` otherwise) so `/api/execute-sql` only runs bounded queries.
+- For `plot_query` responses, rejects SQL missing the required aliases `t`, `y`, `parameter_name`, or `unit`, preventing UI regressions when multiple analytes are returned.
 
 ### SQL Execution (`server/routes/executeSql.js`)
 - Executes validated SQL emitted by the generator and returns `{ rows, rowCount, fields }`.
@@ -97,12 +98,12 @@ When `ENABLE_MAPPING_DRY_RUN` is `true`, the route invokes the Mapping Applier (
 
 The static UI (`public/`) provides both the ingestion workflow and analytics surface:
 
-- `index.html` hosts the upload form, SQL generator, and optional plot container. External dependencies (Chart.js, zoom/datalabels plugins) load via CDN.
-- `css/style.css` styles the progress timeline, SQL panels, and plot view.
+- `index.html` hosts the upload form, SQL generator, and the plot visualization wrapper with its dynamic parameter selector. External dependencies (Chart.js, zoom/datalabels plugins) load via CDN.
+- `css/style.css` styles the progress timeline, SQL panels, plot view, and the selector panel used to switch analytes.
 - `js/app.js`
   - Manages file selection, drives `/api/analyze-labs`, and renders the progress timeline based on the server’s `pipelineProgress`.
   - Fetches persisted report detail (`/api/reports/:id`) to render structured lab result cards and raw JSON.
-  - Orchestrates the SQL generation panel: throttles requests, copies SQL to clipboard, tracks regeneration, and wires plot payloads to the renderer.
+  - Orchestrates the SQL generation panel: throttles requests, copies SQL to clipboard, tracks regeneration, wires plot payloads to the renderer, and filters plot data client-side when users switch parameters.
 - `js/plotRenderer.js`
   - Registers Chart.js plugins (zoom, datalabels) when available.
   - Groups rows by unit, overlays reference bands, and highlights out-of-range points for time-series visualization (PRD v2.1/v2.2).
@@ -236,4 +237,4 @@ Consult these documents when drafting new PRDs; each PRD references the correspo
 - Ingestion currently blocks on OpenAI; consider queueing for batch processing when latency becomes an issue.
 - Mapping Applier runs in dry-run mode; production adoption will require persistence of decisions and human-in-the-loop review surfaces.
 - Agentic SQL relies on curated prompts and schema aliases—update `config/schema_aliases.json` whenever new tables are introduced.
-- Plot generation expects time-series columns (`t`, `y`, `unit`, reference bands). Ensure new plot-focused PRDs conform to this contract.
+- Plot generation expects time-series columns (`t`, `y`, `parameter_name`, `unit`, reference bands). Ensure new plot-focused PRDs conform to this contract.

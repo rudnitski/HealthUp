@@ -63,13 +63,19 @@ Plot Query Detection:
 - Use EXTRACT(EPOCH FROM timestamp)::bigint * 1000 for t column
 - Use multi-step sanitization for y column to handle non-numeric values
 - Always ORDER BY t ASC
-- Use LIMIT 5000 for plot queries (not 50)
+- Use LIMIT 10000 for plot queries (not 50)
 - IMPORTANT: Always include plot_metadata when query_type='plot_query' to avoid retry overhead
+
+REQUIRED COLUMNS FOR PLOT QUERIES:
+- MUST include: t (bigint), y (numeric), parameter_name (text), unit (text)
+- SHOULD include: reference_lower, reference_upper, reference_*_operator, is_value_out_of_range
+- Missing parameter_name will cause frontend selector to fail
 
 Value Sanitization Pattern with Reference Bands (handles "< 2", "0.04 R", "25,3", "22*", negative values):
 WITH sanitized AS (
   SELECT
     COALESCE(pr.test_date_text::timestamp, pr.recognized_at) AS test_date,
+    lr.parameter_name,
     lr.unit,
     lr.reference_lower,
     lr.reference_lower_operator,
@@ -92,6 +98,7 @@ SELECT
     ),
     ''
   )::numeric AS y,
+  parameter_name,
   unit,
   reference_lower,
   reference_lower_operator,
@@ -109,7 +116,7 @@ WHERE NULLIF(
   ''
 ) IS NOT NULL AND cleaned ~ '^-?[0-9]'
 ORDER BY t ASC
-LIMIT 5000;
+LIMIT 10000;
 
 IMPORTANT: Use test_date (from test_date_text::timestamp or recognized_at as fallback) for time axis, not recognized_at directly!
 

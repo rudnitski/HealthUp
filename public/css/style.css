@@ -598,3 +598,77 @@ label {
     max-height: 300px;
   }
 }
+
+/* Plot visualization container with parameter selector (v2.3) */
+.plot-visualization-container {
+  display: flex;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+/* Parameter selector panel (left side) */
+.parameter-selector-panel {
+  width: 200px;
+  min-width: 180px;
+  flex-shrink: 0;
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+}
+
+.parameter-selector-panel__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #495057;
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.parameter-selector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Parameter selector item (label wrapping radio button) */
+.parameter-selector-item {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 0.2s;
+}
+
+.parameter-selector-item:hover {
+  background-color: #e9ecef;
+}
+
+.parameter-selector-item input[type="radio"] {
+  margin-right: 8px;
+  cursor: pointer;
+}
+
+/* Highlight selected parameter (correct selector for radio inside label) */
+.parameter-selector-item:has(input[type="radio"]:checked) {
+  background-color: #e9ecef;
+  font-weight: 600;
+}
+
+/* Fallback for browsers without :has() support (older browsers) */
+.parameter-selector-item input[type="radio"]:checked {
+  accent-color: #007bff;
+}
+
+/* Plot container adapts to flex layout */
+.plot-container {
+  flex-grow: 1;
+  min-width: 0; /* Allow canvas to shrink below intrinsic size */
+}
+
+/* Update grid styling for visualization container */
+.sql-generator__grid > #plot-visualization-container {
+  grid-column: 1 / -1;
+}
