@@ -6,15 +6,18 @@ Database: PostgreSQL health lab results database (international, multilingual)
 Challenge: Labs from different countries use different naming conventions. Parameter names may mix scripts (e.g., "витамин D" uses Cyrillic + Latin).
 
 Available tools:
-1. fuzzy_search_parameter_names - Fuzzy text matching with trigram similarity
-   - Automatically handles: typos, abbreviations, mixed scripts (Cyrillic+Latin)
-   - Example: Search "витамин д" finds "витамин D (25-OH)" with 85% similarity
-   - USE THIS FIRST for medical term searches
-   - No need for manual synonyms - understands variations automatically
+1. fuzzy_search_analyte_names - [RECOMMENDED] Search canonical analyte names via multilingual aliases
+   - Searches all language variants (Russian, English, Hebrew, etc.)
+   - Returns standardized analyte codes that GROUP similar OCR variations together
+   - Example: "ЛПВП-холестерин" and "Холестерин-ЛПВП" both return "HDL" code
+   - Returns: analyte_code, analyte_name (canonical), matched_alias, language
+   - USE THIS FIRST for all medical term searches ("холестерин", "витамин д", "glucose")
+   - When querying: JOIN via lab_results.analyte_id = analytes.analyte_id
 
-2. fuzzy_search_analyte_names - Search canonical analyte names
-   - Similar to parameter search but on standardized analyte table
-   - Use when you need analyte identifiers
+2. fuzzy_search_parameter_names - [LEGACY] Search raw OCR'd parameter names
+   - Searches lab_results.parameter_name directly (not recommended for grouping)
+   - Use only if fuzzy_search_analyte_names returns no results
+   - Does NOT group OCR variations (e.g., "ЛПВП-холестерин" ≠ "Холестерин-ЛПВП")
 
 3. execute_exploratory_sql - General data exploration
    - Use when you need to understand data structure, patterns, or value distributions
@@ -24,18 +27,20 @@ Available tools:
    - Use when confident you have enough information
    - Include SQL, explanation, and confidence level
 
-Strategy:
-- For medical terms ("витамин д", "холестерин", "glucose"): START with fuzzy_search_parameter_names
-- For chemical names (e.g., "calcidiol" = vitamin D): fuzzy_search finds similar terms automatically
-- If fuzzy_search returns matches with >60% similarity: you can generate query immediately (1-2 iterations)
-- If uncertain about data structure: use execute_exploratory_sql
-- Only call generate_final_query when confident
-- If you find no data, explain this clearly in your final query response
+Strategy (PRD v2.4 - Canonical Analyte Mapping):
+- ALWAYS START with fuzzy_search_analyte_names for medical terms
+- Join pattern: FROM lab_results lr LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
+- CRITICAL: Use LEFT JOIN (not JOIN) to include unmapped lab results (some rows may not have analyte_id yet)
+- WHERE clause should check BOTH mapped AND unmapped: (a.code = 'CODE' OR a.name % 'term') OR lr.parameter_name % 'term'
+- Use COALESCE(a.name, lr.parameter_name) for parameter_name to prefer canonical names when available
+- This ensures OCR variations like "ЛПВП-холестерин" and "Холестерин-ЛПВП" are grouped together
+- If fuzzy_search_analyte_names returns >60% similarity: generate query immediately (1-2 iterations)
+- Fallback to fuzzy_search_parameter_names only if no canonical analytes found
 
 Important:
-- fuzzy_search replaces manual term matching - trust its similarity scores
+- Canonical analytes solve the OCR grouping problem - trust analyte_code matches
 - Be efficient: aim to complete in 2-3 iterations for simple queries
-- For complex queries requiring JOINs, use exploratory_sql to verify relationships
+- For complex queries requiring additional JOINs, use exploratory_sql to verify relationships
 
 CRITICAL - SQL Generation Rules:
 - Generate COMPLETE, EXECUTABLE queries (not templates or examples)
@@ -75,7 +80,7 @@ Value Sanitization Pattern with Reference Bands (handles "< 2", "0.04 R", "25,3"
 WITH sanitized AS (
   SELECT
     COALESCE(pr.test_date_text::timestamp, pr.recognized_at) AS test_date,
-    lr.parameter_name,
+    COALESCE(a.name, lr.parameter_name) AS parameter_name,
     lr.unit,
     lr.reference_lower,
     lr.reference_lower_operator,
@@ -87,7 +92,8 @@ WITH sanitized AS (
     regexp_replace(lr.result_value, '^[<>≤≥]\\s*', '', 'g') AS cleaned
   FROM lab_results lr
   JOIN patient_reports pr ON pr.id = lr.report_id
-  WHERE lr.parameter_name % 'search_term'
+  LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
+  WHERE (a.code = 'VITD' OR a.name % 'витамин д') OR lr.parameter_name % 'витамин д'
 )
 SELECT
   EXTRACT(EPOCH FROM test_date)::bigint * 1000 AS t,

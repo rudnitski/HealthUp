@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HealthUp — Admin Review Panel</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body>
+  <main class="container">
+    <nav class="breadcrumb">
+      <a href="/" class="breadcrumb-link">← Back to Main</a>
+    </nav>
+
+    <h1>Admin Review Panel</h1>
+    <p class="help-text">Review and approve pending analytes and resolve ambiguous matches</p>
+
+    <!-- Tab Navigation -->
+    <div class="tabs">
+      <button id="tab-new-analytes" class="tab-button active" data-tab="new-analytes">
+        📋 New Analytes <span id="new-count" class="tab-count">0</span>
+      </button>
+      <button id="tab-ambiguous" class="tab-button" data-tab="ambiguous">
+        ❓ Ambiguous Matches <span id="ambiguous-count" class="tab-count">0</span>
+      </button>
+    </div>
+
+    <!-- Tab Content: New Analytes -->
+    <section id="content-new-analytes" class="tab-content active" aria-live="polite">
+      <h2>Pending New Analytes</h2>
+
+      <div id="loading-new" class="loading-state" hidden>
+        <p>Loading...</p>
+      </div>
+
+      <div id="empty-new" class="empty-state" hidden>
+        <p>✅ All caught up! No pending analytes to review.</p>
+      </div>
+
+      <div id="error-new" class="error-state" hidden>
+        <p class="error-message"></p>
+      </div>
+
+      <table id="table-new" class="admin-table" hidden>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Name</th>
+            <th>Category</th>
+            <th>Unit</th>
+            <th>Confidence</th>
+            <th>Variations</th>
+            <th>First Seen</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-new">
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Tab Content: Ambiguous Matches -->
+    <section id="content-ambiguous" class="tab-content" aria-live="polite" hidden>
+      <h2>Ambiguous Matches</h2>
+
+      <div id="loading-ambiguous" class="loading-state" hidden>
+        <p>Loading...</p>
+      </div>
+
+      <div id="empty-ambiguous" class="empty-state" hidden>
+        <p>✅ All caught up! No ambiguous matches to review.</p>
+      </div>
+
+      <div id="error-ambiguous" class="error-state" hidden>
+        <p class="error-message"></p>
+      </div>
+
+      <table id="table-ambiguous" class="admin-table" hidden>
+        <thead>
+          <tr>
+            <th>Parameter Name</th>
+            <th>Unit</th>
+            <th>Candidates</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-ambiguous">
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  </main>
+
+  <!-- Modal for Expandable Details -->
+  <div id="details-modal" class="modal" hidden>
+    <div class="modal-content">
+      <button class="modal-close" aria-label="Close modal">×</button>
+      <h3 id="modal-title"></h3>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirm-modal" class="modal" hidden>
+    <div class="modal-content">
+      <h3 id="confirm-title"></h3>
+      <p id="confirm-message"></p>
+      <div class="modal-actions">
+        <button id="confirm-yes" class="analyze-button">Confirm</button>
+        <button id="confirm-no" class="secondary-button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>

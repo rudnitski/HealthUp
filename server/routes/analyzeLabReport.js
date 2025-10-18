@@ -762,24 +762,44 @@ router.post('/', async (req, res) => {
 
     markStep('persistence', 'completed');
 
-    // Run dry-run mapping if enabled (PRD v0.9)
-    if (process.env.ENABLE_MAPPING_DRY_RUN === 'true') {
+    // Run mapping with write mode if enabled (PRD v2.4)
+    if (process.env.ENABLE_MAPPING_WRITE === 'true') {
+      try {
+        const { wetRun } = require('../services/MappingApplier');
+
+        const mappingResult = await wetRun({
+          reportId: persistenceResult.reportId,
+          patientId: persistenceResult.patientId,
+        });
+
+        // eslint-disable-next-line no-console
+        console.log('[analyzeLabReport] Mapping write mode completed:', {
+          report_id: persistenceResult.reportId,
+          written: mappingResult.summary.written,
+          queued: mappingResult.summary.new_queued,
+          queued_for_review: mappingResult.summary.queued_for_review,
+        });
+
+        // Logs are emitted via Pino logger (structured JSON)
+      } catch (mappingError) {
+        // eslint-disable-next-line no-console
+        console.error('[analyzeLabReport] Mapping write mode failed (non-fatal):', mappingError);
+        // Continue - don't fail the request if mapping fails
+      }
+    }
+    // Fallback to dry-run mode if write mode not enabled (PRD v0.9)
+    else if (process.env.ENABLE_MAPPING_DRY_RUN === 'true') {
       try {
         const { dryRun } = require('../services/MappingApplier');
 
         await dryRun({
           report_id: persistenceResult.reportId,
           patient_id: persistenceResult.patientId,
-          // Optional: pass LLM suggestions if available (v1.0+)
           analyte_suggestions: null,
         });
-
-        // Logs are emitted via Pino logger (structured JSON)
-        // No need to include in HTTP response
       } catch (mappingError) {
         // eslint-disable-next-line no-console
         console.error('[analyzeLabReport] Mapping dry-run failed (non-fatal):', mappingError);
-        // Continue - don't fail the request if mapping dry-run fails
       }
     }
 

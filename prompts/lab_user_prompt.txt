@@ -25,7 +25,8 @@ Rules:
 - For test_date, prefer specimen collection or draw dates; if unavailable, fall back to order, validation, or print dates in that order.
 - Copy numeric measurements exactly as written while omitting the unit if it is captured separately; if the report omits a value, set result to null.
 - When the report provides both numeric and textual context (e.g., "3.1 High"), include the combined text in result without repeating the unit.
-- When multiple reference intervals exist, choose the one matching the reported result when possible; otherwise copy the interval text.
+- When the report presents categorical risk levels (e.g., desirable/optimal, borderline, elevated, high), extract ONLY the healthy/optimal/desirable range as the reference interval. Identify the healthy range by semantic markers indicating low risk (words meaning "normal", "optimal", "desirable", "healthy", "target", "recommended") or positioned as the lowest/best risk category. Do NOT extract borderline, elevated, or high-risk ranges. Examples: "< 200 desirable, 200-239 borderline, ≥ 240 high" → use "< 200"; "< 5.17 желательный, 5.17-6.18 пограничный, > 6.21 высокий" → use "< 5.17".
+- When multiple reference intervals exist without categorical risk levels (e.g., age-based or gender-based ranges), choose the one matching the patient demographics; if unclear, copy all intervals into full_text.
 - When the source shows an explicit numeric interval (including zero ranges like "0 - 0"), set lower and upper to those exact numbers and copy the interval into text.
 - Only use inequality-style text (e.g., "< 2.1") when no explicit numeric bounds are provided in the source.
 - When age or date of birth is absent, set that field to null without guessing; capture whichever value is provided, and include both when available.

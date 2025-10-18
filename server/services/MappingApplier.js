@@ -6,6 +6,7 @@
 const pino = require('pino');
 const { pool } = require('../db');
 const OpenAI = require('openai');
+const { detectLanguage } = require('../utils/languageDetection');
 
 // Configure Pino logger
 const logger = pino({
@@ -771,13 +772,316 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
   return { summary, rows: rowLogs };
 }
 
+/**
+ * Write analyte_id to lab_results table
+ *
+ * @param {string} resultId - UUID of lab_result
+ * @param {number} analyteId - ID of matched analyte
+ * @param {number} confidence - Confidence score (0-1)
+ * @param {string} source - Mapping source (auto_exact, auto_fuzzy, auto_llm)
+ * @returns {Promise<number>} - Number of rows updated
+ */
+async function writeAnalyteId(resultId, analyteId, confidence, source) {
+  const { rowCount } = await pool.query(
+    `UPDATE lab_results
+     SET analyte_id = $1,
+         mapping_confidence = $2,
+         mapping_source = $3,
+         mapped_at = NOW()
+     WHERE id = $4
+       AND analyte_id IS NULL`,
+    [analyteId, confidence, source, resultId]
+  );
+  return rowCount;
+}
+
+/**
+ * Queue NEW analyte to pending_analytes table
+ *
+ * @param {Object} rowResult - Row decision object from dryRun
+ * @returns {Promise<void>}
+ */
+async function queueNewAnalyte(rowResult) {
+  const { tiers, label_raw, unit, report_id } = rowResult;
+  const llm = tiers.llm;
+
+  if (!llm.code || !llm.name) {
+    logger.warn({ result_id: rowResult.result_id }, 'Cannot queue NEW analyte: missing code or name');
+    return;
+  }
+
+  // Build evidence object
+  const evidence = {
+    report_id: report_id,
+    parameter_name: label_raw,
+    unit: unit,
+    llm_comment: llm.comment,
+    first_seen: new Date().toISOString(),
+    occurrence_count: 1
+  };
+
+  // Build parameter variations array
+  const normalized = normalizeLabel(label_raw);
+  const lang = detectLanguage(label_raw);
+  const parameterVariations = [{
+    raw: label_raw,
+    normalized: normalized,
+    lang: lang,
+    count: 1
+  }];
+
+  try {
+    await pool.query(
+      `INSERT INTO pending_analytes
+         (proposed_code, proposed_name, unit_canonical, category, confidence, evidence, status, parameter_variations)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+       ON CONFLICT (proposed_code) DO UPDATE SET
+         confidence = GREATEST(pending_analytes.confidence, EXCLUDED.confidence),
+         evidence = CASE
+           WHEN pending_analytes.evidence IS NULL THEN EXCLUDED.evidence
+           ELSE jsonb_build_object(
+             'report_id', EXCLUDED.evidence->>'report_id',
+             'result_id', EXCLUDED.evidence->>'result_id',
+             'parameter_name', EXCLUDED.evidence->>'parameter_name',
+             'unit', EXCLUDED.evidence->>'unit',
+             'llm_comment', EXCLUDED.evidence->>'llm_comment',
+             'first_seen', pending_analytes.evidence->>'first_seen',
+             'last_seen', EXCLUDED.evidence->>'first_seen',
+             'occurrence_count', (COALESCE((pending_analytes.evidence->>'occurrence_count')::int, 0) + 1)
+           )
+         END,
+         parameter_variations = CASE
+           WHEN pending_analytes.parameter_variations IS NULL THEN EXCLUDED.parameter_variations
+           ELSE pending_analytes.parameter_variations || EXCLUDED.parameter_variations
+         END,
+         updated_at = NOW()`,
+      [
+        llm.code,
+        llm.name,
+        unit,
+        llm.category || 'uncategorized',
+        llm.confidence,
+        JSON.stringify(evidence),
+        JSON.stringify(parameterVariations)
+      ]
+    );
+
+    logger.info({
+      result_id: rowResult.result_id,
+      proposed_code: llm.code,
+      proposed_name: llm.name
+    }, '[wetRun] NEW analyte queued');
+  } catch (error) {
+    logger.error({ error: error.message, result_id: rowResult.result_id }, 'Failed to queue NEW analyte');
+  }
+}
+
+/**
+ * Queue match for human review (ambiguous or medium-confidence)
+ *
+ * @param {Object} rowResult - Row decision object with match data
+ * @returns {Promise<void>}
+ */
+async function queueForReview(rowResult) {
+  const { result_id, tiers, final_decision, final_analyte, confidence } = rowResult;
+
+  let candidates = [];
+
+  // Case 1: Ambiguous fuzzy match with multiple candidates
+  if (final_decision === 'AMBIGUOUS_FUZZY' && tiers.fuzzy?.candidates) {
+    candidates = tiers.fuzzy.candidates;
+  }
+  // Case 2: Medium-confidence single fuzzy match (0.60-0.79)
+  else if (final_decision === 'MATCH_FUZZY' && final_analyte?.analyte_id) {
+    candidates = [{
+      analyte_id: final_analyte.analyte_id,
+      analyte_code: final_analyte.code,
+      analyte_name: final_analyte.name,
+      similarity: confidence,
+      source: 'fuzzy'
+    }];
+  }
+  // Case 3: Medium-confidence LLM match (0.60-0.79)
+  else if (final_decision === 'MATCH_LLM' && final_analyte?.code) {
+    // Look up analyte_id by code
+    const { rows: analyteRows } = await pool.query(
+      'SELECT analyte_id, code, name FROM analytes WHERE code = $1',
+      [final_analyte.code]
+    );
+
+    if (analyteRows.length > 0) {
+      candidates = [{
+        analyte_id: analyteRows[0].analyte_id,
+        analyte_code: analyteRows[0].code,
+        analyte_name: analyteRows[0].name,
+        similarity: confidence,
+        source: 'llm'
+      }];
+    }
+  }
+
+  if (candidates.length === 0) {
+    logger.warn({ result_id, final_decision }, 'Cannot queue for review: no candidates generated');
+    return;
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO match_reviews
+         (result_id, candidates, status, created_at)
+       VALUES ($1, $2, 'pending', NOW())
+       ON CONFLICT (result_id) DO UPDATE SET
+         candidates = EXCLUDED.candidates,
+         status = 'pending'`,
+      [
+        result_id,
+        JSON.stringify(candidates)
+      ]
+    );
+
+    logger.info({
+      result_id,
+      candidates_count: candidates.length,
+      decision: final_decision
+    }, '[wetRun] Match queued for review');
+  } catch (error) {
+    logger.error({ error: error.message, result_id }, 'Failed to queue for review');
+  }
+}
+
+/**
+ * Apply analyte mapping with database writes (PRD v2.4)
+ *
+ * @param {Object} params
+ * @param {string} params.reportId - UUID of patient_report
+ * @param {string} params.patientId - UUID of patient
+ * @param {Array} params.parameters - Lab result rows (optional, fetched if not provided)
+ * @returns {Promise<Object>} - Mapping decisions + write results
+ */
+async function wetRun({ reportId, patientId, parameters }) {
+  logger.info({ report_id: reportId }, '[wetRun] Starting write mode');
+
+  // First, run dry-run to get mapping decisions
+  const { summary, rows } = await dryRun({
+    report_id: reportId,
+    patient_id: patientId,
+    analyte_suggestions: null
+  });
+
+  // Counters for summary
+  const counters = {
+    written: 0,
+    queued_for_review: 0,
+    new_queued: 0,
+    skipped: 0,
+    already_mapped: 0
+  };
+
+  // Process each row decision
+  for (const row of rows) {
+    const { final_decision, confidence, final_analyte, result_id } = row;
+
+    // Skip if already mapped
+    const { rows: existing } = await pool.query(
+      'SELECT analyte_id FROM lab_results WHERE id = $1',
+      [result_id]
+    );
+
+    if (existing[0]?.analyte_id) {
+      counters.already_mapped++;
+      continue;
+    }
+
+    // High confidence matches → Write immediately
+    if (final_decision === 'MATCH_EXACT') {
+      const rowsAffected = await writeAnalyteId(
+        result_id,
+        final_analyte.analyte_id,
+        1.0,
+        'auto_exact'
+      );
+      if (rowsAffected > 0) {
+        counters.written++;
+      }
+    }
+    else if (final_decision === 'MATCH_FUZZY' && confidence >= CONFIG.AUTO_ACCEPT_THRESHOLD) {
+      const rowsAffected = await writeAnalyteId(
+        result_id,
+        final_analyte.analyte_id,
+        confidence,
+        'auto_fuzzy'
+      );
+      if (rowsAffected > 0) {
+        counters.written++;
+      }
+    }
+    else if (final_decision === 'MATCH_LLM' && confidence >= CONFIG.AUTO_ACCEPT_THRESHOLD) {
+      // For MATCH_LLM, we need to look up the analyte_id by code
+      const { rows: analyteRows } = await pool.query(
+        'SELECT analyte_id FROM analytes WHERE code = $1',
+        [final_analyte.code]
+      );
+
+      if (analyteRows.length > 0) {
+        const rowsAffected = await writeAnalyteId(
+          result_id,
+          analyteRows[0].analyte_id,
+          confidence,
+          'auto_llm'
+        );
+        if (rowsAffected > 0) {
+          counters.written++;
+        }
+      }
+    }
+
+    // Medium confidence → Queue for review
+    else if (
+      (final_decision === 'MATCH_FUZZY' && confidence >= CONFIG.QUEUE_LOWER_THRESHOLD) ||
+      (final_decision === 'MATCH_LLM' && confidence >= CONFIG.QUEUE_LOWER_THRESHOLD) ||
+      (final_decision === 'AMBIGUOUS_FUZZY')
+    ) {
+      await queueForReview(row);
+      counters.queued_for_review++;
+    }
+
+    // NEW analytes → Always queue
+    else if (final_decision === 'NEW_LLM') {
+      await queueNewAnalyte(row);
+      counters.new_queued++;
+    }
+
+    // Low confidence or unmapped → Skip
+    else {
+      counters.skipped++;
+    }
+  }
+
+  const result = {
+    summary: counters,
+    dry_run_summary: summary
+  };
+
+  logger.info({
+    report_id: reportId,
+    ...counters
+  }, '[wetRun] Write mode completed');
+
+  return result;
+}
+
 module.exports = {
   dryRun,
+  wetRun,
   normalizeLabel,
   // Export for testing
   _internal: {
     findExactMatch,
     findFuzzyMatch,
     processRow,
+    writeAnalyteId,
+    queueNewAnalyte,
+    queueForReview,
+    detectLanguage,
   },
 };

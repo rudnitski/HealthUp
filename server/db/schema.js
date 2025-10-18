@@ -127,6 +127,97 @@ const schemaStatements = [
   CREATE INDEX IF NOT EXISTS idx_lab_results_analyte_id
     ON lab_results (analyte_id);
   `,
+  // PRD v2.4: Mapping write mode columns
+  `
+  ALTER TABLE lab_results
+    ADD COLUMN IF NOT EXISTS mapping_confidence REAL,
+    ADD COLUMN IF NOT EXISTS mapped_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS mapping_source TEXT;
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_lab_results_mapping_source
+    ON lab_results (mapping_source);
+  `,
+  `
+  COMMENT ON COLUMN lab_results.mapping_confidence IS 'Confidence score (0-1) of the analyte mapping';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.mapped_at IS 'Timestamp when analyte_id was set';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.mapping_source IS 'Source of mapping: auto_exact, auto_fuzzy, auto_llm, manual_resolved, manual';
+  `,
+  `
+  ALTER TABLE analyte_aliases
+    ADD COLUMN IF NOT EXISTS alias_display TEXT;
+  `,
+  `
+  COMMENT ON COLUMN analyte_aliases.alias IS 'Normalized lowercase form for matching (e.g., "интерлейкин 6")';
+  `,
+  `
+  COMMENT ON COLUMN analyte_aliases.alias_display IS 'Original display form with proper casing and punctuation';
+  `,
+  `
+  ALTER TABLE pending_analytes
+    ADD COLUMN IF NOT EXISTS parameter_variations JSONB,
+    ADD COLUMN IF NOT EXISTS discarded_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS discarded_reason TEXT,
+    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS approved_analyte_id INT REFERENCES analytes(analyte_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_pending_analytes_status
+    ON pending_analytes (status);
+  `,
+  `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_analytes_proposed_code
+    ON pending_analytes (proposed_code);
+  `,
+  `
+  COMMENT ON COLUMN pending_analytes.parameter_variations IS 'Array of raw parameter name variations with language and occurrence count';
+  `,
+  `
+  COMMENT ON COLUMN pending_analytes.discarded_reason IS 'Reason for discarding (prevents re-proposing)';
+  `,
+  `
+  ALTER TABLE match_reviews
+    ADD COLUMN IF NOT EXISTS candidates JSONB;
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_match_reviews_status
+    ON match_reviews (status);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_match_reviews_result_id
+    ON match_reviews (result_id);
+  `,
+  `
+  COMMENT ON COLUMN match_reviews.candidates IS 'Array of candidate matches with similarity scores';
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS admin_actions (
+    action_id BIGSERIAL PRIMARY KEY,
+    action_type TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id BIGINT,
+    admin_user TEXT,
+    changes JSONB,
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_created_at
+    ON admin_actions (created_at DESC);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_action_type
+    ON admin_actions (action_type);
+  `,
+  `
+  COMMENT ON TABLE admin_actions IS 'Audit trail for all admin actions in the mapping write mode system';
+  `,
   `
   CREATE TABLE IF NOT EXISTS sql_generation_logs (
     id UUID PRIMARY KEY,

@@ -109,12 +109,13 @@ async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARC
 }
 
 /**
- * Fuzzy search on analytes.name (optional for MVP)
- * Similar to parameter search but on analytes table
+ * Fuzzy search on analyte_aliases with canonical analyte names
+ * PRD v2.4: Searches aliases (multilingual) and returns canonical analyte names
+ * This is the RECOMMENDED search for finding analytes - searches all language variants
  *
- * @param {string} searchTerm - Term to search for
+ * @param {string} searchTerm - Term to search for (any language)
  * @param {number} limit - Maximum number of results
- * @returns {Object} Search results with similarity scores
+ * @returns {Object} Search results with canonical names and codes
  */
 async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_LIMIT) {
   if (!searchTerm || typeof searchTerm !== 'string') {
@@ -140,14 +141,19 @@ async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_
     // Set similarity threshold within transaction
     await client.query(`SET LOCAL pg_trgm.similarity_threshold = ${similarityThreshold}`);
 
-    // Execute fuzzy search query
+    // Execute fuzzy search query on aliases with analyte join
     const sql = `
       SELECT DISTINCT
-        name as analyte_name,
-        similarity(name, $1) as similarity_score
-      FROM analytes
-      WHERE name % $1
-      ORDER BY similarity_score DESC, name
+        a.code as analyte_code,
+        a.name as analyte_name,
+        aa.alias as matched_alias,
+        aa.alias_display,
+        aa.lang,
+        similarity(aa.alias, $1) as similarity_score
+      FROM analyte_aliases aa
+      JOIN analytes a ON aa.analyte_id = a.analyte_id
+      WHERE aa.alias % $1
+      ORDER BY similarity_score DESC, a.code
       LIMIT $2
     `;
 
@@ -161,7 +167,11 @@ async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_
       similarity_threshold: similarityThreshold,
       matches_found: result.rows.length,
       matches: result.rows.map(row => ({
+        analyte_code: row.analyte_code,
         analyte_name: row.analyte_name,
+        matched_alias: row.matched_alias,
+        alias_display: row.alias_display,
+        language: row.lang,
         similarity: Math.round(row.similarity_score * 100) + '%'
       }))
     };
@@ -169,6 +179,8 @@ async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_
     logger.info({
       search_term: searchTerm,
       matches_found: result.rows.length,
+      top_match: result.rows[0]?.analyte_name,
+      top_code: result.rows[0]?.analyte_code,
     }, '[agenticTools] fuzzy_search_analyte_names completed');
 
     return response;
@@ -318,13 +330,13 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "fuzzy_search_analyte_names",
-      description: "Search for analyte names in the analytes table using fuzzy matching. Similar to parameter search but searches the canonical analyte names. Use when you need to find standardized analyte identifiers.",
+      description: "RECOMMENDED: Search for canonical analyte names using multilingual aliases. Searches analyte_aliases table (which includes Russian, English, Hebrew, etc.) and returns standardized analyte codes and names. Use this FIRST instead of fuzzy_search_parameter_names when searching for lab tests - it searches all language variants and returns canonical names that group together different OCR variations (e.g., 'ЛПВП-холестерин' and 'Холестерин-ЛПВП' both return 'HDL'). When querying data, use the returned analyte_code in your WHERE clause joined via lab_results.analyte_id to group related tests together.",
       parameters: {
         type: "object",
         properties: {
           search_term: {
             type: "string",
-            description: "The analyte name to search for"
+            description: "The analyte name to search for (any language: Russian, English, Hebrew, etc.)"
           },
           limit: {
             type: "integer",
