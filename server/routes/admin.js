@@ -163,7 +163,8 @@ router.post('/approve-analyte', async (req, res) => {
       `UPDATE pending_analytes
        SET status = 'approved',
            approved_at = NOW(),
-           approved_analyte_id = $1
+           approved_analyte_id = $1,
+           updated_at = NOW()
        WHERE pending_id = $2`,
       [newAnalyteId, pending_id]
     );
@@ -236,7 +237,8 @@ router.post('/discard-analyte', async (req, res) => {
       `UPDATE pending_analytes
        SET status = 'discarded',
            discarded_at = NOW(),
-           discarded_reason = $1
+           discarded_reason = $1,
+           updated_at = NOW()
        WHERE pending_id = $2
        RETURNING proposed_code`,
       [reason || null, pending_id]
@@ -286,8 +288,7 @@ router.get('/ambiguous-matches', async (req, res) => {
          lr.unit,
          mr.candidates,
          mr.status,
-         mr.created_at,
-         mr.suggested_analyte_id
+         mr.created_at
        FROM match_reviews mr
        LEFT JOIN lab_results lr ON mr.result_id = lr.id
        ${whereClause ? 'WHERE mr.status = $1' : ''}
@@ -373,9 +374,10 @@ router.post('/resolve-match', async (req, res) => {
     await client.query(
       `UPDATE match_reviews
        SET status = 'resolved',
-           suggested_analyte_id = $1
-       WHERE review_id = $2`,
-      [chosen_analyte_id, review_id]
+           resolved_at = NOW(),
+           updated_at = NOW()
+       WHERE review_id = $1`,
+      [review_id]
     );
 
     await client.query('COMMIT');

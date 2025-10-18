@@ -16,6 +16,9 @@ const schemaStatements = [
   );
   `,
   `
+  COMMENT ON TABLE patients IS 'Patient demographic information';
+  `,
+  `
   CREATE TABLE IF NOT EXISTS patient_reports (
     id UUID PRIMARY KEY,
     patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
@@ -38,6 +41,50 @@ const schemaStatements = [
   );
   `,
   `
+  COMMENT ON TABLE patient_reports IS 'Lab report documents parsed from PDFs';
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS analytes (
+    analyte_id SERIAL PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    unit_canonical TEXT,
+    category TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  `,
+  `
+  COMMENT ON TABLE analytes IS 'Canonical analyte definitions with standardized codes';
+  `,
+  `
+  COMMENT ON COLUMN analytes.code IS 'Unique analyte code (e.g., CHOL, HDL, VITD)';
+  `,
+  `
+  COMMENT ON COLUMN analytes.name IS 'Canonical English name for display';
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS analyte_aliases (
+    analyte_id INT NOT NULL REFERENCES analytes(analyte_id) ON DELETE CASCADE,
+    alias TEXT NOT NULL,
+    alias_display TEXT,
+    lang TEXT,
+    confidence REAL DEFAULT 1.0,
+    source TEXT DEFAULT 'seed',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (analyte_id, alias)
+  );
+  `,
+  `
+  COMMENT ON TABLE analyte_aliases IS 'Multilingual aliases for analyte matching';
+  `,
+  `
+  COMMENT ON COLUMN analyte_aliases.alias IS 'Normalized lowercase form for matching (e.g., "интерлейкин 6")';
+  `,
+  `
+  COMMENT ON COLUMN analyte_aliases.alias_display IS 'Original display form with proper casing and punctuation';
+  `,
+  `
   CREATE TABLE IF NOT EXISTS lab_results (
     id UUID PRIMARY KEY,
     report_id UUID NOT NULL REFERENCES patient_reports(id) ON DELETE CASCADE,
@@ -53,90 +100,15 @@ const schemaStatements = [
     reference_full_text TEXT,
     is_value_out_of_range BOOLEAN,
     numeric_result NUMERIC,
+    analyte_id INT REFERENCES analytes(analyte_id),
+    mapping_confidence REAL,
+    mapped_at TIMESTAMPTZ,
+    mapping_source TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   `,
   `
-  CREATE TABLE IF NOT EXISTS analytes (
-    analyte_id SERIAL PRIMARY KEY,
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    unit_canonical TEXT,
-    category TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-  `,
-  `
-  CREATE TABLE IF NOT EXISTS analyte_aliases (
-    analyte_id INT NOT NULL REFERENCES analytes(analyte_id) ON DELETE CASCADE,
-    alias TEXT NOT NULL,
-    lang TEXT,
-    confidence REAL DEFAULT 1.0,
-    source TEXT DEFAULT 'seed',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (analyte_id, alias)
-  );
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_alias_lower
-    ON analyte_aliases (LOWER(alias));
-  `,
-  `
-  CREATE TABLE IF NOT EXISTS pending_analytes (
-    pending_id BIGSERIAL PRIMARY KEY,
-    proposed_code TEXT NOT NULL,
-    proposed_name TEXT NOT NULL,
-    unit_canonical TEXT,
-    category TEXT,
-    aliases JSONB,
-    evidence JSONB,
-    confidence REAL,
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-  `,
-  `
-  CREATE TABLE IF NOT EXISTS match_reviews (
-    review_id BIGSERIAL PRIMARY KEY,
-    result_id UUID NOT NULL REFERENCES lab_results(id) ON DELETE CASCADE,
-    suggested_analyte_id INT REFERENCES analytes(analyte_id),
-    suggested_code TEXT,
-    confidence REAL,
-    rationale TEXT,
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_patient_reports_patient_recognized
-    ON patient_reports (patient_id, recognized_at DESC);
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_lab_results_report
-    ON lab_results (report_id);
-  `,
-  `
-  ALTER TABLE lab_results
-    ADD COLUMN IF NOT EXISTS position INT;
-  `,
-  `
-  ALTER TABLE lab_results
-    ADD COLUMN IF NOT EXISTS analyte_id INT REFERENCES analytes(analyte_id);
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_lab_results_analyte_id
-    ON lab_results (analyte_id);
-  `,
-  // PRD v2.4: Mapping write mode columns
-  `
-  ALTER TABLE lab_results
-    ADD COLUMN IF NOT EXISTS mapping_confidence REAL,
-    ADD COLUMN IF NOT EXISTS mapped_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS mapping_source TEXT;
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_lab_results_mapping_source
-    ON lab_results (mapping_source);
+  COMMENT ON TABLE lab_results IS 'Individual test results extracted from lab reports';
   `,
   `
   COMMENT ON COLUMN lab_results.mapping_confidence IS 'Confidence score (0-1) of the analyte mapping';
@@ -148,51 +120,57 @@ const schemaStatements = [
   COMMENT ON COLUMN lab_results.mapping_source IS 'Source of mapping: auto_exact, auto_fuzzy, auto_llm, manual_resolved, manual';
   `,
   `
-  ALTER TABLE analyte_aliases
-    ADD COLUMN IF NOT EXISTS alias_display TEXT;
+  CREATE TABLE IF NOT EXISTS pending_analytes (
+    pending_id BIGSERIAL PRIMARY KEY,
+    proposed_code TEXT UNIQUE NOT NULL,
+    proposed_name TEXT NOT NULL,
+    unit_canonical TEXT,
+    category TEXT,
+    evidence JSONB,
+    parameter_variations JSONB,
+    confidence REAL,
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK (status IN ('pending', 'approved', 'discarded')),
+    approved_at TIMESTAMPTZ,
+    approved_analyte_id INT REFERENCES analytes(analyte_id),
+    discarded_at TIMESTAMPTZ,
+    discarded_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
   `,
   `
-  COMMENT ON COLUMN analyte_aliases.alias IS 'Normalized lowercase form for matching (e.g., "интерлейкин 6")';
+  COMMENT ON TABLE pending_analytes IS 'LLM-proposed NEW analytes awaiting admin review';
   `,
   `
-  COMMENT ON COLUMN analyte_aliases.alias_display IS 'Original display form with proper casing and punctuation';
+  COMMENT ON COLUMN pending_analytes.evidence IS 'Evidence structure: {report_id: UUID, result_id: UUID, parameter_name: string, unit: string, llm_comment: string, first_seen: ISO8601, last_seen: ISO8601, occurrence_count: int}';
   `,
   `
-  ALTER TABLE pending_analytes
-    ADD COLUMN IF NOT EXISTS parameter_variations JSONB,
-    ADD COLUMN IF NOT EXISTS discarded_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS discarded_reason TEXT,
-    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS approved_analyte_id INT REFERENCES analytes(analyte_id);
+  COMMENT ON COLUMN pending_analytes.parameter_variations IS 'Array of parameter variations: [{raw: string, normalized: string, lang: string, count: int}]';
   `,
   `
-  CREATE INDEX IF NOT EXISTS idx_pending_analytes_status
-    ON pending_analytes (status);
+  COMMENT ON COLUMN pending_analytes.discarded_reason IS 'Reason for discarding (e.g., "duplicate of CHOL", "not a lab analyte")';
   `,
   `
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_analytes_proposed_code
-    ON pending_analytes (proposed_code);
+  CREATE TABLE IF NOT EXISTS match_reviews (
+    review_id BIGSERIAL PRIMARY KEY,
+    result_id UUID UNIQUE NOT NULL REFERENCES lab_results(id) ON DELETE CASCADE,
+    candidates JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK (status IN ('pending', 'resolved', 'skipped')),
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
   `,
   `
-  COMMENT ON COLUMN pending_analytes.parameter_variations IS 'Array of raw parameter name variations with language and occurrence count';
+  COMMENT ON TABLE match_reviews IS 'Ambiguous/medium-confidence matches awaiting admin disambiguation';
   `,
   `
-  COMMENT ON COLUMN pending_analytes.discarded_reason IS 'Reason for discarding (prevents re-proposing)';
+  COMMENT ON COLUMN match_reviews.candidates IS 'Array of candidate matches: [{analyte_id: int, analyte_code: string, analyte_name: string, similarity: float, source: string}]';
   `,
   `
-  ALTER TABLE match_reviews
-    ADD COLUMN IF NOT EXISTS candidates JSONB;
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_match_reviews_status
-    ON match_reviews (status);
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_match_reviews_result_id
-    ON match_reviews (result_id);
-  `,
-  `
-  COMMENT ON COLUMN match_reviews.candidates IS 'Array of candidate matches with similarity scores';
+  COMMENT ON COLUMN match_reviews.resolved_at IS 'Timestamp when admin resolved this ambiguous match';
   `,
   `
   CREATE TABLE IF NOT EXISTS admin_actions (
@@ -204,16 +182,8 @@ const schemaStatements = [
     changes JSONB,
     ip_address INET,
     user_agent TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_admin_actions_created_at
-    ON admin_actions (created_at DESC);
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_admin_actions_action_type
-    ON admin_actions (action_type);
   `,
   `
   COMMENT ON TABLE admin_actions IS 'Audit trail for all admin actions in the mapping write mode system';
@@ -235,9 +205,62 @@ const schemaStatements = [
   );
   `,
   `
+  COMMENT ON TABLE sql_generation_logs IS 'LLM-based SQL generation audit trail';
+  `,
+  // Indexes
+  `
+  CREATE INDEX IF NOT EXISTS idx_patient_reports_patient_recognized
+    ON patient_reports (patient_id, recognized_at DESC);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_lab_results_report
+    ON lab_results (report_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_lab_results_analyte_id
+    ON lab_results (analyte_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_lab_results_mapping_source
+    ON lab_results (mapping_source);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_alias_lower
+    ON analyte_aliases (LOWER(alias));
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_analyte_aliases_lang
+    ON analyte_aliases(lang);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_pending_analytes_status
+    ON pending_analytes (status);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_match_reviews_status
+    ON match_reviews (status);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_match_reviews_result_id
+    ON match_reviews (result_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_created_at
+    ON admin_actions (created_at DESC);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_action_type
+    ON admin_actions (action_type);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_entity
+    ON admin_actions(entity_type, entity_id);
+  `,
+  `
   CREATE INDEX IF NOT EXISTS idx_sql_generation_logs_created_at
     ON sql_generation_logs (created_at DESC);
   `,
+  // Views
   `
   CREATE OR REPLACE VIEW v_measurements AS
   SELECT

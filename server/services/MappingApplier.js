@@ -932,7 +932,8 @@ async function queueForReview(rowResult) {
        VALUES ($1, $2, 'pending', NOW())
        ON CONFLICT (result_id) DO UPDATE SET
          candidates = EXCLUDED.candidates,
-         status = 'pending'`,
+         status = 'pending',
+         updated_at = NOW()`,
       [
         result_id,
         JSON.stringify(candidates)

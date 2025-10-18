@@ -111,22 +111,23 @@ The static UI (`public/`) provides both the ingestion workflow and analytics sur
 
 ## Data Model
 
-`server/db/schema.js` provisions the relational schema at boot. Key entities:
+`server/db/schema.js` provisions the relational schema at boot. Key entities (consolidated in PRD v2.5):
 
 | Table / View | Purpose |
 | --- | --- |
-| `patients` | Master patient records keyed by UUID with normalized name, DOB, gender, and last-seen timestamp. |
-| `patient_reports` | Individual ingested lab reports (unique per patient+checksum) with parser metadata, raw model output, and missing-field hints. |
-| `lab_results` | Parsed parameter rows per report with position ordering, normalized units, reference ranges, and numeric coercions. |
-| `analytes` | Canonical analyte catalog (code, name, optional category) used for mapping. |
-| `analyte_aliases` | Locale-aware alias table (requires `pg_trgm` for fuzzy search, indexed on `LOWER(alias)`). |
-| `pending_analytes` | Queue for new analyte proposals coming from mapping or QA. |
-| `match_reviews` | Manual review queue for ambiguous mappings. |
-| `sql_generation_logs` | Audit records for agentic SQL generations (status, prompt, model metadata). |
+| `patients` | Master patient records keyed by UUID with normalized name, DOB, gender, and last-seen timestamp. Includes `created_at`, `updated_at`. |
+| `patient_reports` | Individual ingested lab reports (unique per patient+checksum) with parser metadata, raw model output, and missing-field hints. Includes `created_at`, `updated_at`. |
+| `lab_results` | Parsed parameter rows per report with position ordering, normalized units, reference ranges, numeric coercions, and mapping metadata (`analyte_id`, `mapping_confidence`, `mapped_at`, `mapping_source`). Includes `created_at`. |
+| `analytes` | Canonical analyte catalog (code, name, optional category) used for mapping. Includes `created_at`, `updated_at`. |
+| `analyte_aliases` | Locale-aware alias table with both normalized (`alias`) and display forms (`alias_display`). Requires `pg_trgm` for fuzzy search, indexed on `LOWER(alias)`. Includes `created_at`. |
+| `pending_analytes` | LLM-proposed NEW analytes awaiting admin review with evidence, parameter variations, and status tracking (`pending`, `approved`, `discarded`). Includes `created_at`, `updated_at`, `approved_at`, `discarded_at`. |
+| `match_reviews` | Ambiguous/medium-confidence matches awaiting admin disambiguation with candidate array and resolution tracking. Includes `created_at`, `updated_at`, `resolved_at`. |
+| `admin_actions` | Audit trail for all admin actions (approve/discard analytes, resolve matches). Includes `created_at`. |
+| `sql_generation_logs` | Audit records for agentic SQL generations (status, prompt, model metadata). Includes `created_at`. |
 | `v_measurements` | Convenience view joining `lab_results`, `patient_reports`, and `analytes` for downstream analytics. |
 
 Supporting assets:
-- `migrations/add_trigram_index.sql` and `server/db/seed_analytes.sql` help bootstrap trigram indexes and analyte vocabulary.
+- `server/db/seed_analytes.sql` helps bootstrap analyte vocabulary.
 - `config/schema_aliases.json` maps search phrases to schemas/tables for prompt enrichment.
 
 ## Configuration & Feature Flags
@@ -187,7 +188,14 @@ Create a `.env` in the repo root with the required secrets. Notable variables:
    ```
    This script confirms required tables/indexes exist and surfaces configuration thresholds.
 
-Schema migrations occur on boot via `server/db/schema.js`. For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before enabling mapping.
+**Schema Management (PRD v2.5):** This project uses declarative schema management via `server/db/schema.js`. All table definitions, indexes, and constraints are consolidated in a single source of truth. The schema is automatically applied on boot using `CREATE TABLE IF NOT EXISTS` statements. During MVP, schema changes are handled by dropping and recreating the database (data loss is acceptable). Migration files are not used. When significant schema changes occur, run:
+```sh
+psql postgres://localhost:5432/postgres -c "DROP DATABASE IF EXISTS healthup;"
+psql postgres://localhost:5432/postgres -c "CREATE DATABASE healthup OWNER healthup_user ENCODING 'UTF8';"
+npm run dev  # This will recreate the schema
+```
+
+For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before enabling mapping.
 
 ## Testing & QA
 
