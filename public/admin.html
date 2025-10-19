@@ -24,6 +24,9 @@
       <button id="tab-ambiguous" class="tab-button" data-tab="ambiguous">
         ❓ Ambiguous Matches <span id="ambiguous-count" class="tab-count">0</span>
       </button>
+      <button id="tab-danger-zone" class="tab-button" data-tab="danger-zone">
+        ⚠️ Danger Zone
+      </button>
     </div>
 
     <!-- Tab Content: New Analytes -->
@@ -91,6 +94,35 @@
       </table>
     </section>
 
+    <!-- Tab Content: Danger Zone -->
+    <section id="content-danger-zone" class="tab-content" aria-live="polite" hidden>
+      <h2>⚠️ Danger Zone</h2>
+      <p class="help-text">Destructive operations that cannot be undone</p>
+
+      <div class="danger-zone-container">
+        <div class="danger-zone-item">
+          <div class="danger-zone-info">
+            <h3>Reset Database</h3>
+            <p>Drop all tables and recreate schema with seed data. This will delete:</p>
+            <ul>
+              <li>All uploaded lab reports</li>
+              <li>All patient data</li>
+              <li>All lab results and mappings</li>
+              <li>All pending analytes and reviews</li>
+            </ul>
+            <p><strong>Analyte definitions and aliases will be restored from seed data.</strong></p>
+          </div>
+          <div class="danger-zone-action">
+            <button id="reset-database-btn" class="danger-button">
+              🗑️ Reset Database
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="reset-status" class="status-message" hidden></div>
+    </section>
+
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
   </main>
@@ -109,6 +141,7 @@
     <div class="modal-content">
       <h3 id="confirm-title"></h3>
       <p id="confirm-message"></p>
+      <input type="text" id="confirm-input" class="confirm-input" placeholder="" hidden>
       <div class="modal-actions">
         <button id="confirm-yes" class="analyze-button">Confirm</button>
         <button id="confirm-no" class="secondary-button">Cancel</button>

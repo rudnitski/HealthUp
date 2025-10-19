@@ -7,7 +7,7 @@ HealthUp transforms raw lab reports into structured longitudinal data and provid
 - Patient/report persistence with deduplication and re-processing safeguards.
 - Lab result retrieval APIs for downstream tooling.
 - Agentic natural-language SQL generation with schema-aware tooling, validation, and audit logging.
-- Optional mapping dry-run pipeline that aligns extracted parameters to canonical analytes.
+- Automatic analyte mapping pipeline that aligns extracted parameters to canonical analytes with multi-tier matching (exact, fuzzy, LLM).
 - Plot-ready SQL responses and client-side visualization (with parameter selector) for multi-parameter time-series lab trends.
 
 ## Architecture Overview
@@ -45,15 +45,17 @@ OpenAI APIs (Vision for extraction, Text for SQL & mapping)
    - Writes metadata snapshots, missing fields, and raw model output.
 6. Returns the persisted identifiers and sanitized payload to the client along with the progress log.
 
-When `ENABLE_MAPPING_DRY_RUN` is `true`, the route invokes the Mapping Applier (see below) asynchronously after persistence. Failures in the mapping phase are logged but do not fail ingestion. All persistence errors are wrapped in `PersistLabReportError` with debugging context.
+After successful persistence, the route automatically invokes the Mapping Applier (see below) to map extracted parameters to canonical analytes. Failures in the mapping phase are logged but do not fail ingestion. All persistence errors are wrapped in `PersistLabReportError` with debugging context.
 
 ### Mapping Applier (`server/services/MappingApplier.js`)
-- Runs an ordered tiered strategy to align extracted `lab_results` to canonical analytes.
+- Runs an ordered tiered strategy to align extracted `lab_results` to canonical analytes:
   - Tier A: exact alias lookup on `analyte_aliases`.
-  - Tier B: trigram-similarity fuzzy match (requires `pg_trgm`; controlled by `REQUIRE_PG_TRGM`).
-  - Tier C (v0.9.1): optional OpenAI-assisted suggestions when deterministic tiers fail.
+  - Tier B: trigram-similarity fuzzy match (requires `pg_trgm`).
+  - Tier C: OpenAI-assisted suggestions when deterministic tiers fail.
+- Automatically writes high-confidence matches (≥ `MAPPING_AUTO_ACCEPT` threshold) directly to `lab_results.analyte_id`.
+- Queues medium-confidence matches (≥ `MAPPING_QUEUE_LOWER`) to `match_reviews` for human review.
+- Queues new analyte proposals to `pending_analytes` for admin approval.
 - Produces structured `pino` logs per row (`MATCH_EXACT`, `MATCH_FUZZY`, `AMBIGUOUS_FUZZY`, etc.) summarizing confidence scores and thresholds (configurable via `BACKFILL_SIMILARITY_THRESHOLD`, `MAPPING_AUTO_ACCEPT`, `MAPPING_QUEUE_LOWER`).
-- Designed to run in dry-run mode today (`dryRun()` returns metrics); future production versions can adopt the same API.
 - Utilities include analyte schema exporters and normalization helpers shared across tiers.
 
 ### Report Retrieval (`server/services/reportRetrieval.js`)
@@ -157,10 +159,9 @@ Create a `.env` in the repo root with the required secrets. Notable variables:
 | `ADMIN_API_KEY` | – | Required to call `/api/sql-generator/admin/cache/bust`. |
 | `PDFTOPPM_PATH` | `pdftoppm` | Override when Poppler tools are installed outside `PATH`. |
 | `REQUIRE_PG_TRGM` | `false` | If `true`, boot fails when `pg_trgm` cannot be created. |
-| `ENABLE_MAPPING_DRY_RUN` | `false` | Enables Mapping Applier during ingestion. |
-| `BACKFILL_SIMILARITY_THRESHOLD` | `0.70` | Tier-B minimum score. |
-| `MAPPING_AUTO_ACCEPT` | `0.80` | Confidence required to auto-accept fuzzy matches. |
-| `MAPPING_QUEUE_LOWER` | `0.60` | Confidence at which rows are queued for review. |
+| `BACKFILL_SIMILARITY_THRESHOLD` | `0.70` | Tier-B minimum fuzzy similarity score. |
+| `MAPPING_AUTO_ACCEPT` | `0.80` | Confidence required to auto-write matches to database. |
+| `MAPPING_QUEUE_LOWER` | `0.60` | Confidence at which matches are queued for review. |
 | `LOG_LEVEL` | `info` | Pino logger level for mapping runs. |
 | `PORT` | `3000` | HTTP port. |
 
@@ -176,7 +177,7 @@ Create a `.env` in the repo root with the required secrets. Notable variables:
    ```
 3. **Configure environment**
    - Create `.env` with at least `DATABASE_URL` and `OPENAI_API_KEY`.
-   - Optional: set `ENABLE_MAPPING_DRY_RUN=true` after seeding analyte catalogs.
+   - Analyte mapping runs automatically after each lab report upload.
 4. **Start the application**
    ```sh
    npm run dev
@@ -207,7 +208,7 @@ For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before ena
 
 - `pino` provides structured logs across services. In development, logs are pretty-printed; in production they are JSON.
 - Agentic SQL emits detailed iteration logs (`logger.debug`/`logger.info`) and persists final outcomes in `sql_generation_logs`.
-- Mapping Applier dry runs emit per-row structured events for ingestion into tracing/BI pipelines.
+- Mapping Applier emits per-row structured events for ingestion into tracing/BI pipelines.
 - Database health is exposed at `GET /health/db`.
 
 ## Supporting Artifacts
@@ -243,6 +244,6 @@ Consult these documents when drafting new PRDs; each PRD references the correspo
 ## Known Limitations & Next Steps
 
 - Ingestion currently blocks on OpenAI; consider queueing for batch processing when latency becomes an issue.
-- Mapping Applier runs in dry-run mode; production adoption will require persistence of decisions and human-in-the-loop review surfaces.
+- Mapping Applier automatically writes high-confidence matches; medium-confidence matches and new analyte proposals require admin review interfaces.
 - Agentic SQL relies on curated prompts and schema aliases—update `config/schema_aliases.json` whenever new tables are introduced.
 - Plot generation expects time-series columns (`t`, `y`, `parameter_name`, `unit`, reference bands). Ensure new plot-focused PRDs conform to this contract.

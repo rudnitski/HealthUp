@@ -74,18 +74,52 @@ function showToast(message, type = 'success') {
 }
 
 // Confirmation Dialog
-function confirm(title, message) {
+// Options: { requireText: 'RESET' } - if set, user must type this exact text to confirm
+function confirm(title, message, options = {}) {
   return new Promise((resolve) => {
     const confirmTitle = document.getElementById('confirm-title');
     const confirmMessage = document.getElementById('confirm-message');
+    const confirmInput = document.getElementById('confirm-input');
     const confirmYes = document.getElementById('confirm-yes');
     const confirmNo = document.getElementById('confirm-no');
 
     confirmTitle.textContent = title;
     confirmMessage.textContent = message;
+
+    let handleInput = null;
+
+    // Show input field if text confirmation is required
+    if (options.requireText) {
+      confirmInput.hidden = false;
+      confirmInput.value = '';
+      confirmInput.placeholder = `Type "${options.requireText}" to confirm`;
+      confirmInput.classList.remove('invalid');
+      confirmYes.disabled = true;
+
+      handleInput = () => {
+        const matches = confirmInput.value === options.requireText;
+        confirmYes.disabled = !matches;
+        if (confirmInput.value && !matches) {
+          confirmInput.classList.add('invalid');
+        } else {
+          confirmInput.classList.remove('invalid');
+        }
+      };
+
+      confirmInput.addEventListener('input', handleInput);
+      setTimeout(() => confirmInput.focus(), 100);
+    } else {
+      confirmInput.hidden = true;
+      confirmYes.disabled = false;
+    }
+
     confirmModal.hidden = false;
 
     const handleYes = () => {
+      if (options.requireText && confirmInput.value !== options.requireText) {
+        confirmInput.classList.add('invalid');
+        return;
+      }
       cleanup();
       resolve(true);
     };
@@ -98,7 +132,13 @@ function confirm(title, message) {
     const cleanup = () => {
       confirmYes.removeEventListener('click', handleYes);
       confirmNo.removeEventListener('click', handleNo);
+      if (handleInput) {
+        confirmInput.removeEventListener('input', handleInput);
+      }
       confirmModal.hidden = true;
+      confirmInput.value = '';
+      confirmInput.classList.remove('invalid');
+      confirmYes.disabled = false;
     };
 
     confirmYes.addEventListener('click', handleYes);
@@ -441,6 +481,75 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// === DANGER ZONE FUNCTIONALITY ===
+
+const resetDatabaseBtn = document.getElementById('reset-database-btn');
+const resetStatus = document.getElementById('reset-status');
+
+// Handle database reset
+async function handleDatabaseReset() {
+  const confirmed = await confirm(
+    '⚠️ DANGER: Reset Database?',
+    'This will DELETE ALL DATA in the database including:\n\n' +
+    '• All uploaded lab reports\n' +
+    '• All patient data\n' +
+    '• All lab results and mappings\n' +
+    '• All pending analytes and reviews\n\n' +
+    'The database will be recreated with seed analytes and aliases.\n\n' +
+    'This action CANNOT be undone!',
+    { requireText: 'RESET' }
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  // Disable button and show loading state
+  resetDatabaseBtn.disabled = true;
+  resetDatabaseBtn.textContent = '🔄 Resetting...';
+  resetStatus.hidden = false;
+  resetStatus.className = 'status-message info';
+  resetStatus.textContent = 'Dropping tables and recreating schema... Please wait.';
+
+  try {
+    const response = await fetch('/api/admin/reset-database', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || `HTTP ${response.status}`);
+    }
+
+    // Success
+    resetStatus.className = 'status-message success';
+    resetStatus.textContent = '✅ ' + result.message;
+    showToast('✅ Database reset successfully!', 'success');
+
+    // Refresh all tabs
+    setTimeout(async () => {
+      await fetchPendingAnalytes();
+      await fetchAmbiguousMatches();
+    }, 1000);
+
+  } catch (error) {
+    console.error('Database reset failed:', error);
+    resetStatus.className = 'status-message error';
+    resetStatus.textContent = '❌ Failed to reset database: ' + error.message;
+    showToast(`❌ Reset failed: ${error.message}`, 'error');
+  } finally {
+    resetDatabaseBtn.disabled = false;
+    resetDatabaseBtn.textContent = '🗑️ Reset Database';
+  }
+}
+
+// Add event listener for danger zone button
+if (resetDatabaseBtn) {
+  resetDatabaseBtn.addEventListener('click', handleDatabaseReset);
 }
 
 // Initialize

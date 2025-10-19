@@ -324,6 +324,16 @@ async function ensureSchema() {
       }
     }
 
+    // Enable pgcrypto for gen_random_uuid() used in SQL generation logging
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
+    } catch (extensionError) {
+      console.warn(
+        '[db] pgcrypto extension unavailable; gen_random_uuid() may not work.',
+        extensionError
+      );
+    }
+
     await client.query('BEGIN');
     await client.query('SET LOCAL search_path TO public');
     transactionStarted = true;
@@ -354,4 +364,60 @@ async function ensureSchema() {
   }
 }
 
-module.exports = { ensureSchema };
+/**
+ * Drop all tables and recreate schema from scratch
+ * WARNING: This will delete ALL data in the database!
+ */
+async function resetDatabase() {
+  const client = await pool.connect();
+  try {
+    console.log('[db] Starting database reset...');
+
+    // Drop all tables in dependency order (child tables first)
+    await client.query('DROP TABLE IF EXISTS admin_actions CASCADE');
+    await client.query('DROP TABLE IF EXISTS sql_generation_logs CASCADE');
+    await client.query('DROP TABLE IF EXISTS match_reviews CASCADE');
+    await client.query('DROP TABLE IF EXISTS pending_analytes CASCADE');
+    await client.query('DROP TABLE IF EXISTS lab_results CASCADE');
+    await client.query('DROP TABLE IF EXISTS patient_reports CASCADE');
+    await client.query('DROP TABLE IF EXISTS patients CASCADE');
+    await client.query('DROP TABLE IF EXISTS analyte_aliases CASCADE');
+    await client.query('DROP TABLE IF EXISTS analytes CASCADE');
+
+    // Drop views
+    await client.query('DROP VIEW IF EXISTS v_measurements CASCADE');
+
+    console.log('[db] All tables dropped successfully');
+
+    // Recreate schema
+    await ensureSchema();
+
+    // Re-seed analytes
+    const fs = require('fs');
+    const path = require('path');
+    const seedPath = path.join(__dirname, 'seed_analytes.sql');
+
+    if (fs.existsSync(seedPath)) {
+      console.log('[db] Reseeding analytes...');
+      const seedSQL = fs.readFileSync(seedPath, 'utf8');
+      await client.query(seedSQL);
+      console.log('[db] Analytes seeded successfully');
+    } else {
+      console.warn('[db] Seed file not found:', seedPath);
+    }
+
+    console.log('[db] ✅ Database reset complete!');
+
+    return {
+      success: true,
+      message: 'Database reset successfully. All tables dropped and recreated with seed data.'
+    };
+  } catch (error) {
+    console.error('[db] ❌ Database reset failed:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { ensureSchema, resetDatabase };

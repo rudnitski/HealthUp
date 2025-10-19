@@ -111,8 +111,8 @@ async function logSqlGeneration(data) {
     // Log to database (assuming sql_generation_logs table exists)
     await pool.query(
       `INSERT INTO sql_generation_logs
-       (status, user_id_hash, prompt, generated_sql, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
+       (id, status, user_id_hash, prompt, generated_sql, metadata, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())`,
       [
         status,
         userHash,

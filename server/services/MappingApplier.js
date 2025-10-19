@@ -1072,7 +1072,6 @@ async function wetRun({ reportId, patientId, parameters }) {
 }
 
 module.exports = {
-  dryRun,
   wetRun,
   normalizeLabel,
   // Export for testing
@@ -1084,5 +1083,6 @@ module.exports = {
     queueNewAnalyte,
     queueForReview,
     detectLanguage,
+    dryRun, // Keep for testing but not as public API
   },
 };

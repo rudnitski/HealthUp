@@ -418,4 +418,42 @@ router.post('/resolve-match', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/admin/reset-database
+ * Drop all tables and recreate schema with seed data
+ * WARNING: This deletes ALL data in the database!
+ */
+router.post('/reset-database', async (req, res) => {
+  try {
+    logger.warn({ ip: req.ip }, '[admin] Database reset requested');
+
+    // Import resetDatabase function
+    const { resetDatabase } = require('../db/schema');
+
+    // Perform the reset
+    const result = await resetDatabase();
+
+    // Log the action
+    await logAdminAction('reset_database', 'database', 'all', {
+      timestamp: new Date().toISOString(),
+      success: true
+    }, req);
+
+    logger.info('[admin] Database reset completed successfully');
+
+    res.json({
+      success: true,
+      message: result.message,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error({ error: error.message }, '[admin] Database reset failed');
+    res.status(500).json({
+      success: false,
+      error: 'Failed to reset database',
+      message: error.message
+    });
+  }
+});
+
 module.exports = router;
