@@ -52,10 +52,21 @@ const CONFIG = {
 function normalizeLabel(raw) {
   if (!raw || typeof raw !== 'string') return null;
 
-  const normalized = raw
-    .toLowerCase()
-    .normalize('NFKD')                    // Unicode decomposition
-    .replace(/[\u0300-\u036f]/g, '')      // Strip diacritics (é→e)
+  // Detect if string contains Cyrillic characters (U+0400–U+04FF)
+  const hasCyrillic = /[\u0400-\u04FF]/.test(raw);
+
+  let normalized = raw.toLowerCase();
+
+  // Only apply NFKD + diacritic stripping for non-Cyrillic strings
+  // This preserves Cyrillic combined chars like й (U+0439) while normalizing
+  // Latin diacritics like é→e, á→a, ñ→n for Latin-based lab labels
+  if (!hasCyrillic) {
+    normalized = normalized
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, ''); // Remove combining diacritical marks
+  }
+
+  normalized = normalized
     .replace(/μ/g, 'micro')               // Unify micro symbol
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')    // Replace punctuation with spaces
     .replace(/\s+/g, ' ')                 // Collapse whitespace
@@ -112,12 +123,13 @@ async function findFuzzyMatch(labelNorm) {
     return { matched: false, ambiguous: false, candidates: [] };
   }
 
+  // Get top 5 alias matches to catch potential duplicates
   const { rows } = await pool.query(
     `SELECT analyte_id, alias, similarity(LOWER(alias), $1) AS sim
      FROM analyte_aliases
      WHERE LOWER(alias) % $1
      ORDER BY sim DESC
-     LIMIT 2`,
+     LIMIT 5`,
     [labelNorm]
   );
 
@@ -125,21 +137,44 @@ async function findFuzzyMatch(labelNorm) {
     return { matched: false, ambiguous: false, candidates: [] };
   }
 
-  const topMatch = rows[0];
+  // Deduplicate by analyte_id, keeping highest similarity per analyte
+  const deduped = new Map();
+  for (const row of rows) {
+    if (!deduped.has(row.analyte_id)) {
+      deduped.set(row.analyte_id, row);
+    } else {
+      // Keep the one with higher similarity
+      const existing = deduped.get(row.analyte_id);
+      if (row.sim > existing.sim) {
+        deduped.set(row.analyte_id, row);
+      }
+    }
+  }
+
+  // Convert back to array and take top 2 ANALYTES
+  const uniqueRows = Array.from(deduped.values())
+    .sort((a, b) => b.sim - a.sim)
+    .slice(0, 2);
+
+  if (uniqueRows.length === 0) {
+    return { matched: false, ambiguous: false, candidates: [] };
+  }
+
+  const topMatch = uniqueRows[0];
 
   // Check if similarity meets threshold
   if (topMatch.sim < CONFIG.FUZZY_MATCH_THRESHOLD) {
-    return { matched: false, ambiguous: false, candidates: rows };
+    return { matched: false, ambiguous: false, candidates: uniqueRows };
   }
 
-  // Check for ambiguity: top-2 results within delta
-  if (rows.length === 2) {
-    const delta = topMatch.sim - rows[1].sim;
+  // Check for ambiguity: top-2 ANALYTES within delta
+  if (uniqueRows.length === 2) {
+    const delta = topMatch.sim - uniqueRows[1].sim;
     if (delta <= CONFIG.AMBIGUITY_DELTA) {
       return {
         matched: false,
         ambiguous: true,
-        candidates: rows.map(r => ({
+        candidates: uniqueRows.map(r => ({
           analyte_id: r.analyte_id,
           alias: r.alias,
           similarity: r.sim,
@@ -156,7 +191,7 @@ async function findFuzzyMatch(labelNorm) {
       alias: topMatch.alias,
       similarity: topMatch.sim,
     },
-    candidates: rows,
+    candidates: uniqueRows,
   };
 }
 
@@ -357,7 +392,7 @@ async function proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema) {
     const response = await openai.responses.create({
       model: 'gpt-5-mini',
       input: inputPrompt,
-      max_output_tokens: 2000,
+      max_output_tokens: 8000,  // Increased from 2000 to handle large batches
       reasoning: {
         effort: 'minimal'  // Limit reasoning tokens to force structured output
       },
@@ -374,6 +409,17 @@ async function proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema) {
       output_text_value: response.output_text,
       output_text_length: response.output_text?.length || 0
     }, 'LLM full response received');
+
+    // Check for incomplete response due to token limit
+    if (response.status === 'incomplete') {
+      logger.warn({
+        status: response.status,
+        incomplete_details: response.incomplete_details,
+        reason: response.incomplete_details?.reason,
+        output_text_length: response.output_text?.length || 0,
+        unmapped_count: unmappedRows.length
+      }, '⚠️ LLM RESPONSE TRUNCATED - Token limit reached! Consider increasing max_output_tokens or reducing batch size');
+    }
 
     // Try different property names for the output
     const outputText = response.output_text || response.text || response.output ||
@@ -1190,6 +1236,54 @@ async function queueForReview(rowResult) {
 }
 
 /**
+ * Queue ABSTAIN decision for manual review
+ * LLM couldn't determine how to map this parameter, so queue it
+ * for admin to decide: create new analyte, map manually, or discard
+ *
+ * @param {Object} rowResult - Row decision object with ABSTAIN decision
+ * @returns {Promise<void>}
+ */
+async function queueAbstainForReview(rowResult) {
+  const { result_id, tiers, label_raw } = rowResult;
+  const llmComment = tiers.llm?.comment || 'LLM abstained from mapping this parameter';
+
+  // Create a special candidate structure for ABSTAIN
+  // No actual analyte suggestions, just the LLM's reasoning
+  const candidates = [{
+    analyte_id: null,
+    code: null,
+    name: null,
+    similarity: 0,
+    source: 'llm_abstain',
+    comment: llmComment
+  }];
+
+  try {
+    await pool.query(
+      `INSERT INTO match_reviews
+         (result_id, candidates, status, created_at)
+       VALUES ($1, $2, 'pending', NOW())
+       ON CONFLICT (result_id) DO UPDATE SET
+         candidates = EXCLUDED.candidates,
+         status = 'pending',
+         updated_at = NOW()`,
+      [
+        result_id,
+        JSON.stringify(candidates)
+      ]
+    );
+
+    logger.info({
+      result_id,
+      parameter_name: label_raw,
+      llm_comment: llmComment
+    }, '[wetRun] ABSTAIN queued for review');
+  } catch (error) {
+    logger.error({ error: error.message, result_id }, 'Failed to queue ABSTAIN for review');
+  }
+}
+
+/**
  * Apply analyte mapping with database writes (PRD v2.4)
  *
  * @param {Object} params
@@ -1212,6 +1306,7 @@ async function wetRun({ reportId, patientId, parameters }) {
   const counters = {
     written: 0,
     queued_for_review: 0,
+    abstain_queued: 0,
     new_queued: 0,
     skipped: 0,
     already_mapped: 0
@@ -1301,6 +1396,12 @@ async function wetRun({ reportId, patientId, parameters }) {
       counters.queued_for_review++;
     }
 
+    // ABSTAIN → Queue for review with LLM's reasoning
+    else if (final_decision === 'ABSTAIN_LLM') {
+      await queueAbstainForReview(row);
+      counters.abstain_queued++;
+    }
+
     // NEW analytes → Always queue
     else if (final_decision === 'NEW_LLM') {
       await queueNewAnalyte(row);
@@ -1338,6 +1439,7 @@ module.exports = {
     writeAnalyteId,
     queueNewAnalyte,
     queueForReview,
+    queueAbstainForReview,
     detectLanguage,
     dryRun, // Also keep in _internal for backward compatibility with tests
   },

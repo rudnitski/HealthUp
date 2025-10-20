@@ -260,9 +260,14 @@ const sanitizeParameterEntry = (entry) => {
     const cleanedResult = sanitizeTextField(entry.result, { maxLength: 160 });
     if (cleanedResult) {
       result = cleanedResult;
-      const numericCandidate = Number(cleanedResult.replace(',', '.'));
-      if (Number.isFinite(numericCandidate)) {
-        numericResult = numericCandidate;
+      // Strip asterisks and other out-of-range markers before parsing number
+      const strippedForNumeric = cleanedResult.replace(/[*]+/g, '').trim().replace(',', '.');
+      // Only parse as number if the stripped string contains at least one digit
+      if (strippedForNumeric && /\d/.test(strippedForNumeric)) {
+        const numericCandidate = Number(strippedForNumeric);
+        if (Number.isFinite(numericCandidate)) {
+          numericResult = numericCandidate;
+        }
       }
     }
   }
