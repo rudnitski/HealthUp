@@ -229,10 +229,13 @@ ${schemaText}
 Context: This report already contains: ${categoryContext.join(', ') || 'none'}
 
 Rules:
-- decision "MATCH": code exists in schema above
+- decision "MATCH": code exists in schema above (confirm or reject fuzzy suggestions if provided)
 - decision "NEW": valid analyte but not in schema (propose new code + name)
 - decision "ABSTAIN": cannot determine mapping
-- For AMBIGUOUS rows, pick the best match from candidates provided
+- For rows with fuzzy match suggestions, evaluate if the suggestion is correct:
+  * If correct → return "MATCH" with same code and confidence ≥0.80
+  * If incorrect → return "NEW" or "ABSTAIN" or suggest different code from schema
+- For ambiguous fuzzy matches, pick the most appropriate candidate or reject all
 
 Return JSON array with one object per parameter:
 {
@@ -243,20 +246,35 @@ Return JSON array with one object per parameter:
       "code": "string or null",
       "name": "string or null (only for NEW)",
       "confidence": 0.95,
-      "comment": "brief reason"
+      "comment": "brief reason (mention if confirming/rejecting fuzzy match)"
     }
   ]
 }
 
 Parameters to map:
-${unmappedRows.map((row, i) => `
+${unmappedRows.map((row, i) => {
+  let contextText = '';
+
+  // Add provisional fuzzy match context
+  if (row.provisional_analyte) {
+    const confidence = Number(row.provisional_analyte.confidence);
+    const confStr = Number.isFinite(confidence) ? confidence.toFixed(2) : String(row.provisional_analyte.confidence);
+    contextText = `   Fuzzy suggestion: ${row.provisional_analyte.code} - ${row.provisional_analyte.name} (confidence: ${confStr})`;
+  }
+  // Add ambiguous candidates context
+  else if (row.tiers?.fuzzy?.candidates) {
+    contextText = `   Ambiguous matches: ${row.tiers.fuzzy.candidates.map(c => {
+      const sim = Number(c.similarity);
+      const simStr = Number.isFinite(sim) ? sim.toFixed(2) : String(c.similarity);
+      return `[${c.analyte_id}] sim: ${simStr}`;
+    }).join(', ')}`;
+  }
+
+  return `
 ${i + 1}. Label: "${row.label_raw}"
    Unit: ${row.unit || 'none'}
-   Reference: ${row.reference_hint || 'none'}
-   ${row.tiers?.fuzzy?.candidates ?
-     `Ambiguous matches: ${row.tiers.fuzzy.candidates.map(c =>
-       `${c.analyte_id} (sim: ${c.similarity})`).join(', ')}` : ''}
-`).join('\n')}`;
+   Reference: ${row.reference_hint || 'none'}${contextText ? '\n' + contextText : ''}`;
+}).join('\n')}`;
 }
 
 /**
@@ -462,18 +480,20 @@ async function processRow(row, hasPgTrgm, analyteSuggestions) {
   if (hasPgTrgm) {
     const fuzzyMatch = await findFuzzyMatch(labelNorm);
 
+    // Case 1: Ambiguous fuzzy match → store candidates, continue to LLM for resolution
     if (fuzzyMatch.ambiguous) {
       result.tiers.fuzzy = {
         matched: false,
         ambiguous: true,
         candidates: fuzzyMatch.candidates,
       };
+      // Keep AMBIGUOUS_FUZZY decision for telemetry, but mark for LLM review
       result.final_decision = 'AMBIGUOUS_FUZZY';
-      result.duration_ms = Date.now() - startTime;
-      return result;
+      result.needs_llm_review = true; // Flag for LLM processing
+      result.note = 'ambiguous_fuzzy_needs_llm';
     }
-
-    if (fuzzyMatch.matched) {
+    // Case 2: High-confidence fuzzy match (≥0.80) → accept immediately
+    else if (fuzzyMatch.matched && fuzzyMatch.topMatch.similarity >= CONFIG.AUTO_ACCEPT_THRESHOLD) {
       const analyte = await getAnalyteById(fuzzyMatch.topMatch.analyte_id);
       result.tiers.fuzzy = {
         matched: true,
@@ -492,6 +512,26 @@ async function processRow(row, hasPgTrgm, analyteSuggestions) {
       result.duration_ms = Date.now() - startTime;
       return result;
     }
+    // Case 3: Medium-confidence fuzzy match (0.60-0.79) → store candidate, continue to LLM
+    else if (fuzzyMatch.matched && fuzzyMatch.topMatch.similarity >= CONFIG.QUEUE_LOWER_THRESHOLD) {
+      const analyte = await getAnalyteById(fuzzyMatch.topMatch.analyte_id);
+      result.tiers.fuzzy = {
+        matched: true,
+        alias: fuzzyMatch.topMatch.alias,
+        analyte_id: fuzzyMatch.topMatch.analyte_id,
+        similarity: fuzzyMatch.topMatch.similarity,
+      };
+      // Store as provisional match but continue to LLM for confirmation
+      result.provisional_analyte = {
+        analyte_id: analyte.analyte_id,
+        code: analyte.code,
+        name: analyte.name,
+        source: 'fuzzy',
+        confidence: fuzzyMatch.topMatch.similarity,
+      };
+      result.final_decision = 'NEEDS_LLM_REVIEW';
+      result.note = 'medium_confidence_fuzzy_needs_llm';
+    }
   } else {
     result.tiers.fuzzy = {
       matched: false,
@@ -505,7 +545,7 @@ async function processRow(row, hasPgTrgm, analyteSuggestions) {
   // This placeholder will be updated in dryRun()
   result.tiers.llm = { present: false };
 
-  // No matches found
+  // No matches found yet - will be updated after LLM tier
   result.duration_ms = Date.now() - startTime;
   return result;
 }
@@ -544,11 +584,13 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
     total_rows: labResults.length,
     deterministic_matches: 0,
     fuzzy_matches: 0,
+    fuzzy_confirmed_by_llm: 0,
     llm_matches: 0,
     new_llm: 0,
     abstain_llm: 0,
     unmapped: 0,
     ambiguous_fuzzy: 0,
+    needs_llm_review: 0,
     conflict_fuzzy_llm: 0,
   };
 
@@ -575,6 +617,10 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
         counters.fuzzy_matches += 1;
         durations.fuzzy.push(rowResult.duration_ms);
         break;
+      case 'MATCH_FUZZY_CONFIRMED':
+        counters.fuzzy_confirmed_by_llm += 1;
+        durations.fuzzy.push(rowResult.duration_ms);
+        break;
       case 'MATCH_LLM':
         counters.llm_matches += 1;
         durations.llm.push(rowResult.duration_ms);
@@ -587,6 +633,9 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
         break;
       case 'AMBIGUOUS_FUZZY':
         counters.ambiguous_fuzzy += 1;
+        break;
+      case 'NEEDS_LLM_REVIEW':
+        counters.needs_llm_review += 1;
         break;
       case 'CONFLICT_FUZZY_LLM':
         counters.conflict_fuzzy_llm += 1;
@@ -618,14 +667,24 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
     errors: 0
   };
 
-  // Collect unmapped and ambiguous rows
+  // Collect rows that need LLM review (unmapped, ambiguous, and medium-confidence fuzzy)
   const unmappedRows = rowLogs.filter(r =>
-    r.final_decision === 'UNMAPPED' || r.final_decision === 'AMBIGUOUS_FUZZY'
+    r.final_decision === 'UNMAPPED' ||
+    r.final_decision === 'AMBIGUOUS_FUZZY' ||
+    r.final_decision === 'NEEDS_LLM_REVIEW'
   );
 
   const mappedRows = rowLogs.filter(r =>
     r.final_decision === 'MATCH_EXACT' || r.final_decision === 'MATCH_FUZZY'
   );
+
+  // Capture pre-LLM counts for metrics (before counters get decremented during LLM processing)
+  const preLlmCounts = {
+    unmapped: counters.unmapped,
+    ambiguous_fuzzy: counters.ambiguous_fuzzy,
+    needs_llm_review: counters.needs_llm_review,
+    total: unmappedRows.length
+  };
 
   if (unmappedRows.length > 0) {
     try {
@@ -642,6 +701,10 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
 
         if (rowLogIndex !== -1) {
           const rowLog = rowLogs[rowLogIndex];
+
+          // CRITICAL: Capture initial decision BEFORE any mutations
+          // (originalRow and rowLog share the same reference)
+          const initialDecision = rowLog.final_decision;
 
           // Update LLM tier
           if (llmResult.error) {
@@ -662,23 +725,90 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
               comment: llmResult.comment
             };
 
-            // Update final decision if LLM provided a match
+            // Update final decision based on LLM result and fuzzy context
             if (llmResult.decision === 'MATCH' && llmResult.code) {
-              rowLog.final_decision = 'MATCH_LLM';
-              rowLog.confidence = llmResult.confidence;
-              // Note: We don't fetch full analyte details in dry-run
-              rowLog.final_analyte = {
-                code: llmResult.code,
-                source: 'llm'
-              };
-              counters.llm_matches += 1;
+              // LLM confirmed a match (either new or confirming fuzzy)
+              const llmConfidence = llmResult.confidence || 0;
+              const fuzzyConfidence = rowLog.provisional_analyte?.confidence || 0;
+
+              // Check if LLM is confirming the fuzzy match
+              const confirmingFuzzy = rowLog.provisional_analyte &&
+                rowLog.provisional_analyte.code === llmResult.code;
+
+              if (confirmingFuzzy) {
+                // LLM confirmed fuzzy match → boost confidence
+                rowLog.final_decision = 'MATCH_FUZZY_CONFIRMED';
+                rowLog.confidence = Math.max(llmConfidence, fuzzyConfidence, CONFIG.AUTO_ACCEPT_THRESHOLD);
+                rowLog.final_analyte = {
+                  analyte_id: rowLog.provisional_analyte.analyte_id,
+                  code: rowLog.provisional_analyte.code,
+                  name: rowLog.provisional_analyte.name,
+                  source: 'fuzzy_confirmed_by_llm',
+                };
+                // Update counters: decrement initial state, increment fuzzy_confirmed
+                if (initialDecision === 'NEEDS_LLM_REVIEW') counters.needs_llm_review -= 1;
+                else if (initialDecision === 'UNMAPPED') counters.unmapped -= 1;
+                else if (initialDecision === 'AMBIGUOUS_FUZZY') counters.ambiguous_fuzzy -= 1;
+                counters.fuzzy_confirmed_by_llm += 1;
+              } else if (llmConfidence > fuzzyConfidence) {
+                // LLM found a better match than fuzzy
+                rowLog.final_decision = 'MATCH_LLM';
+                rowLog.confidence = llmConfidence;
+                rowLog.final_analyte = {
+                  code: llmResult.code,
+                  source: 'llm',
+                };
+                if (rowLog.provisional_analyte) {
+                  rowLog.note = 'llm_overrode_fuzzy';
+                }
+                // Update counters: decrement initial state, increment llm_matches
+                if (initialDecision === 'NEEDS_LLM_REVIEW') counters.needs_llm_review -= 1;
+                else if (initialDecision === 'UNMAPPED') counters.unmapped -= 1;
+                else if (initialDecision === 'AMBIGUOUS_FUZZY') counters.ambiguous_fuzzy -= 1;
+                counters.llm_matches += 1;
+              } else {
+                // Keep fuzzy match but note LLM disagreement
+                rowLog.final_decision = 'CONFLICT_FUZZY_LLM';
+                rowLog.confidence = fuzzyConfidence;
+                rowLog.final_analyte = rowLog.provisional_analyte;
+                rowLog.llm_alternative = {
+                  code: llmResult.code,
+                  confidence: llmConfidence,
+                };
+                // Update counters: decrement initial state, increment conflict
+                if (initialDecision === 'NEEDS_LLM_REVIEW') counters.needs_llm_review -= 1;
+                else if (initialDecision === 'AMBIGUOUS_FUZZY') counters.ambiguous_fuzzy -= 1;
+                counters.conflict_fuzzy_llm += 1;
+              }
             } else if (llmResult.decision === 'NEW') {
+              // LLM proposes new analyte
               rowLog.final_decision = 'NEW_LLM';
               rowLog.confidence = llmResult.confidence;
+              // Update counters: decrement initial state, increment new_llm
+              if (initialDecision === 'NEEDS_LLM_REVIEW') counters.needs_llm_review -= 1;
+              else if (initialDecision === 'UNMAPPED') counters.unmapped -= 1;
+              else if (initialDecision === 'AMBIGUOUS_FUZZY') counters.ambiguous_fuzzy -= 1;
               counters.new_llm += 1;
             } else if (llmResult.decision === 'ABSTAIN') {
-              rowLog.final_decision = 'ABSTAIN_LLM';
-              counters.abstain_llm += 1;
+              // LLM couldn't determine - fall back to fuzzy if available
+              if (rowLog.provisional_analyte) {
+                rowLog.final_decision = 'MATCH_FUZZY';
+                rowLog.confidence = rowLog.provisional_analyte.confidence;
+                rowLog.final_analyte = rowLog.provisional_analyte;
+                rowLog.note = 'llm_abstained_kept_fuzzy';
+                // Update counters: decrement initial state, increment fuzzy_matches
+                if (initialDecision === 'NEEDS_LLM_REVIEW') counters.needs_llm_review -= 1;
+                else if (initialDecision === 'UNMAPPED') counters.unmapped -= 1;
+                else if (initialDecision === 'AMBIGUOUS_FUZZY') counters.ambiguous_fuzzy -= 1;
+                counters.fuzzy_matches += 1;
+              } else {
+                rowLog.final_decision = 'ABSTAIN_LLM';
+                // Update counters: decrement initial state, increment abstain
+                if (initialDecision === 'NEEDS_LLM_REVIEW') counters.needs_llm_review -= 1;
+                else if (initialDecision === 'UNMAPPED') counters.unmapped -= 1;
+                else if (initialDecision === 'AMBIGUOUS_FUZZY') counters.ambiguous_fuzzy -= 1;
+                counters.abstain_llm += 1;
+              }
             }
           }
         }
@@ -746,13 +876,23 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
       slowest_row: slowestRow,
     },
     llm: {
+      // Total rows sent to LLM tier (for capacity planning) - captured BEFORE counter decrements
+      total_input_rows: preLlmCounts.total,
+      // Breakdown by input type - captured BEFORE counter decrements
+      input_breakdown: {
+        unmapped: preLlmCounts.unmapped,
+        ambiguous_fuzzy: preLlmCounts.ambiguous_fuzzy,
+        medium_confidence_fuzzy: preLlmCounts.needs_llm_review,
+      },
+      // Output results (after LLM processing)
       matches: counters.llm_matches,
+      fuzzy_confirmed: counters.fuzzy_confirmed_by_llm,
       new: counters.new_llm,
       abstain: counters.abstain_llm,
       errors: llmMetrics.errors,
-      avg_confidence: counters.llm_matches > 0
-        ? rowLogs.filter(r => r.final_decision === 'MATCH_LLM')
-            .reduce((sum, r) => sum + (r.confidence || 0), 0) / counters.llm_matches
+      avg_confidence: (counters.llm_matches + counters.fuzzy_confirmed_by_llm) > 0
+        ? rowLogs.filter(r => r.final_decision === 'MATCH_LLM' || r.final_decision === 'MATCH_FUZZY_CONFIRMED')
+            .reduce((sum, r) => sum + (r.confidence || 0), 0) / (counters.llm_matches + counters.fuzzy_confirmed_by_llm)
         : 0,
       total_cost_usd: llmMetrics.total_cost_usd,
       total_tokens: llmMetrics.total_tokens,
@@ -877,26 +1017,65 @@ async function queueNewAnalyte(rowResult) {
 }
 
 /**
+ * Hydrate fuzzy candidates with full analyte data (code, name)
+ * @param {Array} fuzzyCandidates - Array of {analyte_id, alias, similarity}
+ * @param {string} source - Source label for candidates
+ * @returns {Promise<Array>} - Array of hydrated candidates with code/name
+ */
+async function hydrateFuzzyCandidates(fuzzyCandidates, source = 'fuzzy') {
+  if (!fuzzyCandidates || fuzzyCandidates.length === 0) {
+    return [];
+  }
+
+  const analyteIds = fuzzyCandidates.map(c => c.analyte_id).filter(Boolean);
+  if (analyteIds.length === 0) {
+    return [];
+  }
+
+  // Batch fetch all analyte details
+  const { rows: analytes } = await pool.query(
+    `SELECT analyte_id, code, name FROM analytes WHERE analyte_id = ANY($1)`,
+    [analyteIds]
+  );
+
+  // Build lookup map
+  const analyteMap = new Map(analytes.map(a => [a.analyte_id, a]));
+
+  // Hydrate candidates
+  return fuzzyCandidates.map(c => {
+    const analyte = analyteMap.get(c.analyte_id);
+    return {
+      analyte_id: c.analyte_id,
+      code: analyte?.code || null,        // Admin UI expects 'code'
+      name: analyte?.name || null,        // Admin UI expects 'name'
+      alias: c.alias || null,             // Preserve alias for reference
+      similarity: c.similarity,
+      source
+    };
+  }).filter(c => c.code); // Only include candidates with valid code
+}
+
+/**
  * Queue match for human review (ambiguous or medium-confidence)
  *
  * @param {Object} rowResult - Row decision object with match data
  * @returns {Promise<void>}
  */
 async function queueForReview(rowResult) {
-  const { result_id, tiers, final_decision, final_analyte, confidence } = rowResult;
+  const { result_id, tiers, final_decision, final_analyte, confidence, provisional_analyte, llm_alternative } = rowResult;
 
   let candidates = [];
 
   // Case 1: Ambiguous fuzzy match with multiple candidates
   if (final_decision === 'AMBIGUOUS_FUZZY' && tiers.fuzzy?.candidates) {
-    candidates = tiers.fuzzy.candidates;
+    candidates = await hydrateFuzzyCandidates(tiers.fuzzy.candidates, 'fuzzy');
   }
   // Case 2: Medium-confidence single fuzzy match (0.60-0.79)
   else if (final_decision === 'MATCH_FUZZY' && final_analyte?.analyte_id) {
     candidates = [{
       analyte_id: final_analyte.analyte_id,
-      analyte_code: final_analyte.code,
-      analyte_name: final_analyte.name,
+      code: final_analyte.code,
+      name: final_analyte.name,
       similarity: confidence,
       source: 'fuzzy'
     }];
@@ -912,16 +1091,76 @@ async function queueForReview(rowResult) {
     if (analyteRows.length > 0) {
       candidates = [{
         analyte_id: analyteRows[0].analyte_id,
-        analyte_code: analyteRows[0].code,
-        analyte_name: analyteRows[0].name,
+        code: analyteRows[0].code,
+        name: analyteRows[0].name,
         similarity: confidence,
         source: 'llm'
       }];
     }
   }
+  // Case 4: NEEDS_LLM_REVIEW - row had fuzzy candidates but LLM hasn't run yet (e.g., API key missing)
+  else if (final_decision === 'NEEDS_LLM_REVIEW') {
+    // Use provisional_analyte if available
+    if (provisional_analyte) {
+      candidates = [{
+        analyte_id: provisional_analyte.analyte_id,
+        code: provisional_analyte.code,
+        name: provisional_analyte.name,
+        similarity: provisional_analyte.confidence,
+        source: 'fuzzy_provisional'
+      }];
+    }
+    // Or use ambiguous fuzzy candidates
+    else if (tiers.fuzzy?.candidates) {
+      candidates = await hydrateFuzzyCandidates(tiers.fuzzy.candidates, 'fuzzy_ambiguous');
+    }
+  }
+  // Case 5: CONFLICT_FUZZY_LLM - fuzzy and LLM disagree, queue both options
+  else if (final_decision === 'CONFLICT_FUZZY_LLM') {
+    // Add fuzzy match(es) as candidate(s)
+    if (final_analyte?.analyte_id) {
+      // Single fuzzy match case (medium-confidence that LLM disagreed with)
+      candidates.push({
+        analyte_id: final_analyte.analyte_id,
+        code: final_analyte.code,
+        name: final_analyte.name,
+        similarity: confidence,
+        source: 'fuzzy'
+      });
+    } else if (tiers.fuzzy?.candidates) {
+      // Ambiguous fuzzy match case - add all original candidates
+      // (this happens when AMBIGUOUS_FUZZY -> LLM picks one, but with low confidence)
+      const fuzzyCandidates = await hydrateFuzzyCandidates(tiers.fuzzy.candidates, 'fuzzy_ambiguous');
+      candidates.push(...fuzzyCandidates);
+    }
+
+    // Add LLM alternative as additional candidate
+    if (llm_alternative?.code) {
+      const { rows: analyteRows } = await pool.query(
+        'SELECT analyte_id, code, name FROM analytes WHERE code = $1',
+        [llm_alternative.code]
+      );
+
+      if (analyteRows.length > 0) {
+        candidates.push({
+          analyte_id: analyteRows[0].analyte_id,
+          code: analyteRows[0].code,
+          name: analyteRows[0].name,
+          similarity: llm_alternative.confidence,
+          source: 'llm_alternative'
+        });
+      }
+    }
+  }
 
   if (candidates.length === 0) {
-    logger.warn({ result_id, final_decision }, 'Cannot queue for review: no candidates generated');
+    logger.warn({
+      result_id,
+      final_decision,
+      has_provisional: !!provisional_analyte,
+      has_fuzzy_candidates: !!tiers.fuzzy?.candidates,
+      has_llm_alternative: !!llm_alternative
+    }, 'Cannot queue for review: no candidates generated');
     return;
   }
 
@@ -1005,6 +1244,7 @@ async function wetRun({ reportId, patientId, parameters }) {
         counters.written++;
       }
     }
+    // High-confidence fuzzy match (≥0.80)
     else if (final_decision === 'MATCH_FUZZY' && confidence >= CONFIG.AUTO_ACCEPT_THRESHOLD) {
       const rowsAffected = await writeAnalyteId(
         result_id,
@@ -1016,6 +1256,19 @@ async function wetRun({ reportId, patientId, parameters }) {
         counters.written++;
       }
     }
+    // Fuzzy match confirmed by LLM (boosted confidence)
+    else if (final_decision === 'MATCH_FUZZY_CONFIRMED') {
+      const rowsAffected = await writeAnalyteId(
+        result_id,
+        final_analyte.analyte_id,
+        confidence,
+        'auto_fuzzy_llm_confirmed'
+      );
+      if (rowsAffected > 0) {
+        counters.written++;
+      }
+    }
+    // High-confidence LLM match (≥0.80)
     else if (final_decision === 'MATCH_LLM' && confidence >= CONFIG.AUTO_ACCEPT_THRESHOLD) {
       // For MATCH_LLM, we need to look up the analyte_id by code
       const { rows: analyteRows } = await pool.query(
@@ -1040,7 +1293,9 @@ async function wetRun({ reportId, patientId, parameters }) {
     else if (
       (final_decision === 'MATCH_FUZZY' && confidence >= CONFIG.QUEUE_LOWER_THRESHOLD) ||
       (final_decision === 'MATCH_LLM' && confidence >= CONFIG.QUEUE_LOWER_THRESHOLD) ||
-      (final_decision === 'AMBIGUOUS_FUZZY')
+      (final_decision === 'AMBIGUOUS_FUZZY') ||
+      (final_decision === 'CONFLICT_FUZZY_LLM') ||
+      (final_decision === 'NEEDS_LLM_REVIEW')
     ) {
       await queueForReview(row);
       counters.queued_for_review++;
@@ -1073,6 +1328,7 @@ async function wetRun({ reportId, patientId, parameters }) {
 
 module.exports = {
   wetRun,
+  dryRun,  // Public API - used by scripts, tests, and docs
   normalizeLabel,
   // Export for testing
   _internal: {
@@ -1083,6 +1339,6 @@ module.exports = {
     queueNewAnalyte,
     queueForReview,
     detectLanguage,
-    dryRun, // Keep for testing but not as public API
+    dryRun, // Also keep in _internal for backward compatibility with tests
   },
 };
