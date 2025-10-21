@@ -1,6 +1,6 @@
 -- Seed analytes and aliases (auto-generated from database)
--- Generated: 2025-10-20T18:27:48.812Z
--- Total analytes: 90
+-- Generated: 2025-10-21T06:27:39.471Z
+-- Total analytes: 95
 
 -- ============================================================================
 -- ANALYTES (Canonical Tests)
@@ -101,16 +101,20 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('EO', 'Eosinophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('EO_PRCT', 'Eosinophils (%)', '%', 'uncategorized'),
   ('IBIL', 'Indirect Bilirubin (Unconjugated Bilirubin)', 'мкмоль/л', 'uncategorized'),
+  ('LUC', 'Large Unstained Cells (absolute)', '10^9 клеток/л', 'uncategorized'),
+  ('LUC_PRCT', 'Large Unstained Cells (%)', '%', 'uncategorized'),
   ('LYMPH', 'Lymphocytes (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('LYMPH_PRCT', 'Lymphocytes (%)', '%', 'uncategorized'),
   ('MONO', 'Monocytes (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('MONO_PRCT', 'Monocytes (%)', '%', 'uncategorized'),
   ('NEUT', 'Neutrophils (absolute)', '10^9 клеток/л', 'uncategorized'),
+  ('NEUT_BAND_PRCT', 'Band Neutrophils (%)', '%', 'uncategorized'),
   ('NEUT_PRCT', 'Neutrophils (%)', '%', 'uncategorized'),
   ('P_LCR', 'Platelet Large Cell Ratio (P-LCR)', '%', 'uncategorized'),
   ('PCT', 'Plateletcrit (PCT)', '%', 'uncategorized'),
   ('PDW', 'Platelet Distribution Width (PDW)', '%', 'uncategorized'),
   ('URINE_BIL', 'Urine Bilirubin', 'мг/дл', 'uncategorized'),
+  ('URINE_COLOR', 'Urine Color', '', 'uncategorized'),
   ('URINE_EPIT', 'Urine Epithelial Cells (sediment)', '', 'uncategorized'),
   ('URINE_GLUC', 'Urine Glucose', 'мг/дл', 'uncategorized'),
   ('URINE_KET', 'Urine Ketones', 'мг/дл', 'uncategorized'),
@@ -122,8 +126,9 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('URINE_SED_RBC', 'Urine Sediment Erythrocytes', '', 'uncategorized'),
   ('URINE_SED_WBC', 'Urine Sediment Leukocytes', '', 'uncategorized'),
   ('URINE_SG', 'Urine Specific Gravity', '', 'uncategorized'),
+  ('URINE_TURBIDITY', 'Urine Transparency/Turbidity', '', 'uncategorized'),
   ('URINE_UBG', 'Urine Urobilinogen', 'мг/дл', 'uncategorized'),
-  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized')
+  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized'),
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
@@ -558,6 +563,12 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Indirect Bilirubin (Unconjugated Bilirubin) (IBIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'IBIL'), 'билирубин непрямой', 'ru', 1, 'evidence_auto'),
 
+  -- Large Unstained Cells (absolute) (LUC)
+  ((SELECT analyte_id FROM analytes WHERE code = 'LUC'), 'luc большие неокрашенные клетки', 'ru', 1, 'evidence_auto'),
+
+  -- Large Unstained Cells (%) (LUC_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'LUC_PRCT'), 'luc большие неокрашенные клетки', 'ru', 1, 'evidence_auto'),
+
   -- Lymphocytes (absolute) (LYMPH)
   ((SELECT analyte_id FROM analytes WHERE code = 'LYMPH'), 'лимфоциты lymph', 'ru', 1, 'evidence_auto'),
 
@@ -573,6 +584,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Neutrophils (absolute) (NEUT)
   ((SELECT analyte_id FROM analytes WHERE code = 'NEUT'), 'нейтрофильные гранулоциты neut', 'ru', 1, 'evidence_auto'),
 
+  -- Band Neutrophils (%) (NEUT_BAND_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_BAND_PRCT'), 'палочкоядерные нейтрофилы neut r', 'ru', 1, 'evidence_auto'),
+
   -- Neutrophils (%) (NEUT_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_PRCT'), 'нейтрофильные гранулоциты neut', 'ru', 1, 'evidence_auto'),
 
@@ -587,6 +601,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Bilirubin (URINE_BIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BIL'), 'билирубин в моче', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Color (URINE_COLOR)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_COLOR'), 'цвет мочи', 'ru', 1, 'evidence_auto'),
 
   -- Urine Epithelial Cells (sediment) (URINE_EPIT)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_EPIT'), 'эпителиальные клетки осадок', 'ru', 1, 'evidence_auto'),
@@ -620,6 +637,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Specific Gravity (URINE_SG)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_SG'), 'удельный вес', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Transparency/Turbidity (URINE_TURBIDITY)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_TURBIDITY'), 'прозрачность', 'ru', 1, 'evidence_auto'),
 
   -- Urine Urobilinogen (URINE_UBG)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_UBG'), 'уробилиноген в моче', 'ru', 1, 'evidence_auto'),
