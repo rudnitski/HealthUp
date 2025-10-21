@@ -128,7 +128,7 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('URINE_SG', 'Urine Specific Gravity', '', 'uncategorized'),
   ('URINE_TURBIDITY', 'Urine Transparency/Turbidity', '', 'uncategorized'),
   ('URINE_UBG', 'Urine Urobilinogen', 'мг/дл', 'uncategorized'),
-  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized'),
+  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized')
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
