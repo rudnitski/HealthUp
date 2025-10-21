@@ -62,7 +62,7 @@ const getOpenAiClient = () => {
   if (!openAiClient) {
     openAiClient = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
-      timeout: 30000, // 30 second timeout for all API calls
+      timeout: 120000, // 120 second timeout for all API calls
     });
   }
 

@@ -1,6 +1,6 @@
 -- Seed analytes and aliases (auto-generated from database)
--- Generated: 2025-10-21T06:27:39.471Z
--- Total analytes: 95
+-- Generated: 2025-10-21T08:26:27.186Z
+-- Total analytes: 104
 
 -- ============================================================================
 -- ANALYTES (Canonical Tests)
@@ -96,11 +96,13 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('APOA1', 'Apolipoprotein A1', 'г/л', 'uncategorized'),
   ('APOB', 'Apolipoprotein B', 'г/л', 'uncategorized'),
   ('APOB_APOA1', 'Apolipoprotein B / Apolipoprotein A1 Ratio', '', 'uncategorized'),
+  ('ASLO', 'Antistreptolysin O (ASO) / Antistreptolysin O titer', 'МЕ/мл', 'uncategorized'),
   ('BASO', 'Basophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('BASO_PRCT', 'Basophils (%)', '%', 'uncategorized'),
   ('EO', 'Eosinophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('EO_PRCT', 'Eosinophils (%)', '%', 'uncategorized'),
   ('IBIL', 'Indirect Bilirubin (Unconjugated Bilirubin)', 'мкмоль/л', 'uncategorized'),
+  ('LPA', 'Lipoprotein(a)', 'г/л', 'uncategorized'),
   ('LUC', 'Large Unstained Cells (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('LUC_PRCT', 'Large Unstained Cells (%)', '%', 'uncategorized'),
   ('LYMPH', 'Lymphocytes (absolute)', '10^9 клеток/л', 'uncategorized'),
@@ -113,9 +115,15 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('P_LCR', 'Platelet Large Cell Ratio (P-LCR)', '%', 'uncategorized'),
   ('PCT', 'Plateletcrit (PCT)', '%', 'uncategorized'),
   ('PDW', 'Platelet Distribution Width (PDW)', '%', 'uncategorized'),
+  ('URINE_BACTERIA', 'Urine Bacteria (microscopy)', '', 'uncategorized'),
   ('URINE_BIL', 'Urine Bilirubin', 'мг/дл', 'uncategorized'),
+  ('URINE_CASTS', 'Urine Casts (cylinders)', 'в п/зр.', 'uncategorized'),
   ('URINE_COLOR', 'Urine Color', '', 'uncategorized'),
+  ('URINE_CRYSTALS', 'Urine Crystals / Salts', '', 'uncategorized'),
   ('URINE_EPIT', 'Urine Epithelial Cells (sediment)', '', 'uncategorized'),
+  ('URINE_EPIT_PLAT', 'Urine Squamous Epithelial Cells (sediment)', 'в п/зр.', 'uncategorized'),
+  ('URINE_EPIT_RENAL', 'Urine Renal (Renal Tubular) Epithelial Cells (sediment)', 'в п/зр.', 'uncategorized'),
+  ('URINE_EPIT_TRANS', 'Urine Transitional Epithelial Cells (sediment)', 'в п/зр.', 'uncategorized'),
   ('URINE_GLUC', 'Urine Glucose', 'мг/дл', 'uncategorized'),
   ('URINE_KET', 'Urine Ketones', 'мг/дл', 'uncategorized'),
   ('URINE_MUCUS', 'Urine Mucus (sediment)', '', 'uncategorized'),
@@ -128,7 +136,8 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('URINE_SG', 'Urine Specific Gravity', '', 'uncategorized'),
   ('URINE_TURBIDITY', 'Urine Transparency/Turbidity', '', 'uncategorized'),
   ('URINE_UBG', 'Urine Urobilinogen', 'мг/дл', 'uncategorized'),
-  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized')
+  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized'),
+  ('URINE_YEAST', 'Urine Yeast (fungi, microscopy)', '', 'uncategorized')
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
@@ -548,6 +557,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Apolipoprotein B / Apolipoprotein A1 Ratio (APOB_APOA1)
   ((SELECT analyte_id FROM analytes WHERE code = 'APOB_APOA1'), 'апо в апо а1', 'ru', 1, 'evidence_auto'),
 
+  -- Antistreptolysin O (ASO) / Antistreptolysin O titer (ASLO)
+  ((SELECT analyte_id FROM analytes WHERE code = 'ASLO'), 'асл о', 'ru', 1, 'evidence_auto'),
+
   -- Basophils (absolute) (BASO)
   ((SELECT analyte_id FROM analytes WHERE code = 'BASO'), 'базофилы baso', 'ru', 1, 'evidence_auto'),
 
@@ -562,6 +574,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Indirect Bilirubin (Unconjugated Bilirubin) (IBIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'IBIL'), 'билирубин непрямой', 'ru', 1, 'evidence_auto'),
+
+  -- Lipoprotein(a) (LPA)
+  ((SELECT analyte_id FROM analytes WHERE code = 'LPA'), 'липопротеин а', 'ru', 1, 'evidence_auto'),
 
   -- Large Unstained Cells (absolute) (LUC)
   ((SELECT analyte_id FROM analytes WHERE code = 'LUC'), 'luc большие неокрашенные клетки', 'ru', 1, 'evidence_auto'),
@@ -599,14 +614,32 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Platelet Distribution Width (PDW) (PDW)
   ((SELECT analyte_id FROM analytes WHERE code = 'PDW'), 'ширина распределения тромбоцитов по объемам pdw', 'ru', 1, 'evidence_auto'),
 
+  -- Urine Bacteria (microscopy) (URINE_BACTERIA)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BACTERIA'), 'бактерии', 'ru', 1, 'evidence_auto'),
+
   -- Urine Bilirubin (URINE_BIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BIL'), 'билирубин в моче', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Casts (cylinders) (URINE_CASTS)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CASTS'), 'цилиндры', 'ru', 1, 'evidence_auto'),
 
   -- Urine Color (URINE_COLOR)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_COLOR'), 'цвет мочи', 'ru', 1, 'evidence_auto'),
 
+  -- Urine Crystals / Salts (URINE_CRYSTALS)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CRYSTALS'), 'соли', 'ru', 1, 'evidence_auto'),
+
   -- Urine Epithelial Cells (sediment) (URINE_EPIT)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_EPIT'), 'эпителиальные клетки осадок', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Squamous Epithelial Cells (sediment) (URINE_EPIT_PLAT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_EPIT_PLAT'), 'эпителий плоский', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Renal (Renal Tubular) Epithelial Cells (sediment) (URINE_EPIT_RENAL)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_EPIT_RENAL'), 'эпителий почечный', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Transitional Epithelial Cells (sediment) (URINE_EPIT_TRANS)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_EPIT_TRANS'), 'эпителий переходный', 'ru', 1, 'evidence_auto'),
 
   -- Urine Glucose (URINE_GLUC)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_GLUC'), 'глюкоза мочи', 'ru', 1, 'evidence_auto'),
@@ -645,7 +678,11 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_UBG'), 'уробилиноген в моче', 'ru', 1, 'evidence_auto'),
 
   -- Urine Leukocytes (WBC) (URINE_WBC)
-  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_WBC'), 'лейкоциты в моче', 'ru', 1, 'evidence_auto')
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_WBC'), 'лейкоциты в моче', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Yeast (fungi, microscopy) (URINE_YEAST)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_YEAST'), 'дрожжевые грибки', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_YEAST'), 'дрожжевые грибы', 'ru', 1, 'evidence_auto')
 ON CONFLICT (analyte_id, alias) DO NOTHING;
 
 -- ============================================================================
