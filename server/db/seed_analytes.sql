@@ -123,7 +123,7 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('URINE_SED_WBC', 'Urine Sediment Leukocytes', '', 'uncategorized'),
   ('URINE_SG', 'Urine Specific Gravity', '', 'uncategorized'),
   ('URINE_UBG', 'Urine Urobilinogen', 'мг/дл', 'uncategorized'),
-  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized'),
+  ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized')
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
