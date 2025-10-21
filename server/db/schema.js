@@ -272,7 +272,12 @@ const schemaStatements = [
     lr.result_value AS value_text,
     lr.unit AS units,
     COALESCE(pr.test_date_text::date, pr.recognized_at::date) AS date_eff,
-    lr.report_id
+    lr.report_id,
+    lr.reference_lower,
+    lr.reference_upper,
+    lr.reference_lower_operator,
+    lr.reference_upper_operator,
+    lr.is_value_out_of_range
   FROM lab_results lr
   JOIN patient_reports pr ON pr.id = lr.report_id
   LEFT JOIN analytes a ON a.analyte_id = lr.analyte_id;

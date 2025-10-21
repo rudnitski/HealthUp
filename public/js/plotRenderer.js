@@ -319,47 +319,74 @@
             );
           }
 
-          // Add lower bound line
-          if (lowerBandData.length > 0) {
-            console.log('[plotRenderer] Adding lower band dataset:', lowerBandData);
+          if (lowerBandData.length > 0 && upperBandData.length > 0) {
+            // Case 1: Two-sided band (fill between lower and upper)
+            console.log('[plotRenderer] Adding two-sided reference band');
             datasets.push({
-              label: `_${series.unit}_lower_band`, // Hidden from legend (prefix with _)
+              label: `_${series.unit}_lower_band`,
               data: lowerBandData,
               borderColor: BAND_BORDER_COLOR,
               backgroundColor: 'transparent',
               borderWidth: 1,
-              borderDash: [5, 5], // Dashed line
+              borderDash: [5, 5],
               pointRadius: 0,
               pointHoverRadius: 0,
               fill: false,
               showLine: true,
               tension: 0,
-              order: 3, // Render first (background)
-              datalabels: {
-                display: false // No labels on reference bands
-              }
+              order: 3,
+              datalabels: { display: false }
             });
-          }
-
-          // Add upper bound line with fill
-          if (upperBandData.length > 0) {
-            console.log('[plotRenderer] Adding upper band dataset:', upperBandData);
             datasets.push({
               label: `Healthy range (${series.unit})`,
               data: upperBandData,
               borderColor: BAND_BORDER_COLOR,
               backgroundColor: BAND_COLOR,
               borderWidth: 1,
-              borderDash: [5, 5], // Dashed line
+              borderDash: [5, 5],
               pointRadius: 0,
               pointHoverRadius: 0,
-              fill: lowerBandData.length > 0 ? '-1' : false, // Fill to lower band if exists
+              fill: '-1',
               showLine: true,
               tension: 0,
-              order: 3, // Render first (background)
-              datalabels: {
-                display: false // No labels on reference bands
-              }
+              order: 3,
+              datalabels: { display: false }
+            });
+          } else if (upperBandData.length > 0) {
+            // Case 2: Upper-bound only (fill to origin)
+            console.log('[plotRenderer] Adding upper-only reference band');
+            datasets.push({
+              label: `Healthy range (${series.unit})`,
+              data: upperBandData,
+              borderColor: BAND_BORDER_COLOR,
+              backgroundColor: BAND_COLOR,
+              borderWidth: 1,
+              borderDash: [5, 5],
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              fill: 'start',
+              showLine: true,
+              tension: 0,
+              order: 3,
+              datalabels: { display: false }
+            });
+          } else if (lowerBandData.length > 0) {
+            // Case 3: Lower-bound only (fill to end/top)
+            console.log('[plotRenderer] Adding lower-only reference band');
+            datasets.push({
+              label: `Healthy range (${series.unit})`,
+              data: lowerBandData,
+              borderColor: BAND_BORDER_COLOR,
+              backgroundColor: BAND_COLOR,
+              borderWidth: 1,
+              borderDash: [5, 5],
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              fill: 'end',
+              showLine: true,
+              tension: 0,
+              order: 3,
+              datalabels: { display: false }
             });
           }
         } else {
