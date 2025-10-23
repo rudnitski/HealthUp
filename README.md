@@ -182,30 +182,61 @@ Create a `.env` in the repo root with the required secrets. Notable variables:
    - Node.js 18+ and npm.
    - PostgreSQL 14+ with the `pg_trgm` extension (required for fuzzy search and agentic tools).
    - Poppler utilities (`pdftoppm`) for PDF page rasterization.
-2. **Install dependencies**
+2. **Create database with UTF-8 locale**
+   ```sh
+   # Create PostgreSQL user (if not exists)
+   psql postgres -c "CREATE USER healthup_user WITH PASSWORD 'healthup_pass';"
+
+   # Create database with proper UTF-8 locale (CRITICAL for multilingual support)
+   psql postgres -c "CREATE DATABASE healthup OWNER healthup_user ENCODING 'UTF8' LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0;"
+   ```
+   **Note:** If you're using macOS and `en_US.UTF-8` is not available, you can use `en_US.UTF-8` or check available locales with `locale -a`.
+3. **Install dependencies**
    ```sh
    npm install
    ```
-3. **Configure environment**
+4. **Configure environment**
    - Create `.env` with at least `DATABASE_URL` and `OPENAI_API_KEY`.
    - Analyte mapping runs automatically after each lab report upload.
-4. **Start the application**
+5. **Start the application**
    ```sh
    npm run dev
    ```
    Boot logs will confirm schema creation (`ensureSchema()`), trigram availability, and HTTP bind.
-5. **Verify analyte mapping readiness**
+6. **Verify analyte mapping readiness**
    ```sh
    node scripts/verify_mapping_setup.js
    ```
    This script confirms required tables/indexes exist and surfaces configuration thresholds.
 
-**Schema Management (PRD v2.5):** This project uses declarative schema management via `server/db/schema.js`. All table definitions, indexes, and constraints are consolidated in a single source of truth. The schema is automatically applied on boot using `CREATE TABLE IF NOT EXISTS` statements. During MVP, schema changes are handled by dropping and recreating the database (data loss is acceptable). Migration files are not used. When significant schema changes occur, run:
+**Schema Management (PRD v2.5):** This project uses declarative schema management via `server/db/schema.js`. All table definitions, indexes, and constraints are consolidated in a single source of truth. The schema is automatically applied on boot using `CREATE TABLE IF NOT EXISTS` statements. During MVP, schema changes are handled by dropping and recreating the database (data loss is acceptable). Migration files are not used.
+
+**Database Operations:**
+- **Quick data reset** (preserves locale): Use Admin Panel → Reset Database button. Drops tables only, reseeds analytes.
+- **Full database recreation** (changes locale): Drop and recreate database. MUST specify UTF-8 locale explicitly with `TEMPLATE template0`:
 ```sh
-psql postgres://localhost:5432/postgres -c "DROP DATABASE IF EXISTS healthup;"
-psql postgres://localhost:5432/postgres -c "CREATE DATABASE healthup OWNER healthup_user ENCODING 'UTF8';"
-npm run dev  # This will recreate the schema
+psql postgres -c "DROP DATABASE IF EXISTS healthup;"
+psql postgres -c "CREATE DATABASE healthup OWNER healthup_user ENCODING 'UTF8' LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0;"
+npm run dev  # Recreates schema
 ```
+
+**CRITICAL:** The database MUST be created with UTF-8 locale (`LC_COLLATE` and `LC_CTYPE` set to `en_US.UTF-8` or similar). The C locale will break:
+- `LOWER()`/`UPPER()` functions for Cyrillic and other non-ASCII text
+- `pg_trgm` fuzzy search for Russian/Hebrew analyte names
+- Agentic SQL search tools that rely on trigram similarity
+
+To set up a new database with proper locale, use `./scripts/setup_db.sh` or follow the manual instructions above.
+
+**Locale Diagnostics:** If fuzzy search returns no results for non-ASCII text, check your database locale:
+```sql
+SELECT datcollate, datctype FROM pg_database WHERE datname = 'healthup';
+-- Should return 'en_US.UTF-8', not 'C'
+
+-- Test Cyrillic support:
+SELECT LOWER('АБВГД') = 'абвгд';  -- Should return 't' (true)
+SELECT similarity('холестерин', 'холестерин');  -- Should return 1.0
+```
+If locale is wrong, you must drop and recreate the database with proper locale (see Database Operations above).
 
 For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before enabling mapping.
 

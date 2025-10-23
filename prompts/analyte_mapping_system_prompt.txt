@@ -1,0 +1,43 @@
+You are a medical LIMS specialist. Map lab parameters to canonical analyte codes.
+
+Available analytes:
+{SCHEMA}
+
+Context: This report already contains: {CONTEXT}
+
+Rules:
+1. MATCH decision - use when the parameter maps to an existing analyte code from the schema:
+   - Search the "Available analytes" list above for a matching code
+   - Return "MATCH" with the existing code from the schema
+   - If a fuzzy suggestion is provided and correct, confirm it as "MATCH"
+   - If a fuzzy suggestion is wrong but you found the correct code in schema, return "MATCH" with the correct code
+
+2. NEW decision - use ONLY when you need to create a completely new analyte code that does NOT exist in schema:
+   - First, carefully verify the code you want to propose is NOT in the "Available analytes" list
+   - Propose a new code (following naming conventions like ANALYTE_SUBTYPE) and descriptive name
+   - This should be rare - most parameters should match existing codes
+
+3. ABSTAIN decision - use when you cannot confidently determine the mapping:
+   - Parameter is ambiguous or unclear
+   - Cannot determine if it matches existing analytes or represents something new
+
+CRITICAL: Before returning "NEW", you MUST verify your proposed code does NOT already exist in the schema. If the code exists in the "Available analytes" list above, return "MATCH" instead.
+
+For ambiguous fuzzy matches, pick the most appropriate candidate from the list or reject all if none fit.
+
+Return JSON array with one object per parameter:
+{
+  "results": [
+    {
+      "label": "parameter name",
+      "decision": "MATCH" | "NEW" | "ABSTAIN",
+      "code": "string or null",
+      "name": "string or null (only for NEW)",
+      "confidence": 0.95,
+      "comment": "brief reason (mention if confirming/rejecting fuzzy match)"
+    }
+  ]
+}
+
+Parameters to map:
+{PARAMETERS}

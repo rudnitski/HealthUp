@@ -7,6 +7,8 @@ const pino = require('pino');
 const { pool } = require('../db');
 const OpenAI = require('openai');
 const { detectLanguage } = require('../utils/languageDetection');
+const fs = require('fs');
+const path = require('path');
 
 // Configure Pino logger
 const logger = pino({
@@ -247,6 +249,16 @@ function classifyError(error) {
   return 'API_ERROR';
 }
 
+// Load prompt template from file
+let ANALYTE_MAPPING_PROMPT_TEMPLATE = null;
+function getAnalyteMappingPrompt() {
+  if (!ANALYTE_MAPPING_PROMPT_TEMPLATE) {
+    const promptPath = path.join(__dirname, '../../prompts/analyte_mapping_system_prompt.txt');
+    ANALYTE_MAPPING_PROMPT_TEMPLATE = fs.readFileSync(promptPath, 'utf-8');
+  }
+  return ANALYTE_MAPPING_PROMPT_TEMPLATE;
+}
+
 /**
  * Build batch prompt for LLM mapping
  *
@@ -256,60 +268,37 @@ function classifyError(error) {
  * @returns {string} - Formatted prompt
  */
 function buildBatchPrompt(unmappedRows, categoryContext, schemaText) {
-  return `You are a medical LIMS specialist. Map lab parameters to canonical analyte codes.
+  // Build parameters section
+  const parametersText = unmappedRows.map((row, i) => {
+    let contextText = '';
 
-Available analytes:
-${schemaText}
-
-Context: This report already contains: ${categoryContext.join(', ') || 'none'}
-
-Rules:
-- decision "MATCH": code exists in schema above (confirm or reject fuzzy suggestions if provided)
-- decision "NEW": valid analyte but not in schema (propose new code + name)
-- decision "ABSTAIN": cannot determine mapping
-- For rows with fuzzy match suggestions, evaluate if the suggestion is correct:
-  * If correct → return "MATCH" with same code and confidence ≥0.80
-  * If incorrect → return "NEW" or "ABSTAIN" or suggest different code from schema
-- For ambiguous fuzzy matches, pick the most appropriate candidate or reject all
-
-Return JSON array with one object per parameter:
-{
-  "results": [
-    {
-      "label": "parameter name",
-      "decision": "MATCH" | "NEW" | "ABSTAIN",
-      "code": "string or null",
-      "name": "string or null (only for NEW)",
-      "confidence": 0.95,
-      "comment": "brief reason (mention if confirming/rejecting fuzzy match)"
+    // Add provisional fuzzy match context
+    if (row.provisional_analyte) {
+      const confidence = Number(row.provisional_analyte.confidence);
+      const confStr = Number.isFinite(confidence) ? confidence.toFixed(2) : String(row.provisional_analyte.confidence);
+      contextText = `   Fuzzy suggestion: ${row.provisional_analyte.code} - ${row.provisional_analyte.name} (confidence: ${confStr})`;
     }
-  ]
-}
+    // Add ambiguous candidates context
+    else if (row.tiers?.fuzzy?.candidates) {
+      contextText = `   Ambiguous matches: ${row.tiers.fuzzy.candidates.map(c => {
+        const sim = Number(c.similarity);
+        const simStr = Number.isFinite(sim) ? sim.toFixed(2) : String(c.similarity);
+        return `[${c.analyte_id}] sim: ${simStr}`;
+      }).join(', ')}`;
+    }
 
-Parameters to map:
-${unmappedRows.map((row, i) => {
-  let contextText = '';
-
-  // Add provisional fuzzy match context
-  if (row.provisional_analyte) {
-    const confidence = Number(row.provisional_analyte.confidence);
-    const confStr = Number.isFinite(confidence) ? confidence.toFixed(2) : String(row.provisional_analyte.confidence);
-    contextText = `   Fuzzy suggestion: ${row.provisional_analyte.code} - ${row.provisional_analyte.name} (confidence: ${confStr})`;
-  }
-  // Add ambiguous candidates context
-  else if (row.tiers?.fuzzy?.candidates) {
-    contextText = `   Ambiguous matches: ${row.tiers.fuzzy.candidates.map(c => {
-      const sim = Number(c.similarity);
-      const simStr = Number.isFinite(sim) ? sim.toFixed(2) : String(c.similarity);
-      return `[${c.analyte_id}] sim: ${simStr}`;
-    }).join(', ')}`;
-  }
-
-  return `
+    return `
 ${i + 1}. Label: "${row.label_raw}"
    Unit: ${row.unit || 'none'}
    Reference: ${row.reference_hint || 'none'}${contextText ? '\n' + contextText : ''}`;
-}).join('\n')}`;
+  }).join('\n');
+
+  // Load template and replace placeholders
+  const template = getAnalyteMappingPrompt();
+  return template
+    .replace('{SCHEMA}', schemaText)
+    .replace('{CONTEXT}', categoryContext.join(', ') || 'none')
+    .replace('{PARAMETERS}', parametersText);
 }
 
 /**
@@ -993,6 +982,23 @@ async function queueNewAnalyte(rowResult) {
 
   if (!llm.code || !llm.name) {
     logger.warn({ result_id: rowResult.result_id }, 'Cannot queue NEW analyte: missing code or name');
+    return;
+  }
+
+  // CRITICAL VALIDATION: Check if the proposed code already exists in analytes table
+  // This is a safety net in case the LLM incorrectly returns "NEW" for an existing code
+  const { rows: existingAnalytes } = await pool.query(
+    'SELECT analyte_id, code, name FROM analytes WHERE code = $1',
+    [llm.code]
+  );
+
+  if (existingAnalytes.length > 0) {
+    logger.warn({
+      result_id: rowResult.result_id,
+      proposed_code: llm.code,
+      existing_analyte: existingAnalytes[0],
+      llm_comment: llm.comment
+    }, 'LLM returned NEW but code already exists in analytes table - skipping queue');
     return;
   }
 
