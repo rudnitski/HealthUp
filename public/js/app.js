@@ -784,6 +784,151 @@
     let parameterSelectorChangeHandler = null;
 
     /**
+     * Render parameter table below plot (v2.6)
+     * @param {Array} rows - Filtered dataset for selected parameter
+     * @param {string} parameterName - Currently selected parameter name
+     */
+    const renderParameterTable = (rows, parameterName) => {
+      const container = document.getElementById('parameter-table-container');
+      if (!container) return;
+
+      // Hide table if no data
+      if (!rows || rows.length === 0) {
+        container.replaceChildren();
+        container.hidden = true;
+        return;
+      }
+
+      // Debug: Log first row to see what fields are available
+      console.log('[renderParameterTable] First row data:', rows[0]);
+
+      // Format timestamp to readable date
+      const formatDate = (timestamp) => {
+        if (!timestamp) return 'Unknown';
+        const date = new Date(Number(timestamp));
+        if (isNaN(date.getTime())) return 'Invalid Date';
+        return date.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        });
+      };
+
+      // Map prefixed field names to unprefixed for helper function
+      const mapToUnprefixed = (row) => ({
+        lower: row.reference_lower,
+        upper: row.reference_upper,
+        lower_operator: row.reference_lower_operator,
+        upper_operator: row.reference_upper_operator,
+        text: row.reference_interval_text || ''
+      });
+
+      // Build table structure
+      const tableWrapper = document.createElement('div');
+      tableWrapper.className = 'parameters-table-wrapper';
+
+      const table = document.createElement('table');
+      table.className = 'parameters-table';
+
+      // Add caption for accessibility
+      const caption = document.createElement('caption');
+      const firstRow = rows[0];
+      const unit = firstRow?.unit || '';
+      caption.textContent = `${parameterName}${unit ? ' (' + unit + ')' : ''} Measurements`;
+      caption.style.captionSide = 'top';
+      caption.style.fontWeight = '600';
+      caption.style.marginBottom = '0.5rem';
+      caption.style.textAlign = 'left';
+      table.appendChild(caption);
+
+      // Table header
+      const thead = document.createElement('thead');
+      thead.innerHTML = `
+        <tr>
+          <th scope="col">Date</th>
+          <th scope="col">Value</th>
+          <th scope="col">Unit</th>
+          <th scope="col">Reference Interval</th>
+        </tr>
+      `;
+      table.appendChild(thead);
+
+      // Table body
+      const tbody = document.createElement('tbody');
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+
+        // Date cell
+        const dateCell = document.createElement('td');
+        dateCell.textContent = formatDate(row.t);
+        tr.appendChild(dateCell);
+
+        // Value cell (with out-of-range highlighting)
+        const valueCell = document.createElement('td');
+        valueCell.textContent = row.y !== null && row.y !== undefined ? String(row.y) : '--';
+
+        // Calculate if value is out of range (frontend calculation as fallback)
+        let isOutOfRange = row.is_out_of_range === true || row.is_value_out_of_range === true;
+
+        // If backend flag not present, calculate it ourselves
+        if (!isOutOfRange && row.y !== null && row.y !== undefined) {
+          const value = parseFloat(row.y);
+          if (!isNaN(value)) {
+            const lower = row.reference_lower !== null && row.reference_lower !== undefined
+              ? parseFloat(row.reference_lower)
+              : null;
+            const upper = row.reference_upper !== null && row.reference_upper !== undefined
+              ? parseFloat(row.reference_upper)
+              : null;
+
+            if (lower !== null) {
+              const lowerOp = row.reference_lower_operator || '>=';
+              if ((lowerOp === '>' && value <= lower) ||
+                  (lowerOp === '>=' && value < lower) ||
+                  (lowerOp === '<' && value >= lower) ||
+                  (lowerOp === '<=' && value > lower)) {
+                isOutOfRange = true;
+              }
+            }
+
+            if (upper !== null && !isOutOfRange) {
+              const upperOp = row.reference_upper_operator || '<=';
+              if ((upperOp === '<' && value >= upper) ||
+                  (upperOp === '<=' && value > upper) ||
+                  (upperOp === '>' && value <= upper) ||
+                  (upperOp === '>=' && value < upper)) {
+                isOutOfRange = true;
+              }
+            }
+          }
+        }
+
+        if (isOutOfRange) {
+          valueCell.dataset.outOfRange = 'true';
+        }
+        tr.appendChild(valueCell);
+
+        // Unit cell
+        const unitCell = document.createElement('td');
+        unitCell.textContent = row.unit || '--';
+        tr.appendChild(unitCell);
+
+        // Reference Interval cell
+        const refCell = document.createElement('td');
+        const refDisplay = buildReferenceIntervalDisplay(mapToUnprefixed(row));
+        refCell.textContent = refDisplay || 'Unavailable';
+        tr.appendChild(refCell);
+
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+
+      tableWrapper.appendChild(table);
+      container.replaceChildren(tableWrapper);
+      container.hidden = false;
+    };
+
+    /**
      * Build parameter selector UI from plot data
      * @param {Array} rows - Full dataset with parameter_name field
      * @param {string} containerId - ID of selector container element
@@ -861,6 +1006,9 @@
             yAxisLabel: 'Value',
             timeUnit: 'day'
           });
+
+          // Update parameter table (v2.6)
+          renderParameterTable(filteredRows, selectedParameter);
         }
       };
 
@@ -909,8 +1057,20 @@
           plotResetBtn.onclick = null;
         }
 
-        // IMPORTANT: Unhide the plot container BEFORE rendering
+        // Hide table during loading (PRD v2.6 requirement)
+        const tableContainer = document.getElementById('parameter-table-container');
+        if (tableContainer) {
+          console.log('[app] Hiding table before fetch');
+          tableContainer.hidden = true;
+          tableContainer.replaceChildren(); // Clear stale content
+        }
+
+        // IMPORTANT: Unhide BOTH containers BEFORE rendering
         // Chart.js needs the canvas to be visible to calculate dimensions
+        const visualizationContainer = document.getElementById('plot-visualization-container');
+        if (visualizationContainer) {
+          visualizationContainer.hidden = false;
+        }
         plotContainer.hidden = false;
 
         // Show loading state
@@ -943,12 +1103,18 @@
         if (!rows.length) {
           setSqlStatus('No data available for plotting', 'info');
 
-          // Hide both the plot container and wrapper
+          // Hide plot container, wrapper, and table (no data to display)
           const visualizationContainer = document.getElementById('plot-visualization-container');
           if (visualizationContainer) {
             visualizationContainer.hidden = true;
           }
           plotContainer.hidden = true;
+
+          const tableContainer = document.getElementById('parameter-table-container');
+          if (tableContainer) {
+            tableContainer.hidden = true;
+            tableContainer.replaceChildren();
+          }
 
           if (plotResetBtn) {
             plotResetBtn.hidden = true;
@@ -971,11 +1137,12 @@
           y: row.y,
           parameter_name: row.parameter_name,
           unit: row.unit || 'unknown',
-          // Reference range fields (preserve for band rendering)
+          // Reference range fields (preserve for band rendering and table display)
           reference_lower: row.reference_lower,
           reference_lower_operator: row.reference_lower_operator,
           reference_upper: row.reference_upper,
           reference_upper_operator: row.reference_upper_operator,
+          reference_interval_text: row.reference_interval_text, // For table fallback display
           is_value_out_of_range: row.is_value_out_of_range,
           // Optional context
           patient_age_snapshot: row.patient_age_snapshot,
@@ -1040,6 +1207,11 @@
           timeUnit: 'day'
         });
 
+        // Render parameter table for initial load (v2.6)
+        if (selectedParameter && filteredRows.length > 0) {
+          renderParameterTable(filteredRows, selectedParameter);
+        }
+
         if (currentChart) {
           // Show the wrapper container instead of just plot-container
           const visualizationContainer = document.getElementById('plot-visualization-container');
@@ -1073,12 +1245,18 @@
         console.error('[app] Plot rendering error:', error);
         setSqlStatus(`Plot generation failed: ${error.message}. Showing SQL query only.`, 'error');
 
-        // Hide both the plot container and wrapper
+        // Hide plot container, wrapper, and table (error state)
         const visualizationContainer = document.getElementById('plot-visualization-container');
         if (visualizationContainer) {
           visualizationContainer.hidden = true;
         }
         plotContainer.hidden = true;
+
+        const tableContainer = document.getElementById('parameter-table-container');
+        if (tableContainer) {
+          tableContainer.hidden = true;
+          tableContainer.replaceChildren();
+        }
 
         if (plotResetBtn) {
           plotResetBtn.hidden = true;

@@ -9,20 +9,22 @@ HealthUp transforms raw lab reports into structured longitudinal data and provid
 - Agentic natural-language SQL generation with schema-aware tooling, validation, and audit logging.
 - Automatic analyte mapping pipeline that aligns extracted parameters to canonical analytes with multi-tier matching (exact, fuzzy, LLM).
 - Plot-ready SQL responses and client-side visualization (with parameter selector) for multi-parameter time-series lab trends.
+- Parameter table view displaying exact measurement values alongside time-series plots with out-of-range highlighting.
 
 ## Architecture Overview
 
 HealthUp is a Node.js/Express monolith with a static front-end. Most business logic lives in `server/services` and is orchestrated by API routes.
 
 ```
-Browser UI (public/index.html, js/app.js, js/plotRenderer.js)
+Browser UI (public/index.html, admin.html, js/app.js, js/admin.js, js/plotRenderer.js)
   ↕︎ HTTPS /api/*
 Express App (server/app.js)
   ├─ /api/analyze-labs → routes/analyzeLabReport.js → services/reportPersistence.js, MappingApplier.js
   ├─ /api/sql-generator → routes/sqlGenerator.js → services/sqlGenerator.js → agenticSqlGenerator.js / promptBuilder.js / sqlValidator.js
   ├─ /api/execute-sql → routes/executeSql.js
+  ├─ /api/admin/* → routes/admin.js (pending-analytes, ambiguous-matches, approve, discard, resolve)
   └─ /api/patients/:id/reports, /api/reports/:id → routes/reports.js → services/reportRetrieval.js
-PostgreSQL (patients, patient_reports, lab_results, analytes, analyte_aliases, pending_analytes, match_reviews, sql_generation_logs, view v_measurements)
+PostgreSQL (patients, patient_reports, lab_results, analytes, analyte_aliases, pending_analytes, match_reviews, admin_actions, sql_generation_logs, view v_measurements)
 OpenAI APIs (Vision for extraction, Text for SQL & mapping)
 ```
 
@@ -100,16 +102,25 @@ After successful persistence, the route automatically invokes the Mapping Applie
 
 The static UI (`public/`) provides both the ingestion workflow and analytics surface:
 
-- `index.html` hosts the upload form, SQL generator, and the plot visualization wrapper with its dynamic parameter selector. External dependencies (Chart.js, zoom/datalabels plugins) load via CDN.
-- `css/style.css` styles the progress timeline, SQL panels, plot view, and the selector panel used to switch analytes.
+### Main Application (`index.html`, `js/app.js`, `js/plotRenderer.js`)
+- `index.html` hosts the upload form, SQL generator, and the plot visualization wrapper with its dynamic parameter selector and table container. External dependencies (Chart.js, zoom/datalabels plugins) load via CDN.
+- `css/style.css` styles the progress timeline, SQL panels, plot view, parameter selector panel, and the parameter table view using CSS Grid layout for responsive positioning.
 - `js/app.js`
-  - Manages file selection, drives `/api/analyze-labs`, and renders the progress timeline based on the server’s `pipelineProgress`.
+  - Manages file selection, drives `/api/analyze-labs`, and renders the progress timeline based on the server's `pipelineProgress`.
   - Fetches persisted report detail (`/api/reports/:id`) to render structured lab result cards and raw JSON.
   - Orchestrates the SQL generation panel: throttles requests, copies SQL to clipboard, tracks regeneration, wires plot payloads to the renderer, and filters plot data client-side when users switch parameters.
+  - Renders the parameter table view (`renderParameterTable`) with formatted dates, values, units, and reference intervals. Highlights out-of-range values with red outline styling. Synchronizes table updates with parameter selector changes (PRD v2.6).
 - `js/plotRenderer.js`
   - Registers Chart.js plugins (zoom, datalabels) when available.
   - Groups rows by unit, overlays reference bands, and highlights out-of-range points for time-series visualization (PRD v2.1/v2.2).
   - Exposes a `renderPlot` helper that expects the SQL response format produced by agentic `plot_query` results.
+
+### Admin Panel (`admin.html`, `js/admin.js`)
+- Provides review interfaces for analyte mapping outputs (PRD v2.4):
+  - **Pending Analytes**: Review LLM-proposed new analytes with evidence and parameter variations. Approve or discard with rationale.
+  - **Ambiguous Matches**: Resolve medium-confidence matches by selecting the correct canonical analyte from candidate list.
+- Displays match evidence, confidence scores, and parameter context for informed decision-making.
+- All actions are logged to `admin_actions` audit trail with timestamps and rationale.
 
 ## Data Model
 
@@ -202,7 +213,13 @@ For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before ena
 
 - Automated unit tests (Jest): `npm test`.
 - Manual agentic SQL regression: `node test/manual/test_agentic_sql.js` (prints active feature flags and exercises representative questions).
-- Frontend flows rely on manual QA (progress timeline, copy-to-clipboard, plot rendering). Use seeded lab reports for deterministic runs.
+- Frontend flows rely on manual QA (progress timeline, copy-to-clipboard, plot rendering, parameter table synchronization). Use seeded lab reports for deterministic runs.
+- Parameter table QA checklist (PRD v2.6):
+  - Verify table renders on first load with default parameter selection
+  - Confirm table updates when switching parameters via radio buttons
+  - Check out-of-range values display red outline in Value cells
+  - Validate table hides during loading states and error conditions
+  - Test reference interval display for one-sided and two-sided bounds
 
 ## Logging & Observability
 
@@ -215,7 +232,7 @@ For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before ena
 
 Key specifications and history live under `docs/`:
 
-- PRDs for each milestone (`PRD_v0_4_Full_Lab_Results_Extraction.md`, `PRD_v0_9_Mapping_Applier_Dry_Run.md`, `PRD_v2_0_agentic_sql_generation_mvp.md`, `PRD_v2_1_plot_generation.md`, `PRD_v2_2_lab_plot_with_reference_band.md`, etc.).
+- PRDs for each milestone (`PRD_v0_4_Full_Lab_Results_Extraction.md`, `PRD_v0_9_Mapping_Applier_Dry_Run.md`, `PRD_v2_0_agentic_sql_generation_mvp.md`, `PRD_v2_1_plot_generation.md`, `PRD_v2_2_lab_plot_with_reference_band.md`, `PRD_v2_3_single_analyte_plot_UI.md`, `PRD_v2_4_analyte_mapping_write_mode.md`, `PRD_v2_5_schema_consolidation.md`, `PRD_v2_6_parameter_table_view.md`).
 - Implementation notes (`IMPLEMENTATION_PLAN_agentic_sql.md`, `IMPLEMENTATION_SUMMARY_v0_9_2.md`, `AGENTIC_SQL_QUICKSTART.md`) capture operational guidance.
 - `CRITICAL_GAPS_ADDRESSED.md` and `FINAL_STATUS.md` summarize the current release baseline.
 
@@ -247,3 +264,5 @@ Consult these documents when drafting new PRDs; each PRD references the correspo
 - Mapping Applier automatically writes high-confidence matches; medium-confidence matches and new analyte proposals require admin review interfaces.
 - Agentic SQL relies on curated prompts and schema aliases—update `config/schema_aliases.json` whenever new tables are introduced.
 - Plot generation expects time-series columns (`t`, `y`, `parameter_name`, `unit`, reference bands). Ensure new plot-focused PRDs conform to this contract.
+- Parameter table view currently performs client-side calculation of out-of-range status when backend field is missing; consider populating `is_value_out_of_range` in the database for consistency.
+- Future enhancements for parameter table: CSV export, mobile-responsive toggle, date range filtering, multi-parameter comparison, and report deep links (see PRD v2.6 section 11).

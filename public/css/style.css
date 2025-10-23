@@ -599,9 +599,11 @@ label {
   }
 }
 
-/* Plot visualization container with parameter selector (v2.3) */
+/* Plot visualization container with parameter selector (v2.3, v2.6 grid layout) */
 .plot-visualization-container {
-  display: flex;
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  grid-template-rows: auto auto;
   gap: 20px;
   margin-top: 20px;
 }
@@ -662,10 +664,17 @@ label {
   accent-color: #007bff;
 }
 
-/* Plot container adapts to flex layout */
+/* Plot container adapts to grid layout (preserve existing properties) */
 .plot-container {
   flex-grow: 1;
   min-width: 0; /* Allow canvas to shrink below intrinsic size */
+}
+
+/* Parameter table container spans full width (v2.6) */
+.parameter-table-container {
+  grid-column: 1 / -1;  /* Span both columns */
+  grid-row: 2;
+  margin-top: 1.5rem;
 }
 
 /* Update grid styling for visualization container */
