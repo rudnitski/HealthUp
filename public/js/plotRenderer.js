@@ -638,34 +638,7 @@
               bottom: 15
             },
             color: '#1c1c1e'
-          },
-          ...(zoomPluginRegistered ? {
-            zoom: {
-              limits: {
-                x: { min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY },
-                y: { min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY }
-              },
-              pan: {
-                enabled: true,
-                mode: 'x',
-                modifierKey: 'shift'
-              },
-              zoom: {
-                wheel: {
-                  enabled: true,
-                  modifierKey: null
-                },
-                pinch: {
-                  enabled: true
-                },
-                drag: {
-                  enabled: true,
-                  modifierKey: null
-                },
-                mode: 'x'
-              }
-            }
-          } : {})
+          }
         },
         interaction: {
           mode: 'nearest',

@@ -419,6 +419,49 @@ router.post('/resolve-match', async (req, res) => {
 });
 
 /**
+ * POST /api/admin/discard-match
+ * Discard an ambiguous match without resolving it
+ */
+router.post('/discard-match', async (req, res) => {
+  try {
+    const { review_id, reason } = req.body;
+
+    if (!review_id) {
+      return res.status(400).json({ error: 'review_id is required' });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE match_reviews
+       SET status = 'skipped',
+           updated_at = NOW()
+       WHERE review_id = $1
+       RETURNING review_id`,
+      [review_id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Match review not found' });
+    }
+
+    // Log admin action
+    await logAdminAction('discard_match', 'match_review', review_id, {
+      status: 'pending → skipped',
+      reason: reason || 'No reason provided'
+    }, req);
+
+    logger.info({ review_id, reason }, 'Ambiguous match discarded');
+
+    res.json({
+      success: true,
+      message: 'Ambiguous match discarded'
+    });
+  } catch (error) {
+    logger.error({ error: error.message }, 'Failed to discard match');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
  * POST /api/admin/reset-database
  * Drop all tables and recreate schema with seed data
  * WARNING: This deletes ALL data in the database!

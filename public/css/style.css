@@ -42,7 +42,7 @@ body {
 }
 
 .container {
-  width: min(95vw, 1100px);
+  width: min(98vw, 1800px);
   background-color: var(--color-surface);
   padding: 2.75rem 3rem;
   border-radius: 16px;

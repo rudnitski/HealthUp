@@ -283,6 +283,7 @@ function renderAmbiguousMatches() {
       <td>${createdAt}</td>
       <td class="actions-cell">
         <button class="action-btn resolve-btn" data-id="${match.review_id}">Choose</button>
+        <button class="action-btn discard-btn" data-id="${match.review_id}">❌ Discard</button>
       </td>
     `;
 
@@ -292,6 +293,10 @@ function renderAmbiguousMatches() {
   // Add event listeners
   document.querySelectorAll('.resolve-btn').forEach(btn => {
     btn.addEventListener('click', () => showResolveDialog(btn.dataset.id));
+  });
+
+  document.querySelectorAll('#tbody-ambiguous .discard-btn').forEach(btn => {
+    btn.addEventListener('click', () => handleDiscardAmbiguous(btn.dataset.id));
   });
 }
 
@@ -472,6 +477,40 @@ async function showResolveDialog(reviewId) {
     await fetchAmbiguousMatches();
   } catch (error) {
     console.error('Failed to resolve match:', error);
+    showToast(`❌ Error: ${error.message}`, 'error');
+  }
+}
+
+// Handle Discard Ambiguous Match
+async function handleDiscardAmbiguous(reviewId) {
+  const match = ambiguousMatches.find(m => m.review_id == reviewId);
+  if (!match) return;
+
+  const confirmed = await confirm(
+    'Discard Ambiguous Match',
+    `Discard the ambiguous match for "${match.raw_parameter_name}"? This will mark it as discarded and it won't appear in the review queue anymore.`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch('/api/admin/discard-match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ review_id: reviewId })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || `HTTP ${response.status}`);
+    }
+
+    showToast('✅ Ambiguous match discarded', 'success');
+
+    // Refresh the table
+    await fetchAmbiguousMatches();
+  } catch (error) {
+    console.error('Failed to discard match:', error);
     showToast(`❌ Error: ${error.message}`, 'error');
   }
 }

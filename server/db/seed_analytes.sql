@@ -1,6 +1,6 @@
 -- Seed analytes and aliases (auto-generated from database)
--- Generated: 2025-10-21T08:26:27.186Z
--- Total analytes: 104
+-- Generated: 2025-10-23T16:47:43.596Z
+-- Total analytes: 123
 
 -- ============================================================================
 -- ANALYTES (Canonical Tests)
@@ -96,12 +96,21 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('APOA1', 'Apolipoprotein A1', 'г/л', 'uncategorized'),
   ('APOB', 'Apolipoprotein B', 'г/л', 'uncategorized'),
   ('APOB_APOA1', 'Apolipoprotein B / Apolipoprotein A1 Ratio', '', 'uncategorized'),
+  ('APTT', 'Activated Partial Thromboplastin Time (APTT)', 'сек', 'uncategorized'),
   ('ASLO', 'Antistreptolysin O (ASO) / Antistreptolysin O titer', 'МЕ/мл', 'uncategorized'),
   ('BASO', 'Basophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('BASO_PRCT', 'Basophils (%)', '%', 'uncategorized'),
+  ('CMV_IGG', 'Cytomegalovirus IgG Antibody', 'Ед/мл', 'uncategorized'),
+  ('CMV_IGM', 'Cytomegalovirus IgM Antibody', 'Индекс', 'uncategorized'),
+  ('CORT', 'Cortisol', 'нмоль/л', 'uncategorized'),
   ('EO', 'Eosinophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('EO_PRCT', 'Eosinophils (%)', '%', 'uncategorized'),
+  ('HOMA_IR', 'HOMA-IR (Homeostatic Model Assessment of Insulin Resistance)', '', 'uncategorized'),
+  ('HSV1_IGG', 'Herpes Simplex Virus Type 1 IgG Antibody', 'Ед/мл', 'uncategorized'),
+  ('HSV2_IGG', 'Herpes Simplex Virus Type 2 IgG Antibody', 'Ед/мл', 'uncategorized'),
   ('IBIL', 'Indirect Bilirubin (Unconjugated Bilirubin)', 'мкмоль/л', 'uncategorized'),
+  ('IG_E', 'Total Immunoglobulin E (IgE)', 'МЕ/мл', 'uncategorized'),
+  ('INSULIN', 'Insulin', 'пмоль/л', 'uncategorized'),
   ('LPA', 'Lipoprotein(a)', 'г/л', 'uncategorized'),
   ('LUC', 'Large Unstained Cells (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('LUC_PRCT', 'Large Unstained Cells (%)', '%', 'uncategorized'),
@@ -109,12 +118,21 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('LYMPH_PRCT', 'Lymphocytes (%)', '%', 'uncategorized'),
   ('MONO', 'Monocytes (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('MONO_PRCT', 'Monocytes (%)', '%', 'uncategorized'),
+  ('NEISSERIA_SUBFLAVA', 'Neisseria subflava (microbial identification)', '', 'uncategorized'),
   ('NEUT', 'Neutrophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('NEUT_BAND_PRCT', 'Band Neutrophils (%)', '%', 'uncategorized'),
   ('NEUT_PRCT', 'Neutrophils (%)', '%', 'uncategorized'),
   ('P_LCR', 'Platelet Large Cell Ratio (P-LCR)', '%', 'uncategorized'),
   ('PCT', 'Plateletcrit (PCT)', '%', 'uncategorized'),
+  ('PCTN', 'Procalcitonin', 'нг/мл', 'uncategorized'),
   ('PDW', 'Platelet Distribution Width (PDW)', '%', 'uncategorized'),
+  ('SARS2_IGG', 'SARS-CoV-2 IgG Antibody', '', 'uncategorized'),
+  ('SARS2_IGG_N', 'SARS-CoV-2 Nucleocapsid IgG Antibody (semiquantitative, ELISA)', 'КП', 'uncategorized'),
+  ('SARS2_IGG_S', 'SARS-CoV-2 Spike (S) Protein IgG Antibody (semiquantitative, ELISA)', 'КП', 'uncategorized'),
+  ('SARS2_IGM', 'SARS-CoV-2 IgM Antibody', '', 'uncategorized'),
+  ('TOXO_IGG', 'Toxoplasma gondii IgG Antibody', 'МЕ/мл', 'uncategorized'),
+  ('TOXO_IGM', 'Toxoplasma gondii IgM Antibody', 'Индекс', 'uncategorized'),
+  ('TPO_AB', 'Thyroid Peroxidase Antibodies (TPO Ab)', 'МЕ/мл', 'uncategorized'),
   ('URINE_BACTERIA', 'Urine Bacteria (microscopy)', '', 'uncategorized'),
   ('URINE_BIL', 'Urine Bilirubin', 'мг/дл', 'uncategorized'),
   ('URINE_CASTS', 'Urine Casts (cylinders)', 'в п/зр.', 'uncategorized'),
@@ -128,6 +146,7 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('URINE_KET', 'Urine Ketones', 'мг/дл', 'uncategorized'),
   ('URINE_MUCUS', 'Urine Mucus (sediment)', '', 'uncategorized'),
   ('URINE_NIT', 'Urine Nitrites', '', 'uncategorized'),
+  ('URINE_NORMAL_FLORA', 'Normal Flora (urine culture/microscopy)', '', 'uncategorized'),
   ('URINE_PH', 'Urine pH', '', 'uncategorized'),
   ('URINE_PROT', 'Urine Protein', 'мг/дл', 'uncategorized'),
   ('URINE_RBC', 'Urine Red Blood Cells', 'ед/мкл', 'uncategorized'),
@@ -137,7 +156,7 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('URINE_TURBIDITY', 'Urine Transparency/Turbidity', '', 'uncategorized'),
   ('URINE_UBG', 'Urine Urobilinogen', 'мг/дл', 'uncategorized'),
   ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized'),
-  ('URINE_YEAST', 'Urine Yeast (fungi, microscopy)', '', 'uncategorized')
+  ('URINE_YEAST', 'Urine Yeast (fungi, microscopy)', '', 'uncategorized'),
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
@@ -557,6 +576,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Apolipoprotein B / Apolipoprotein A1 Ratio (APOB_APOA1)
   ((SELECT analyte_id FROM analytes WHERE code = 'APOB_APOA1'), 'апо в апо а1', 'ru', 1, 'evidence_auto'),
 
+  -- Activated Partial Thromboplastin Time (APTT) (APTT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'APTT'), 'активированное частичное тромбопластиновое время ачтв', 'ru', 1, 'evidence_auto'),
+
   -- Antistreptolysin O (ASO) / Antistreptolysin O titer (ASLO)
   ((SELECT analyte_id FROM analytes WHERE code = 'ASLO'), 'асл о', 'ru', 1, 'evidence_auto'),
 
@@ -566,14 +588,38 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Basophils (%) (BASO_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'BASO_PRCT'), 'базофилы baso', 'ru', 1, 'evidence_auto'),
 
+  -- Cytomegalovirus IgG Antibody (CMV_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CMV_IGG'), 'цитомегаловирус igg', 'ru', 1, 'evidence_auto'),
+
+  -- Cytomegalovirus IgM Antibody (CMV_IGM)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CMV_IGM'), 'цитомегаловирус igm', 'ru', 1, 'evidence_auto'),
+
+  -- Cortisol (CORT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CORT'), 'кортизол', 'ru', 1, 'evidence_auto'),
+
   -- Eosinophils (absolute) (EO)
   ((SELECT analyte_id FROM analytes WHERE code = 'EO'), 'эозинофилы eo', 'ru', 1, 'evidence_auto'),
 
   -- Eosinophils (%) (EO_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'EO_PRCT'), 'эозинофилы eo', 'ru', 1, 'evidence_auto'),
 
+  -- HOMA-IR (Homeostatic Model Assessment of Insulin Resistance) (HOMA_IR)
+  ((SELECT analyte_id FROM analytes WHERE code = 'HOMA_IR'), 'индекс homa ir', 'ru', 1, 'evidence_auto'),
+
+  -- Herpes Simplex Virus Type 1 IgG Antibody (HSV1_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'HSV1_IGG'), 'вирус простого герпеса 1 типа igg', 'ru', 1, 'evidence_auto'),
+
+  -- Herpes Simplex Virus Type 2 IgG Antibody (HSV2_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'HSV2_IGG'), 'вирус простого герпеса 2 типа igg', 'ru', 1, 'evidence_auto'),
+
   -- Indirect Bilirubin (Unconjugated Bilirubin) (IBIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'IBIL'), 'билирубин непрямой', 'ru', 1, 'evidence_auto'),
+
+  -- Total Immunoglobulin E (IgE) (IG_E)
+  ((SELECT analyte_id FROM analytes WHERE code = 'IG_E'), 'общий иммуноглобулин e', 'ru', 1, 'evidence_auto'),
+
+  -- Insulin (INSULIN)
+  ((SELECT analyte_id FROM analytes WHERE code = 'INSULIN'), 'инсулин', 'ru', 1, 'evidence_auto'),
 
   -- Lipoprotein(a) (LPA)
   ((SELECT analyte_id FROM analytes WHERE code = 'LPA'), 'липопротеин а', 'ru', 1, 'evidence_auto'),
@@ -596,6 +642,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Monocytes (%) (MONO_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'MONO_PRCT'), 'моноциты mono', 'ru', 1, 'evidence_auto'),
 
+  -- Neisseria subflava (microbial identification) (NEISSERIA_SUBFLAVA)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NEISSERIA_SUBFLAVA'), 'neisseria subflava', 'en', 1, 'evidence_auto'),
+
   -- Neutrophils (absolute) (NEUT)
   ((SELECT analyte_id FROM analytes WHERE code = 'NEUT'), 'нейтрофильные гранулоциты neut', 'ru', 1, 'evidence_auto'),
 
@@ -611,8 +660,32 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Plateletcrit (PCT) (PCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'PCT'), 'тромбокрит pct', 'ru', 1, 'evidence_auto'),
 
+  -- Procalcitonin (PCTN)
+  ((SELECT analyte_id FROM analytes WHERE code = 'PCTN'), 'прокальцитонин', 'ru', 1, 'evidence_auto'),
+
   -- Platelet Distribution Width (PDW) (PDW)
   ((SELECT analyte_id FROM analytes WHERE code = 'PDW'), 'ширина распределения тромбоцитов по объемам pdw', 'ru', 1, 'evidence_auto'),
+
+  -- SARS-CoV-2 IgG Antibody (SARS2_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'SARS2_IGG'), 'sars cov 2 igg', 'en', 1, 'evidence_auto'),
+
+  -- SARS-CoV-2 Nucleocapsid IgG Antibody (semiquantitative, ELISA) (SARS2_IGG_N)
+  ((SELECT analyte_id FROM analytes WHERE code = 'SARS2_IGG_N'), 'ифа sars cov 2 антитела igg к n белку нуклеокапсидному полукол опред', 'ru', 1, 'evidence_auto'),
+
+  -- SARS-CoV-2 Spike (S) Protein IgG Antibody (semiquantitative, ELISA) (SARS2_IGG_S)
+  ((SELECT analyte_id FROM analytes WHERE code = 'SARS2_IGG_S'), 'ифа sars cov 2 антитела igg к s белку полукол опред', 'ru', 1, 'evidence_auto'),
+
+  -- SARS-CoV-2 IgM Antibody (SARS2_IGM)
+  ((SELECT analyte_id FROM analytes WHERE code = 'SARS2_IGM'), 'sars cov 2 igm', 'en', 1, 'evidence_auto'),
+
+  -- Toxoplasma gondii IgG Antibody (TOXO_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'TOXO_IGG'), 'токсоплазма toxoplasma gondii igg', 'en', 1, 'evidence_auto'),
+
+  -- Toxoplasma gondii IgM Antibody (TOXO_IGM)
+  ((SELECT analyte_id FROM analytes WHERE code = 'TOXO_IGM'), 'токсоплазма toxoplasma gondii igm', 'en', 1, 'evidence_auto'),
+
+  -- Thyroid Peroxidase Antibodies (TPO Ab) (TPO_AB)
+  ((SELECT analyte_id FROM analytes WHERE code = 'TPO_AB'), 'переоксидаза щитовидной железы аутоантитела атпо', 'ru', 1, 'evidence_auto'),
 
   -- Urine Bacteria (microscopy) (URINE_BACTERIA)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BACTERIA'), 'бактерии', 'ru', 1, 'evidence_auto'),
@@ -652,6 +725,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Nitrites (URINE_NIT)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_NIT'), 'нитриты', 'ru', 1, 'evidence_auto'),
+
+  -- Normal Flora (urine culture/microscopy) (URINE_NORMAL_FLORA)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_NORMAL_FLORA'), 'normal flora', 'en', 1, 'evidence_auto'),
 
   -- Urine pH (URINE_PH)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_PH'), 'реакция мочи', 'ru', 1, 'evidence_auto'),
