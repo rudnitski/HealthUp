@@ -41,12 +41,37 @@ app.use(express.static(publicDir));
 app.use(
   fileUpload({
     limits: { fileSize: 10 * 1024 * 1024 },
-    abortOnLimit: true,
+    abortOnLimit: false, // Changed to false so we can handle the error properly
     useTempFiles: false,
     preserveExtension: true,
     safeFileNames: true,
+    debug: true, // Enable debug mode
   }),
 );
+
+// File upload error handler
+app.use((err, req, res, next) => {
+  if (err) {
+    console.error('[fileUpload] Middleware error:', {
+      error: err.message,
+      code: err.code,
+      path: req.path
+    });
+  }
+  next(err);
+});
+
+// Request logging middleware for analyze-labs
+app.use('/api/analyze-labs', (req, res, next) => {
+  console.log('[http] /api/analyze-labs request:', {
+    method: req.method,
+    content_type: req.headers['content-type'],
+    content_length: req.headers['content-length'],
+    has_files: !!req.files,
+    files_count: req.files ? Object.keys(req.files).length : 0
+  });
+  next();
+});
 
 app.use('/api/sql-generator', sqlGeneratorRouter);
 app.use('/api/analyze-labs', analyzeLabReportRouter);
@@ -77,9 +102,23 @@ app.use((req, res) => {
 });
 
 // centralized error handler
-app.use((err, _req, res, _next) => {
-  console.error('[http] Error:', err);
-  res.status(500).json({ error: 'Internal Server Error' });
+app.use((err, req, res, _next) => {
+  console.error('[http] Error caught by middleware:', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+    error_code: err.code,
+    error_status: err.statusCode || err.status
+  });
+
+  const statusCode = err.statusCode || err.status || 500;
+  const errorMessage = err.message || 'Internal Server Error';
+
+  res.status(statusCode).json({
+    error: errorMessage,
+    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
+  });
 });
 
 const server = app.listen(PORT, () => {

@@ -621,14 +621,34 @@ router.post('/', async (req, res) => {
 
   markStep('uploaded');
 
+  // eslint-disable-next-line no-console
+  console.log(`[analyzeLabReport:${requestId}] Checking uploaded file...`, {
+    has_req_files: !!req.files,
+    files_keys: req.files ? Object.keys(req.files) : [],
+    expected_field: FILE_FIELD_NAME
+  });
+
   const uploadedFile = req?.files?.[FILE_FIELD_NAME] || Object.values(req?.files || {})[0];
 
   if (!uploadedFile || Array.isArray(uploadedFile)) {
+    // eslint-disable-next-line no-console
+    console.error(`[analyzeLabReport:${requestId}] No valid file found`, {
+      has_uploaded_file: !!uploadedFile,
+      is_array: Array.isArray(uploadedFile)
+    });
     markStep('completed', 'failed', 'No file provided');
     return res.status(400).json({ error: 'A single file is required.', progress: pipelineProgress });
   }
 
   const { data: fileBuffer, mimetype, name, size } = uploadedFile;
+
+  // eslint-disable-next-line no-console
+  console.log(`[analyzeLabReport:${requestId}] File received:`, {
+    name,
+    mimetype,
+    size,
+    has_buffer: !!fileBuffer
+  });
 
   if (!ALLOWED_MIME_TYPES.has(mimetype)) {
     markStep('completed', 'failed', 'Unsupported file type');
