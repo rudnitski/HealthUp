@@ -63,13 +63,38 @@ app.use((err, req, res, next) => {
 
 // Request logging middleware for analyze-labs
 app.use('/api/analyze-labs', (req, res, next) => {
-  console.log('[http] /api/analyze-labs request:', {
+  const reqId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+  console.log(`[http:${reqId}] /api/analyze-labs request:`, {
     method: req.method,
     content_type: req.headers['content-type'],
     content_length: req.headers['content-length'],
     has_files: !!req.files,
     files_count: req.files ? Object.keys(req.files).length : 0
   });
+
+  // Track response completion
+  res.on('finish', () => {
+    console.log(`[http:${reqId}] Response finished:`, {
+      status_code: res.statusCode,
+      headers_sent: res.headersSent
+    });
+  });
+
+  res.on('close', () => {
+    console.log(`[http:${reqId}] Response closed:`, {
+      finished: res.writableFinished,
+      headers_sent: res.headersSent
+    });
+  });
+
+  res.on('error', (err) => {
+    console.error(`[http:${reqId}] Response error:`, {
+      error: err.message,
+      stack: err.stack
+    });
+  });
+
   next();
 });
 

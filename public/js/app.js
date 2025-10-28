@@ -586,6 +586,89 @@
     }
   });
 
+  // Map numeric progress (0-100) to pipeline steps
+  const mapProgressToSteps = (progressPercent, jobStatus) => {
+    const steps = [];
+
+    // Define progress ranges for each step
+    // Based on backend progress milestones in labReportProcessor.js
+    const ranges = [
+      { id: 'uploaded', min: 0, max: 9 },
+      { id: 'pdf_processing', min: 10, max: 39 },
+      { id: 'openai_request', min: 40, max: 74 },
+      { id: 'parsing', min: 75, max: 79 },
+      { id: 'persistence', min: 80, max: 99 },
+      { id: 'completed', min: 100, max: 100 }
+    ];
+
+    ranges.forEach((range) => {
+      let status = 'pending';
+      let message = null;
+
+      if (progressPercent >= range.max) {
+        // Step fully completed
+        status = 'completed';
+      } else if (progressPercent >= range.min && progressPercent < range.max) {
+        // Step currently in progress
+        status = 'in_progress';
+      }
+
+      // If job failed, mark current step as failed
+      if (jobStatus === 'failed' && status === 'in_progress') {
+        status = 'failed';
+      }
+
+      steps.push({ id: range.id, status, message });
+    });
+
+    return steps;
+  };
+
+  // Helper function to poll job status
+  const pollJobStatus = async (jobId, onProgress) => {
+    const maxAttempts = 120; // 120 * 2s = 4 minutes max
+    const pollInterval = 2000; // 2 seconds
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+      try {
+        const response = await fetch(`/api/analyze-labs/jobs/${jobId}`);
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error('Job not found or expired');
+          }
+          throw new Error('Failed to check job status');
+        }
+
+        const jobStatus = await response.json();
+
+        // Update progress if callback provided
+        if (onProgress && jobStatus.progress !== undefined) {
+          onProgress(jobStatus.progress, jobStatus.progressMessage, jobStatus.status);
+        }
+
+        // Check if job is complete
+        if (jobStatus.status === 'completed') {
+          return jobStatus.result;
+        }
+
+        // Check if job failed
+        if (jobStatus.status === 'failed') {
+          throw new Error(jobStatus.error || 'Analysis failed');
+        }
+
+        // Continue polling (pending or processing)
+      } catch (error) {
+        // Re-throw for final error handling
+        throw error;
+      }
+    }
+
+    throw new Error('Analysis timed out. Please try again.');
+  };
+
   analyzeBtn.addEventListener('click', async () => {
     const [file] = fileInput.files || [];
 
@@ -603,65 +686,127 @@
     analyzeBtn.disabled = true;
     analyzeBtn.textContent = 'Analyzing…';
     hideDetails();
-    setResultMessage('Analyzing your lab report…', 'loading');
-    renderProgress([{ id: 'uploaded', status: 'completed' }]);
+    setResultMessage('Uploading your lab report…', 'loading');
+    renderProgress([{ id: 'uploaded', status: 'in_progress' }]);
 
     try {
-      const response = await fetch('/api/analyze-labs', {
+      // Step 1: Upload file and get job ID
+      const uploadResponse = await fetch('/api/analyze-labs', {
         method: 'POST',
         body: formData,
       });
 
-      const payload = await response.json().catch(() => ({}));
-      renderProgress(payload.progress || []);
+      const uploadPayload = await uploadResponse.json().catch(() => ({}));
 
-      if (!response.ok) {
-        const errorMessage = typeof payload.error === 'string' && payload.error
-          ? payload.error
-          : 'Analysis failed. Please try again later.';
+      if (!uploadResponse.ok) {
+        const errorMessage = typeof uploadPayload.error === 'string' && uploadPayload.error
+          ? uploadPayload.error
+          : 'Upload failed. Please try again later.';
         setResultMessage(errorMessage, 'error');
         setRawOutput('');
         hideDetails();
         return;
       }
 
-      const elapsedMs = performance.now() - analysisStartedAt;
-      let persistedPayload = null;
+      // Check for job ID (async processing)
+      if (uploadResponse.status === 202 && uploadPayload.job_id) {
+        const jobId = uploadPayload.job_id;
 
-      if (typeof payload.report_id === 'string' && payload.report_id) {
-        setResultMessage('Saving your results…', 'loading');
-        persistedPayload = await fetchPersistedReport(payload.report_id);
-      }
+        setResultMessage('Analyzing your lab report…', 'loading');
+        renderProgress([{ id: 'uploaded', status: 'completed' }]);
 
-      const displayPayload = persistedPayload || payload || {};
+        // Step 2: Poll for job completion
+        const result = await pollJobStatus(jobId, (progress, message, status) => {
+          // Update progress message
+          if (message) {
+            setResultMessage(message, 'loading');
+          }
 
-      renderDetails(displayPayload, elapsedMs);
-      renderProgress((payload && payload.progress) || []);
+          // Update progress UI with mapped steps
+          const mappedSteps = mapProgressToSteps(progress, status);
+          renderProgress(mappedSteps);
+        });
 
-      const parametersForMessage = Array.isArray(displayPayload.parameters)
-        ? displayPayload.parameters
-        : [];
-      const total = parametersForMessage.length;
+        // Step 3: Display results
+        const elapsedMs = performance.now() - analysisStartedAt;
+        let persistedPayload = null;
 
-      let statusMessage;
-      let statusState;
+        if (typeof result.report_id === 'string' && result.report_id) {
+          setResultMessage('Loading results…', 'loading');
+          persistedPayload = await fetchPersistedReport(result.report_id);
+        }
 
-      if (total > 0) {
-        statusMessage = `Extracted ${total} parameter${total === 1 ? '' : 's'}.`;
-        statusState = 'success';
+        const displayPayload = persistedPayload || result || {};
+
+        renderDetails(displayPayload, elapsedMs);
+
+        // Mark all steps as completed
+        renderProgress(mapProgressToSteps(100, 'completed'));
+
+        const parametersForMessage = Array.isArray(displayPayload.parameters)
+          ? displayPayload.parameters
+          : [];
+        const total = parametersForMessage.length;
+
+        let statusMessage;
+        let statusState;
+
+        if (total > 0) {
+          statusMessage = `Extracted ${total} parameter${total === 1 ? '' : 's'}.`;
+          statusState = 'success';
+        } else {
+          statusMessage = 'No parameters detected.';
+          statusState = 'info';
+        }
+
+        setResultMessage(statusMessage, statusState);
+        setRawOutput(
+          typeof displayPayload.raw_model_output === 'string'
+            ? displayPayload.raw_model_output
+            : '',
+        );
       } else {
-        statusMessage = 'No parameters detected.';
-        statusState = 'info';
-      }
+        // Legacy synchronous response (backwards compatibility)
+        renderProgress(uploadPayload.progress || []);
 
-      setResultMessage(statusMessage, statusState);
-      setRawOutput(
-        typeof displayPayload.raw_model_output === 'string'
-          ? displayPayload.raw_model_output
-          : '',
-      );
+        const elapsedMs = performance.now() - analysisStartedAt;
+        let persistedPayload = null;
+
+        if (typeof uploadPayload.report_id === 'string' && uploadPayload.report_id) {
+          setResultMessage('Saving your results…', 'loading');
+          persistedPayload = await fetchPersistedReport(uploadPayload.report_id);
+        }
+
+        const displayPayload = persistedPayload || uploadPayload || {};
+
+        renderDetails(displayPayload, elapsedMs);
+        renderProgress((uploadPayload && uploadPayload.progress) || []);
+
+        const parametersForMessage = Array.isArray(displayPayload.parameters)
+          ? displayPayload.parameters
+          : [];
+        const total = parametersForMessage.length;
+
+        let statusMessage;
+        let statusState;
+
+        if (total > 0) {
+          statusMessage = `Extracted ${total} parameter${total === 1 ? '' : 's'}.`;
+          statusState = 'success';
+        } else {
+          statusMessage = 'No parameters detected.';
+          statusState = 'info';
+        }
+
+        setResultMessage(statusMessage, statusState);
+        setRawOutput(
+          typeof displayPayload.raw_model_output === 'string'
+            ? displayPayload.raw_model_output
+            : '',
+        );
+      }
     } catch (error) {
-      setResultMessage('Unable to analyze right now. Please try again later.', 'error');
+      setResultMessage(error.message || 'Unable to analyze right now. Please try again later.', 'error');
       setRawOutput('');
       hideDetails();
     } finally {

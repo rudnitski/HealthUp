@@ -36,18 +36,39 @@ OpenAI APIs (Vision for extraction, Text for SQL & mapping)
 - Mounts feature routers (`/api/analyze-labs`, `/api/sql-generator`, `/api/execute-sql`, `/api/...` for reports) and exposes `/health/db`.
 - Coordinates graceful shutdown (closes HTTP listener, schema snapshot listener, and PG pool).
 
-### Lab Report Analysis (`server/routes/analyzeLabReport.js`)
-1. Validates uploads (`analysisFile`, 10 MB, PDF or image) and records progress milestones for the UI.
-2. For PDFs, limits to 10 pages and converts pages to PNG via `pdftoppm` (configurable with `PDFTOPPM_PATH`).
-3. Calls OpenAI Vision (`OpenAI Responses API`) with prompts from `prompts/lab_system_prompt.txt` and `prompts/lab_user_prompt.txt`, requesting a strict JSON schema.
-4. Parses and sanitizes the model output (normalizes strings, units, reference intervals, numeric values).
-5. Persists the report through `services/reportPersistence.js`, which:
+### Lab Report Analysis (`server/routes/analyzeLabReport.js`, `server/services/labReportProcessor.js`)
+
+**Async Job Processing Architecture**: Lab report analysis uses async job processing with polling to handle long-running requests (20-60+ seconds) that would otherwise trigger Cloudflare 524 timeouts. The upload returns immediately (202 Accepted), processing happens in the background, and the client polls for completion.
+
+**API Flow**:
+1. `POST /api/analyze-labs` → Validates uploads (`analysisFile`, 10 MB, PDF or image), creates job via `jobManager.createJob()`, starts background processing with `labReportProcessor.processLabReport()`, and returns **202 Accepted** with `job_id`.
+2. `GET /api/analyze-labs/jobs/:jobId` → Returns job status (`pending`, `processing`, `completed`, `failed`) with progress (0-100%), optional `progressMessage`, and final `result` when complete.
+
+**Processing Pipeline** (`labReportProcessor.processLabReport()`):
+1. Validates uploads and updates job progress (5% - File uploaded).
+2. For PDFs, limits to 10 pages and converts pages to PNG via `pdftoppm` (configurable with `PDFTOPPM_PATH`). Progress: 10-35%.
+3. Calls OpenAI Vision (`OpenAI Responses API`) with prompts from `prompts/lab_system_prompt.txt` and `prompts/lab_user_prompt.txt`, requesting a strict JSON schema. Progress: 40-70%.
+4. Parses and sanitizes the model output (normalizes strings, units, reference intervals, numeric values). Progress: 75%.
+5. Persists the report through `services/reportPersistence.js` (progress: 80-85%), which:
    - Upserts patients keyed by normalized full name.
    - De-duplicates reports by (patient, SHA-256 checksum) and overwrites `lab_results` atomically.
    - Writes metadata snapshots, missing fields, and raw model output.
-6. Returns the persisted identifiers and sanitized payload to the client along with the progress log.
+6. Automatically invokes the Mapping Applier (progress: 90-95%) to map extracted parameters to canonical analytes.
+7. Sets job status to `completed` (progress: 100%) with final result, or `failed` with error message.
 
-After successful persistence, the route automatically invokes the Mapping Applier (see below) to map extracted parameters to canonical analytes. Failures in the mapping phase are logged but do not fail ingestion. All persistence errors are wrapped in `PersistLabReportError` with debugging context.
+**Job Management** (`server/utils/jobManager.js`):
+- In-memory job tracking with automatic cleanup after 1 hour.
+- Thread-safe Map-based storage supporting concurrent uploads.
+- Progress tracking with optional status messages shown in UI.
+- Jobs survive across multiple client polling requests during processing.
+
+**Frontend** (`public/js/app.js`):
+- Polls job status every 2 seconds (max 4 minutes = 120 attempts).
+- Updates UI with progress messages: "Analyzing with AI", "Mapping analytes", etc.
+- Displays results when job completes or shows error on failure/timeout.
+- Backwards compatible with synchronous responses (200 OK) if needed.
+
+Failures in the mapping phase are logged but do not fail ingestion. All persistence errors are wrapped in `PersistLabReportError` with debugging context. The async architecture prevents Cloudflare 524 timeouts by decoupling upload acknowledgment from processing completion.
 
 ### Mapping Applier (`server/services/MappingApplier.js`)
 - Runs an ordered tiered strategy to align extracted `lab_results` to canonical analytes:
