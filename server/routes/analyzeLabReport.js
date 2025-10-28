@@ -596,7 +596,14 @@ const convertPdfToImageDataUrls = async (buffer, pageCount, filenameHint = 'uplo
 };
 
 router.post('/', async (req, res) => {
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+  // eslint-disable-next-line no-console
+  console.log(`[analyzeLabReport:${requestId}] Request started`);
+
   if (!process.env.OPENAI_API_KEY) {
+    // eslint-disable-next-line no-console
+    console.error(`[analyzeLabReport:${requestId}] Missing OPENAI_API_KEY`);
     return res.status(500).json({ error: 'Vision API error' });
   }
 
@@ -771,6 +778,9 @@ router.post('/', async (req, res) => {
     try {
       const { wetRun } = require('../services/MappingApplier');
 
+      // eslint-disable-next-line no-console
+      console.log('[analyzeLabReport] Starting mapping for report:', persistenceResult.reportId);
+
       const mappingResult = await wetRun({
         reportId: persistenceResult.reportId,
         patientId: persistenceResult.patientId,
@@ -787,7 +797,11 @@ router.post('/', async (req, res) => {
       // Logs are emitted via Pino logger (structured JSON)
     } catch (mappingError) {
       // eslint-disable-next-line no-console
-      console.error('[analyzeLabReport] Mapping failed (non-fatal):', mappingError);
+      console.error('[analyzeLabReport] Mapping failed (non-fatal):', {
+        error: mappingError.message,
+        stack: mappingError.stack,
+        report_id: persistenceResult.reportId
+      });
       // Continue - don't fail the request if mapping fails
     }
 
@@ -803,17 +817,32 @@ router.post('/', async (req, res) => {
       progress: pipelineProgress,
     };
 
-    return res.json(responsePayload);
+    // eslint-disable-next-line no-console
+    console.log(`[analyzeLabReport:${requestId}] Sending success response:`, {
+      report_id: persistenceResult.reportId,
+      patient_id: persistenceResult.patientId,
+      parameters_count: coreResult.parameters?.length || 0,
+      status_code: 200
+    });
+
+    return res.status(200).json(responsePayload);
   } catch (error) {
     // eslint-disable-next-line no-console
+    console.error(`[analyzeLabReport:${requestId}] Caught error in main try-catch:`, {
+      error_type: error.constructor.name,
+      message: error.message,
+      stack: error.stack
+    });
+
+    // eslint-disable-next-line no-console
     if (error instanceof PersistLabReportError) {
-      console.error('[analyzeLabReport] Failed to persist lab report:', {
+      console.error(`[analyzeLabReport:${requestId}] Failed to persist lab report:`, {
         message: error.message,
         context: error.context,
         cause: error.cause?.message,
       });
     } else {
-      console.error('[analyzeLabReport] Failed to persist lab report:', error);
+      console.error(`[analyzeLabReport:${requestId}] Failed to persist lab report:`, error);
     }
     markStep('persistence', 'failed', 'Unable to save results');
     markStep('completed', 'failed', 'Unable to save results');
