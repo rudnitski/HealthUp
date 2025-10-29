@@ -1555,6 +1555,7 @@
       setSqlLoadingState(true);
 
       try {
+        // Step 1: Initiate SQL generation job
         const response = await fetch('/api/sql-generator', {
           method: 'POST',
           headers: {
@@ -1565,40 +1566,86 @@
 
         const payload = await response.json().catch(() => null);
 
-        // Handle validation failure (HTTP 422) with structured error
-        if (response.status === 422 && payload && payload.ok === false) {
-          const errorDetails = payload.error && isNonEmptyString(payload.error.message)
-            ? payload.error.message
-            : 'Generated SQL failed validation.';
-          const hint = payload.details && isNonEmptyString(payload.details.hint)
-            ? ` ${payload.details.hint}`
-            : '';
-          throw new Error(`${errorDetails}${hint}`);
-        }
-
+        // Handle immediate errors (validation, etc.)
         if (!response.ok) {
           const errorMessage = payload && payload.error && isNonEmptyString(payload.error.message)
             ? payload.error.message
             : payload && isNonEmptyString(payload.error)
               ? payload.error
-              : 'Unable to generate SQL right now.';
+              : 'Unable to start SQL generation.';
           throw new Error(errorMessage);
         }
 
-        // New format returns ok: true/false
-        if (payload.ok === false) {
-          const errorMessage = payload.error && isNonEmptyString(payload.error.message)
-            ? payload.error.message
-            : 'Unable to generate SQL right now.';
-          throw new Error(errorMessage);
+        // Step 2: Get jobId from response
+        const jobId = payload?.jobId;
+        if (!jobId) {
+          throw new Error('No job ID returned from server.');
         }
 
-        lastQuestion = payload && isNonEmptyString(payload.question)
-          ? payload.question
-          : inputValue;
+        console.log(`[sqlGenerator] Job created: ${jobId}, starting polling...`);
 
-        renderSqlResult(payload);
-        setSqlStatus('SQL generated. Review before using externally.', 'success');
+        // Step 3: Poll for job completion
+        const pollInterval = 1000; // Poll every 1 second
+        const maxAttempts = 180; // Max 3 minutes (180 seconds)
+        let attempts = 0;
+
+        const pollJob = async () => {
+          attempts++;
+
+          if (attempts > maxAttempts) {
+            throw new Error('SQL generation timed out. Please try again.');
+          }
+
+          const jobResponse = await fetch(`/api/sql-generator/jobs/${jobId}`);
+          const jobStatus = await jobResponse.json().catch(() => null);
+
+          if (!jobResponse.ok || !jobStatus) {
+            throw new Error('Failed to check job status.');
+          }
+
+          console.log(`[sqlGenerator] Job ${jobId} status: ${jobStatus.status} (attempt ${attempts})`);
+
+          if (jobStatus.status === 'completed') {
+            // Success! Render the result
+            const result = jobStatus.result;
+
+            if (!result || result.ok === false) {
+              // Handle validation failure
+              const errorMessage = result?.error && isNonEmptyString(result.error.message)
+                ? result.error.message
+                : 'Generated SQL failed validation.';
+              const hint = result?.details && isNonEmptyString(result.details.hint)
+                ? ` ${result.details.hint}`
+                : '';
+              throw new Error(`${errorMessage}${hint}`);
+            }
+
+            lastQuestion = result && isNonEmptyString(result.question)
+              ? result.question
+              : inputValue;
+
+            renderSqlResult(result);
+            setSqlStatus('SQL generated. Review before using externally.', 'success');
+            return; // Done!
+
+          } else if (jobStatus.status === 'failed') {
+            // Job failed
+            const errorMessage = jobStatus.error || 'SQL generation failed.';
+            throw new Error(errorMessage);
+
+          } else {
+            // Still processing, poll again after delay
+            return new Promise((resolve, reject) => {
+              setTimeout(() => {
+                pollJob().then(resolve).catch(reject);
+              }, pollInterval);
+            });
+          }
+        };
+
+        // Start polling
+        await pollJob();
+
       } catch (error) {
         setSqlStatus(error?.message || 'Unable to generate SQL right now.', 'error');
       } finally {
