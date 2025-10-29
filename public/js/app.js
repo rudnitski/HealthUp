@@ -626,8 +626,8 @@
 
   // Helper function to poll job status
   const pollJobStatus = async (jobId, onProgress) => {
-    const maxAttempts = 120; // 120 * 2s = 4 minutes max
-    const pollInterval = 2000; // 2 seconds
+    const maxAttempts = 150; // 150 * 4s = 10 minutes max
+    const pollInterval = 4000; // 4 seconds
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
