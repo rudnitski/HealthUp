@@ -39,6 +39,7 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('CHOL', 'Total Cholesterol', 'mg/dL', 'lipid'),
   ('HDL', 'HDL Cholesterol', 'mg/dL', 'lipid'),
   ('LDL', 'LDL Cholesterol', 'mg/dL', 'lipid'),
+  ('NON_HDL', 'Non-HDL Cholesterol', 'mg/dL', 'lipid'),
   ('TRIG', 'Triglycerides', 'mg/dL', 'lipid'),
   ('VLDL', 'VLDL Cholesterol', 'mg/dL', 'lipid'),
 
@@ -356,6 +357,18 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'VLDL'), 'vldl cholesterol', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VLDL'), 'лпонп', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VLDL'), 'холестерин лпонп', 'ru', 1, 'seed'),
+
+  -- Non-HDL Cholesterol (NON_HDL)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non-hdl', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non-hdl cholesterol', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non hdl', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non hdl cholesterol', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'nonhdl', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'холестерин не лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'холестерин не-лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'хс не-лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'не-лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'не лпвп', 'ru', 1, 'seed'),
 
   -- Fructosamine (FRUC)
   ((SELECT analyte_id FROM analytes WHERE code = 'FRUC'), 'fructosamine', 'en', 1, 'seed'),
