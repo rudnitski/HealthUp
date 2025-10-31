@@ -10,6 +10,7 @@ const express = require('express');
 const fileUpload = require('express-fileupload');
 const { healthcheck, pool } = require('./db');
 const { ensureSchema } = require('./db/schema');
+const VisionProviderFactory = require('./services/vision/VisionProviderFactory');
 
 (async () => {
   try {
@@ -22,6 +23,26 @@ const { ensureSchema } = require('./db/schema');
     process.exit(1);
   }
 })();
+
+// Validate OCR provider configuration on startup (non-fatal warning)
+try {
+  const ocrProvider = process.env.OCR_PROVIDER || 'openai';
+  console.log(`[Startup] Validating OCR provider: ${ocrProvider}`);
+
+  const provider = VisionProviderFactory.create(ocrProvider);
+  provider.validateConfig();
+
+  console.log(`[Startup] ✅ OCR provider validated: ${ocrProvider}`);
+} catch (error) {
+  console.warn(`[Startup] ⚠️  OCR provider validation failed: ${error.message}`);
+  console.warn('[Startup] Lab report upload will not work until OCR is configured.');
+  console.warn('[Startup] Check your .env configuration:');
+  console.warn(`  - OCR_PROVIDER=${process.env.OCR_PROVIDER || 'openai'}`);
+  console.warn(`  - OPENAI_API_KEY=${process.env.OPENAI_API_KEY ? '✅ set' : '❌ missing'}`);
+  console.warn(`  - ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? '✅ set' : '❌ missing'}`);
+  console.warn('[Startup] Other features (SQL generation, admin) will continue to work.');
+  // Don't exit - let the app start, OCR validation will fail at request time if keys are missing
+}
 
 const sqlGeneratorRouter = require('./routes/sqlGenerator');
 const analyzeLabReportRouter = require('./routes/analyzeLabReport');

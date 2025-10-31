@@ -15,6 +15,7 @@ const { execFile } = require('child_process');
 const { persistLabReport, PersistLabReportError } = require('./reportPersistence');
 const { loadPrompt } = require('../utils/promptLoader');
 const { updateJob, updateProgress, setJobResult, setJobError, JobStatus } = require('../utils/jobManager');
+const VisionProviderFactory = require('./vision/VisionProviderFactory');
 
 const MAX_PDF_PAGES = 10;
 const ALLOWED_MIME_TYPES = new Set([
@@ -26,7 +27,7 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/gif',
   'image/heic',
 ]);
-const DEFAULT_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-5-mini';
+const OCR_PROVIDER = process.env.OCR_PROVIDER || 'openai';
 
 const systemPrompt = loadPrompt('lab_system_prompt.txt');
 const userPrompt = loadPrompt('lab_user_prompt.txt');
@@ -99,37 +100,7 @@ const structuredOutputFormat = {
   },
 };
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const shouldRetry = (error) => {
-  if (!error || !error.response) {
-    return false;
-  }
-
-  const status = error.response.status;
-  return status === 429 || status >= 500;
-};
-
-const withRetry = async (fn, { attempts = 3, baseDelay = 500 } = {}) => {
-  let lastError;
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-
-      if (attempt === attempts || !shouldRetry(error)) {
-        break;
-      }
-
-      const backoff = baseDelay * (2 ** (attempt - 1));
-      await sleep(backoff);
-    }
-  }
-
-  throw lastError;
-};
+// Retry logic moved to VisionProvider base class
 
 // Sanitization functions (copied from analyzeLabReport.js)
 const sanitizeTextField = (value, { maxLength = 160 } = {}) => {
@@ -555,7 +526,7 @@ const convertPdfToImageDataUrls = async (buffer, pageCount, filenameHint = 'uplo
   try {
     await execFileAsync(PDFTOPPM_BIN, [
       '-png',
-      '-scale-to', '1024',
+      '-scale-to', '2048', // Increased from 1024 to 2048 for better OCR accuracy
       '-f', '1',
       '-l', String(maxPage),
       pdfPath,
@@ -627,17 +598,42 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       }
     }
 
-    // Prepare OpenAI request
+    // Initialize vision provider
     updateProgress(jobId, 25, 'Preparing analysis');
 
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('Vision API error: missing API key');
-    }
+    const provider = VisionProviderFactory.create(OCR_PROVIDER);
+    provider.validateConfig();
 
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const userContent = [{ type: 'input_text', text: userPrompt }];
+    console.log(`${logPrefix} Using OCR provider: ${OCR_PROVIDER.toUpperCase()}`);
 
-    if (mimetype === 'application/pdf') {
+    // Prepare images for analysis (provider-specific handling)
+    let imageDataUrls = [];
+    let analysisOptions = {};
+
+    // Check if native PDF input should be used
+    // Anthropic: Always use native PDF
+    // OpenAI: Only if OPENAI_USE_NATIVE_PDF=true (experimental for gpt-5-mini)
+    const shouldUseNativePdf = mimetype === 'application/pdf' && (
+      OCR_PROVIDER === 'anthropic' ||
+      (OCR_PROVIDER === 'openai' && process.env.OPENAI_USE_NATIVE_PDF === 'true')
+    );
+
+    if (shouldUseNativePdf) {
+      const providerName = OCR_PROVIDER.toUpperCase();
+      const experimentalNote = OCR_PROVIDER === 'openai' ? ' (experimental)' : '';
+      console.log(`${logPrefix} Using native PDF input for ${providerName}${experimentalNote} (full quality, no conversion)`);
+      updateProgress(jobId, 30, 'Preparing PDF for analysis');
+
+      // Pass PDF buffer directly to provider
+      analysisOptions = {
+        pdfBuffer: fileBuffer,
+        mimetype: 'application/pdf',
+        filename: sanitizedFilename,
+      };
+
+      updateProgress(jobId, 35, 'PDF ready for analysis');
+    } else if (mimetype === 'application/pdf') {
+      // Convert PDF to images (fallback or default for OpenAI)
       updateProgress(jobId, 30, 'Converting PDF to images');
 
       try {
@@ -645,11 +641,7 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
           ? sanitizedFilename
           : `${sanitizedFilename}.pdf`;
 
-        const imageDataUrls = await convertPdfToImageDataUrls(fileBuffer, pdfPageCount, pdfFilename);
-
-        imageDataUrls.forEach((imageUrl) => {
-          userContent.push({ type: 'input_image', image_url: imageUrl });
-        });
+        imageDataUrls = await convertPdfToImageDataUrls(fileBuffer, pdfPageCount, pdfFilename);
 
         updateProgress(jobId, 35, 'PDF converted to images');
       } catch (error) {
@@ -660,55 +652,29 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
         throw new Error(`Unable to convert PDF: ${error.message}`);
       }
     } else {
-      userContent.push(buildImageContent(fileBuffer, mimetype));
+      // Native image file
+      const imageContent = buildImageContent(fileBuffer, mimetype);
+      imageDataUrls = [imageContent.image_url];
     }
 
-    // Call OpenAI Vision API
-    updateProgress(jobId, 40, 'Analyzing with AI');
+    // Call Vision API via provider
+    updateProgress(jobId, 40, `Analyzing with ${OCR_PROVIDER.toUpperCase()}`);
 
-    const requestPayload = {
-      model: DEFAULT_MODEL,
-      input: [
-        {
-          role: 'system',
-          content: [{ type: 'input_text', text: systemPrompt }],
-        },
-        {
-          role: 'user',
-          content: userContent,
-        },
-      ],
-      text: {
-        format: structuredOutputFormat,
-      },
-      metadata: {
-        source: 'full-lab-extraction',
-        filename: sanitizedFilename,
-        job_id: jobId,
-      },
-    };
-
-    const callVision = async () => {
-      try {
-        return await client.responses.parse(requestPayload);
-      } catch (error) {
-        if (error instanceof SyntaxError) {
-          return client.responses.create(requestPayload);
-        }
-
-        throw error;
-      }
-    };
-
-    let openAiResponse;
+    let analysisResult;
 
     try {
-      openAiResponse = await withRetry(callVision);
+      analysisResult = await provider.analyze(
+        imageDataUrls,
+        systemPrompt,
+        userPrompt,
+        structuredOutputFormat.schema,
+        analysisOptions
+      );
       updateProgress(jobId, 70, 'AI analysis completed');
     } catch (error) {
       console.error(`${logPrefix} Vision API request failed:`, {
         message: error?.message,
-        status: error?.response?.status,
+        status: error?.response?.status || error?.status,
       });
 
       throw new Error(`Vision API error: ${error.message}`);
@@ -717,12 +683,10 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
     // Parse response
     updateProgress(jobId, 75, 'Parsing results');
 
-    const parsedPayload = openAiResponse?.output_parsed;
-    const outputText = extractOutputText(openAiResponse);
-
-    const coreResult = parsedPayload
-      ? parseVisionResponse(parsedPayload, outputText)
-      : parseVisionResponse(outputText, outputText);
+    const coreResult = parseVisionResponse(
+      analysisResult,
+      JSON.stringify(analysisResult)
+    );
 
     updateProgress(jobId, 80, 'Saving results');
 
@@ -734,7 +698,7 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       persistenceResult = await persistLabReport({
         fileBuffer,
         filename: sanitizedFilename,
-        parserVersion: requestPayload.model,
+        parserVersion: `${OCR_PROVIDER}:${provider.model}`,
         processedAt,
         coreResult,
       });
