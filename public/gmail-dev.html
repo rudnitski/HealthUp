@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HealthUp — Gmail Integration (Dev)</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body>
+  <main class="container">
+    <nav class="breadcrumb">
+      <a href="/" class="breadcrumb-link">← Back to Main</a>
+      <span style="margin: 0 12px; color: #666;">|</span>
+      <a href="/admin/pending-analytes" class="breadcrumb-link">⚙️ Admin Panel</a>
+    </nav>
+
+    <h1>Gmail Integration (Dev)</h1>
+    <p class="help-text">Connect your Gmail account to fetch and classify emails that may contain lab test results</p>
+
+    <!-- Connection Status -->
+    <section id="connection-section">
+      <h2>Connection Status</h2>
+
+      <div id="status-loading" class="loading-state">
+        <p>Checking connection...</p>
+      </div>
+
+      <div id="status-disconnected" class="empty-state" hidden>
+        <p>Not connected to Gmail</p>
+        <button id="connect-btn" class="analyze-button">Connect Gmail Account</button>
+      </div>
+
+      <div id="status-connected" class="empty-state" hidden>
+        <p>✅ Connected to Gmail: <strong id="connected-email"></strong></p>
+        <button id="fetch-btn" class="analyze-button">Fetch & Classify Emails</button>
+      </div>
+
+      <div id="status-error" class="error-state" hidden>
+        <p class="error-message" id="status-error-message"></p>
+      </div>
+    </section>
+
+    <!-- Results Section -->
+    <section id="results-section" hidden>
+      <h2>Classification Results</h2>
+
+      <div id="job-loading" class="loading-state">
+        <p>Processing emails... This may take 3-5 minutes.</p>
+        <p class="help-text">Fetching metadata and classifying 200 emails using OpenAI (processed in batches)</p>
+      </div>
+
+      <div id="job-error" class="error-state" hidden>
+        <p class="error-message" id="job-error-message"></p>
+      </div>
+
+      <div id="results-empty" class="empty-state" hidden>
+        <p>No recent inbox emails found.</p>
+      </div>
+
+      <div id="results-container" hidden>
+        <p class="help-text">
+          Found <strong id="results-count">0</strong> emails.
+          Showing <strong id="likely-count">0</strong> likely lab results.
+        </p>
+
+        <div style="margin-bottom: 16px;">
+          <label>
+            <input type="checkbox" id="filter-likely" checked>
+            Show only likely lab results
+          </label>
+        </div>
+
+        <table id="results-table" class="admin-table">
+          <thead>
+            <tr>
+              <th>Subject</th>
+              <th>Sender</th>
+              <th>Date</th>
+              <th>Verdict</th>
+              <th>Confidence</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="results-tbody">
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  </main>
+
+  <script src="/js/gmail-dev.js"></script>
+</body>
+</html>

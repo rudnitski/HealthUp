@@ -49,6 +49,7 @@ const analyzeLabReportRouter = require('./routes/analyzeLabReport');
 const reportsRouter = require('./routes/reports');
 const executeSqlRouter = require('./routes/executeSql');
 const adminRouter = require('./routes/admin');
+const gmailDevRouter = require('./routes/gmailDev');
 const { shutdownSchemaSnapshot } = require('./services/schemaSnapshot');
 
 const app = express();
@@ -123,6 +124,7 @@ app.use('/api/sql-generator', sqlGeneratorRouter);
 app.use('/api/analyze-labs', analyzeLabReportRouter);
 app.use('/api/execute-sql', executeSqlRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/dev-gmail', gmailDevRouter);
 app.use('/api', reportsRouter);
 
 app.get('/', (_req, res) => {
