@@ -3,9 +3,10 @@
 HealthUp transforms raw lab reports into structured longitudinal data and provides a guided analytics surface for the product team. The platform ingests PDFs and images, extracts normalized measurements with OpenAI, persists them to Postgres, and exposes a natural-language SQL interface (with optional charting) to explore the warehouse safely.
 
 ## Core Capabilities
-- Full lab report ingestion pipeline (PDF/image → OpenAI Vision → normalized payload).
+- Full lab report ingestion pipeline (PDF/image → configurable OCR provider (OpenAI or Anthropic) → normalized payload).
 - Patient/report persistence with deduplication and re-processing safeguards.
 - Lab result retrieval APIs for downstream tooling.
+- Gmail inbox triage harness that fetches metadata via Google APIs and classifies likely lab-result emails with OpenAI.
 - Agentic natural-language SQL generation with schema-aware tooling, validation, and audit logging.
 - Automatic analyte mapping pipeline that aligns extracted parameters to canonical analytes with multi-tier matching (exact, fuzzy, LLM).
 - Plot-ready SQL responses and client-side visualization (with parameter selector) for multi-parameter time-series lab trends.
@@ -16,16 +17,17 @@ HealthUp transforms raw lab reports into structured longitudinal data and provid
 HealthUp is a Node.js/Express monolith with a static front-end. Most business logic lives in `server/services` and is orchestrated by API routes.
 
 ```
-Browser UI (public/index.html, admin.html, js/app.js, js/admin.js, js/plotRenderer.js)
+Browser UI (public/index.html, admin.html, gmail-dev.html, js/app.js, js/admin.js, js/gmail-dev.js, js/plotRenderer.js)
   ↕︎ HTTPS /api/*
 Express App (server/app.js)
-  ├─ /api/analyze-labs → routes/analyzeLabReport.js → services/reportPersistence.js, MappingApplier.js
+  ├─ /api/analyze-labs → routes/analyzeLabReport.js → services/labReportProcessor.js → VisionProviderFactory (OpenAI/Anthropic) → reportPersistence.js, MappingApplier.js
   ├─ /api/sql-generator → routes/sqlGenerator.js → services/sqlGenerator.js → agenticSqlGenerator.js / promptBuilder.js / sqlValidator.js
   ├─ /api/execute-sql → routes/executeSql.js
   ├─ /api/admin/* → routes/admin.js (pending-analytes, ambiguous-matches, approve, discard, resolve)
+  ├─ /api/dev-gmail/* → routes/gmailDev.js → services/gmailConnector.js, emailClassifier.js
   └─ /api/patients/:id/reports, /api/reports/:id → routes/reports.js → services/reportRetrieval.js
 PostgreSQL (patients, patient_reports, lab_results, analytes, analyte_aliases, pending_analytes, match_reviews, admin_actions, sql_generation_logs, view v_measurements)
-OpenAI APIs (Vision for extraction, Text for SQL & mapping)
+OpenAI & Anthropic APIs (Vision, SQL, mapping) + Google Gmail APIs
 ```
 
 ## Backend Modules
@@ -33,7 +35,7 @@ OpenAI APIs (Vision for extraction, Text for SQL & mapping)
 ### Express Application (`server/app.js`)
 - Bootstraps `.env` in non-production and verifies database connectivity via `ensureSchema()` and `healthcheck()`.
 - Serves static assets from `public/` and attaches JSON + multipart middleware (`express-fileupload` with a 10 MB cap).
-- Mounts feature routers (`/api/analyze-labs`, `/api/sql-generator`, `/api/execute-sql`, `/api/...` for reports) and exposes `/health/db`.
+- Mounts feature routers (`/api/analyze-labs`, `/api/sql-generator`, `/api/execute-sql`, `/api/dev-gmail`, `/api/...` for reports) and exposes `/health/db`.
 - Coordinates graceful shutdown (closes HTTP listener, schema snapshot listener, and PG pool).
 
 ### Lab Report Analysis (`server/routes/analyzeLabReport.js`, `server/services/labReportProcessor.js`)
@@ -46,8 +48,8 @@ OpenAI APIs (Vision for extraction, Text for SQL & mapping)
 
 **Processing Pipeline** (`labReportProcessor.processLabReport()`):
 1. Validates uploads and updates job progress (5% - File uploaded).
-2. For PDFs, limits to 10 pages and converts pages to PNG via `pdftoppm` (configurable with `PDFTOPPM_PATH`). Progress: 10-35%.
-3. Calls OpenAI Vision (`OpenAI Responses API`) with prompts from `prompts/lab_system_prompt.txt` and `prompts/lab_user_prompt.txt`, requesting a strict JSON schema. Progress: 40-70%.
+2. For PDFs, either streams native PDF bytes (Anthropic or `OPENAI_USE_NATIVE_PDF=true`) or converts up to 10 pages to PNG via `pdftoppm` (configurable with `PDFTOPPM_PATH`). Progress: 10-35%.
+3. Calls the configured OCR provider via `VisionProviderFactory` (`OCR_PROVIDER=openai|anthropic`) with prompts from `prompts/lab_system_prompt.txt` and `prompts/lab_user_prompt.txt`, requesting a strict JSON schema. Progress: 40-70%.
 4. Parses and sanitizes the model output (normalizes strings, units, reference intervals, numeric values). Progress: 75%.
 5. Persists the report through `services/reportPersistence.js` (progress: 80-85%), which:
    - Upserts patients keyed by normalized full name.
@@ -69,6 +71,18 @@ OpenAI APIs (Vision for extraction, Text for SQL & mapping)
 - Backwards compatible with synchronous responses (200 OK) if needed.
 
 Failures in the mapping phase are logged but do not fail ingestion. All persistence errors are wrapped in `PersistLabReportError` with debugging context. The async architecture prevents Cloudflare 524 timeouts by decoupling upload acknowledgment from processing completion.
+
+### Vision Providers (`server/services/vision/*`)
+- `VisionProviderFactory` selects OCR backends based on `OCR_PROVIDER` (`openai` default, `anthropic` optional) and validates configuration at startup.
+- `VisionProvider` base class centralizes retries, payload normalization, and size guardrails for both native PDFs and raster images.
+- `OpenAIProvider` calls the Responses API for multi-part JSON output and optionally uses native PDF ingestion when `OPENAI_USE_NATIVE_PDF=true`.
+- `AnthropicProvider` uses Claude Sonnet vision JSON mode, supports native PDF uploads via the documents API, and enforces `ANTHROPIC_API_KEY`/`ANTHROPIC_VISION_MODEL`.
+
+### Gmail Integration Dev Harness (`server/routes/gmailDev.js`, `server/services/gmailConnector.js`, `server/services/emailClassifier.js`)
+- Guarded by `GMAIL_INTEGRATION_ENABLED=true` (and `NODE_ENV !== 'production'`) to keep the OAuth flow dev-only.
+- Persists OAuth tokens to `server/config/gmail-token.json` (path configurable via `GMAIL_TOKEN_PATH`) and fetches up to `GMAIL_MAX_EMAILS` metadata records through the Gmail API with concurrency caps.
+- Reuses the async `jobManager` pipeline so `/api/dev-gmail/fetch` returns immediately while background classification runs.
+- Uses OpenAI (`EMAIL_CLASSIFIER_MODEL` or `SQL_GENERATOR_MODEL`) with `prompts/gmail_lab_classifier.txt` to score emails (`is_lab_likely`, confidence, reason) for the UI at `/gmail-dev.html`.
 
 ### Mapping Applier (`server/services/MappingApplier.js`)
 - Runs an ordered tiered strategy to align extracted `lab_results` to canonical analytes:
@@ -171,9 +185,16 @@ Create a `.env` in the repo root with the required secrets. Notable variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | – | Postgres connection string (must allow `CREATE EXTENSION pg_trgm`). |
-| `OPENAI_API_KEY` | – | Required for both Vision ingestion and SQL/mapping LLM calls. |
-| `OPENAI_VISION_MODEL` | `gpt-5-mini` | Vision model used to parse lab reports. |
+| `REQUIRE_PG_TRGM` | `false` | If `true`, boot exits when `pg_trgm` cannot be created. |
+| `OPENAI_API_KEY` | – | Required for Vision ingestion, SQL generation, mapping, and Gmail classification. |
 | `SQL_GENERATOR_MODEL` | `gpt-5-mini` | Text model for SQL generation (single-shot & agentic). |
+| `EMAIL_CLASSIFIER_MODEL` | `SQL_GENERATOR_MODEL` | Override model for Gmail classification; falls back to the SQL generator model. |
+| `OPENAI_VISION_MODEL` | `gpt-5-mini` | Vision model used by the OpenAI provider. |
+| `OPENAI_USE_NATIVE_PDF` | `false` | Enable native PDF ingestion for the OpenAI Vision provider (experimental). |
+| `OCR_PROVIDER` | `openai` | Selects OCR backend (`openai` or `anthropic`). |
+| `ANTHROPIC_API_KEY` | – | Required when `OCR_PROVIDER=anthropic`. |
+| `ANTHROPIC_VISION_MODEL` | `claude-sonnet-4-5-20250929` | Claude Vision model used when `OCR_PROVIDER=anthropic`. |
+| `PDFTOPPM_PATH` | `pdftoppm` | Override when Poppler tools are installed outside `PATH`. |
 | `SQL_GENERATION_ENABLED` | `true` | Set to `false` to disable the `/api/sql-generator` endpoint. |
 | `AGENTIC_SQL_ENABLED` | `false` | Enable to activate the agentic tool loop; otherwise single-shot mode is used. |
 | `ALLOW_MODEL_OVERRIDE` | `false` | Allow clients to pass `model` in the SQL request body. |
@@ -186,15 +207,20 @@ Create a `.env` in the repo root with the required secrets. Notable variables:
 | `SQLGEN_MAX_SUBQUERIES` | `2` | Validation guardrail for nested subqueries. |
 | `SQLGEN_MAX_AGG_FUNCS` | `10` | Validation guardrail for aggregate usage. |
 | `SQL_VALIDATION_BYPASS` | `false` | **Do not use in production**; skips validator safeguards. |
-| `SQL_SCHEMA_CACHE_TTL_MS` | 60 000 (dev) / 300 000 (prod) | TTL for schema snapshot cache. |
+| `SQL_SCHEMA_CACHE_TTL_MS` | `60000` (dev) / `300000` (prod) | TTL for schema snapshot cache. |
 | `SCHEMA_WHITELIST` | `public` | Comma-separated schemas exposed to the SQL generator. |
 | `ADMIN_API_KEY` | – | Required to call `/api/sql-generator/admin/cache/bust`. |
-| `PDFTOPPM_PATH` | `pdftoppm` | Override when Poppler tools are installed outside `PATH`. |
-| `REQUIRE_PG_TRGM` | `false` | If `true`, boot fails when `pg_trgm` cannot be created. |
 | `BACKFILL_SIMILARITY_THRESHOLD` | `0.70` | Tier-B minimum fuzzy similarity score. |
 | `MAPPING_AUTO_ACCEPT` | `0.80` | Confidence required to auto-write matches to database. |
 | `MAPPING_QUEUE_LOWER` | `0.60` | Confidence at which matches are queued for review. |
 | `LOG_LEVEL` | `info` | Pino logger level for mapping runs. |
+| `GMAIL_INTEGRATION_ENABLED` | `false` | Must be `true` (and non-production) to expose `/api/dev-gmail`. |
+| `GOOGLE_CLIENT_ID` | – | Gmail OAuth Web client ID (required when Gmail integration is enabled). |
+| `GOOGLE_CLIENT_SECRET` | – | Gmail OAuth client secret. |
+| `GMAIL_OAUTH_REDIRECT_URI` | `http://localhost:3000/api/dev-gmail/oauth-callback` | Must match the Google Cloud OAuth redirect. |
+| `GMAIL_TOKEN_PATH` | `server/config/gmail-token.json` | Filesystem path for persisted Gmail OAuth tokens. |
+| `GMAIL_MAX_EMAILS` | `200` | Max number of Gmail messages to fetch/classify per run. |
+| `GMAIL_CONCURRENCY_LIMIT` | `20` | Concurrency limit for Gmail API requests. |
 | `PORT` | `3000` | HTTP port. |
 
 ## Local Development
@@ -229,6 +255,10 @@ Create a `.env` in the repo root with the required secrets. Notable variables:
    node scripts/verify_mapping_setup.js
    ```
    This script confirms required tables/indexes exist and surfaces configuration thresholds.
+7. **Optional: enable the Gmail dev harness**
+   - Create Google OAuth credentials (Web client) and populate `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+   - Set `GMAIL_INTEGRATION_ENABLED=true` (dev only) and restart `npm run dev`.
+   - Visit `http://localhost:3000/gmail-dev.html` to connect your mailbox; tokens are written to `server/config/gmail-token.json` (gitignored, configurable via `GMAIL_TOKEN_PATH`).
 
 **Schema Management (PRD v2.5):** This project uses declarative schema management via `server/db/schema.js`. All table definitions, indexes, and constraints are consolidated in a single source of truth. The schema is automatically applied on boot using `CREATE TABLE IF NOT EXISTS` statements. During MVP, schema changes are handled by dropping and recreating the database (data loss is acceptable). Migration files are not used.
 
@@ -240,6 +270,7 @@ psql postgres -c "DROP DATABASE IF EXISTS healthup;"
 psql postgres -c "CREATE DATABASE healthup OWNER healthup_user ENCODING 'UTF8' LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0;"
 npm run dev  # Recreates schema
 ```
+- **Mapping backfill**: `node scripts/backfill_analyte_mappings.js` replays the tiered mapper across existing `lab_results` rows (acquires an advisory lock to prevent concurrent runs).
 
 **CRITICAL:** The database MUST be created with UTF-8 locale (`LC_COLLATE` and `LC_CTYPE` set to `en_US.UTF-8` or similar). The C locale will break:
 - `LOWER()`/`UPPER()` functions for Cyrillic and other non-ASCII text
@@ -266,6 +297,7 @@ For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before ena
 - Automated unit tests (Jest): `npm test`.
 - Manual agentic SQL regression: `node test/manual/test_agentic_sql.js` (prints active feature flags and exercises representative questions).
 - Frontend flows rely on manual QA (progress timeline, copy-to-clipboard, plot rendering, parameter table synchronization). Use seeded lab reports for deterministic runs.
+- Gmail integration dev harness: enable the feature flag, visit `/gmail-dev.html`, complete OAuth, then run “Fetch & Classify Emails” to confirm job polling and scoring output.
 - Parameter table QA checklist (PRD v2.6):
   - Verify table renders on first load with default parameter selection
   - Confirm table updates when switching parameters via radio buttons
@@ -284,9 +316,8 @@ For large analyte datasets, run `psql -f server/db/seed_analytes.sql` before ena
 
 Key specifications and history live under `docs/`:
 
-- PRDs for each milestone (`PRD_v0_4_Full_Lab_Results_Extraction.md`, `PRD_v0_9_Mapping_Applier_Dry_Run.md`, `PRD_v2_0_agentic_sql_generation_mvp.md`, `PRD_v2_1_plot_generation.md`, `PRD_v2_2_lab_plot_with_reference_band.md`, `PRD_v2_3_single_analyte_plot_UI.md`, `PRD_v2_4_analyte_mapping_write_mode.md`, `PRD_v2_5_schema_consolidation.md`, `PRD_v2_6_parameter_table_view.md`).
-- Implementation notes (`IMPLEMENTATION_PLAN_agentic_sql.md`, `IMPLEMENTATION_SUMMARY_v0_9_2.md`, `AGENTIC_SQL_QUICKSTART.md`) capture operational guidance.
-- `CRITICAL_GAPS_ADDRESSED.md` and `FINAL_STATUS.md` summarize the current release baseline.
+- Product requirement docs covering each release wave: `PRD_Upload_Form.txt`, `PRD_VitaminD_Extraction.txt`, `PRD_v2_0_agentic_sql_generation_mvp.md`, `PRD_v2_1_plot_generation.md`, `PRD_v2_2_lab_plot_with_reference_band.md`, `PRD_v2_3_single_analyte_plot_UI.md`, `PRD_v2_4_analyte_mapping_write_mode.md`, `PRD_v2_5_schema_consolidation.md`, `PRD_v2_6_parameter_table_view.md`, `PRD_v2_7_multi_provider_ocr.md`, `PRD_v2_8_Gmail_Integration_Step1.md`.
+- `AGENTIC_SQL_QUICKSTART.md` distills operational guidance for the agentic SQL feature set.
 
 Consult these documents when drafting new PRDs; each PRD references the corresponding modules described above.
 
@@ -295,16 +326,25 @@ Consult these documents when drafting new PRDs; each PRD references the correspo
 ```
 .
 ├── public/                # Static UI (HTML/CSS/JS + Chart.js integrations)
+│   ├── admin.html
+│   ├── gmail-dev.html
+│   ├── index.html
+│   └── js/
+│       ├── admin.js
+│       ├── app.js
+│       ├── gmail-dev.js
+│       └── plotRenderer.js
 ├── server/
 │   ├── app.js             # Express bootstrap & shutdown hooks
-│   ├── routes/            # API endpoints (analyze labs, SQL generator, SQL exec, reports)
-│   ├── services/          # Business logic (agentic SQL, mapping, persistence, schema cache, validation)
+│   ├── config/            # Gmail OAuth token storage (gitignored path by default)
+│   ├── routes/            # API endpoints (analyze labs, SQL generator, SQL exec, Gmail dev, reports)
+│   ├── services/          # Business logic (agentic SQL, mapping, persistence, Gmail connector, vision providers)
 │   ├── db/                # Pool config, schema management, seed SQL
-│   └── utils/             # Shared helpers (prompt loader)
+│   └── utils/             # Shared helpers (job manager, language detection, prompt loader)
 ├── config/schema_aliases.json
-├── prompts/               # LLM prompt templates (vision + SQL generation)
-├── docs/                  # PRDs, implementation summaries, quickstarts
-├── scripts/               # Operational scripts (verify mapping setup)
+├── prompts/               # LLM prompt templates (vision, SQL generation, Gmail classification)
+├── docs/                  # PRDs and quickstarts
+├── scripts/               # Operational scripts (DB setup, mapping verification/backfill)
 ├── test/                  # Manual & automated tests
 ├── package.json
 └── README.md
@@ -317,4 +357,5 @@ Consult these documents when drafting new PRDs; each PRD references the correspo
 - Agentic SQL relies on curated prompts and schema aliases—update `config/schema_aliases.json` whenever new tables are introduced.
 - Plot generation expects time-series columns (`t`, `y`, `parameter_name`, `unit`, reference bands). Ensure new plot-focused PRDs conform to this contract.
 - Parameter table view currently performs client-side calculation of out-of-range status when backend field is missing; consider populating `is_value_out_of_range` in the database for consistency.
+- Gmail dev harness only processes metadata (no attachments/body parsing) and remains feature-flagged off in production until ingestion hardening is complete.
 - Future enhancements for parameter table: CSV export, mobile-responsive toggle, date range filtering, multi-parameter comparison, and report deep links (see PRD v2.6 section 11).
