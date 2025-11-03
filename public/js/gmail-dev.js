@@ -92,18 +92,10 @@ async function checkStatus() {
  */
 async function connectGmail() {
   try {
-    const response = await fetch('/api/dev-gmail/auth-url');
-
-    if (!response.ok) {
-      throw new Error('Failed to get authorization URL');
-    }
-
-    const data = await response.json();
-    const authUrl = data.auth_url;
-
-    // Open OAuth consent page in new window
+    // Open popup IMMEDIATELY (before async fetch) to avoid popup blockers
+    // We'll navigate it to the auth URL once we get it from the server
     const popup = window.open(
-      authUrl,
+      'about:blank',
       'gmail-auth',
       'width=600,height=700,scrollbars=yes'
     );
@@ -112,6 +104,22 @@ async function connectGmail() {
       showToast('Please allow popups for this site', 'error');
       return;
     }
+
+    // Show loading message in popup while fetching auth URL
+    popup.document.write('<html><body style="font-family: system-ui; padding: 40px; text-align: center;"><h2>Loading...</h2><p>Please wait while we prepare the authorization page.</p></body></html>');
+
+    const response = await fetch('/api/dev-gmail/auth-url');
+
+    if (!response.ok) {
+      popup.close();
+      throw new Error('Failed to get authorization URL');
+    }
+
+    const data = await response.json();
+    const authUrl = data.auth_url;
+
+    // Navigate the popup to the actual auth URL
+    popup.location.href = authUrl;
 
     // Listen for auth success message
     const messageHandler = (event) => {
