@@ -393,6 +393,18 @@ function displayResults(results, stats, threshold, debug) {
       }
       row.appendChild(attachmentsCell);
 
+      // Duplicate status column
+      const duplicateCell = document.createElement('td');
+      if (result.is_duplicate) {
+        duplicateCell.innerHTML = '<span style="color: #dc2626; font-weight: 600;" title="Duplicate attachment detected">🔴 Yes</span>';
+        row.style.backgroundColor = '#fef2f2'; // Light red background for duplicates
+      } else if (result.duplicate_group_size > 1) {
+        duplicateCell.innerHTML = '<span style="color: #16a34a; font-weight: 600;" title="Original (has duplicates)">🟢 Original</span>';
+      } else {
+        duplicateCell.innerHTML = '<span style="color: #9ca3af;">⚪ No</span>';
+      }
+      row.appendChild(duplicateCell);
+
       // Reason column
       const reasonCell = document.createElement('td');
       reasonCell.textContent = result.step2_reason || result.reason || 'Clinical lab result identified';
