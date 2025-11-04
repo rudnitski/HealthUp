@@ -12,9 +12,11 @@ const {
   handleOAuthCallback,
   isAuthenticated,
   getOAuth2Client,
-  fetchEmailMetadata
+  fetchEmailMetadata,
+  fetchFullEmailsByIds
 } = require('../services/gmailConnector');
 const { classifyEmails } = require('../services/emailClassifier');
+const { classifyEmailBodies } = require('../services/bodyClassifier');
 
 const router = express.Router();
 
@@ -207,13 +209,12 @@ router.get('/oauth-callback', async (req, res) => {
 
 /**
  * POST /api/dev-gmail/fetch
- * Create job to fetch and classify emails
+ * Create job to fetch and classify emails (Step-1 → Step-2 sequential)
  */
 router.post('/fetch', async (req, res) => {
   try {
-    logger.info('[gmailDev] Fetch request received');
+    logger.info('[gmailDev] Fetch request received (Step-1 → Step-2 sequential)');
 
-    // Check authentication first
     const authenticated = await isAuthenticated();
 
     if (!authenticated) {
@@ -224,62 +225,200 @@ router.post('/fetch', async (req, res) => {
       });
     }
 
-    // Create job
-    const jobId = createJob('dev-gmail', {
+    const jobId = createJob('dev-gmail-step1-step2', {
       emailCount: parseInt(process.env.GMAIL_MAX_EMAILS) || 200
     });
 
     logger.info(`[gmailDev] Job created: ${jobId}`);
 
-    // Start background processing
     setImmediate(async () => {
       try {
-        logger.info(`[gmailDev:${jobId}] Starting background processing`);
-
-        // Update job to processing
         updateJob(jobId, JobStatus.PROCESSING);
 
-        // Fetch email metadata
-        const emails = await fetchEmailMetadata();
+        // ===== STEP 1: Metadata Classification =====
+        logger.info(`[gmailDev:${jobId}] [Step-1] Starting metadata classification`);
 
-        if (emails.length === 0) {
+        // Fetch metadata only (subject, sender, date)
+        const metadataEmails = await fetchEmailMetadata();
+
+        if (metadataEmails.length === 0) {
           logger.info(`[gmailDev:${jobId}] No emails found, completing with empty results`);
-          setJobResult(jobId, { results: [] });
+          const threshold = parseFloat(process.env.GMAIL_BODY_ACCEPT_THRESHOLD) || 0.70;
+          setJobResult(jobId, {
+            results: [],
+            stats: {
+              step1_total_fetched: 0,
+              step1_candidates: 0,
+              step2_fetched_full: 0,
+              step2_classified: 0,
+              step2_errors: 0,
+              final_results: 0
+            },
+            threshold
+          });
           return;
         }
 
-        logger.info(`[gmailDev:${jobId}] Fetched ${emails.length} emails, starting classification`);
+        logger.info(`[gmailDev:${jobId}] [Step-1] Fetched ${metadataEmails.length} emails metadata`);
 
-        // Classify emails
-        const classifications = await classifyEmails(emails);
+        // Classify with Step-1 LLM (subject/sender heuristics) with progress updates
+        const step1Classifications = await classifyEmails(metadataEmails, (completed, total) => {
+          const progress = Math.floor((completed / total) * 50); // Step-1 is 0-50%
+          updateJob(jobId, JobStatus.PROCESSING, {
+            progress,
+            progressMessage: `Step-1: Classifying batch ${completed}/${total}`
+          });
+        });
 
-        logger.info(`[gmailDev:${jobId}] Classification complete, merging results`);
+        // Filter to candidates (is_lab_likely: true)
+        const candidates = metadataEmails.filter(email => {
+          const classification = step1Classifications.find(c => c.id === email.id);
+          return classification?.is_lab_likely === true;
+        });
 
-        // Merge emails with classifications
-        const results = emails.map(email => {
-          const classification = classifications.find(c => c.id === email.id);
+        logger.info(`[gmailDev:${jobId}] [Step-1] Found ${candidates.length} candidates (${((candidates.length/metadataEmails.length)*100).toFixed(0)}%)`);
+
+        if (candidates.length === 0) {
+          logger.info(`[gmailDev:${jobId}] No candidates found, completing with empty results`);
+          const threshold = parseFloat(process.env.GMAIL_BODY_ACCEPT_THRESHOLD) || 0.70;
+          setJobResult(jobId, {
+            results: [],
+            stats: {
+              step1_total_fetched: metadataEmails.length,
+              step1_candidates: 0,
+              step2_fetched_full: 0,
+              step2_classified: 0,
+              step2_errors: 0,
+              final_results: 0
+            },
+            threshold
+          });
+          return;
+        }
+
+        // ===== STEP 2: Body Refinement =====
+        logger.info(`[gmailDev:${jobId}] [Step-2] Fetching full content for ${candidates.length} candidates`);
+
+        // Fetch full body + attachments for ONLY candidates
+        const candidateIds = candidates.map(c => c.id);
+        const fullEmails = await fetchFullEmailsByIds(candidateIds);
+
+        logger.info(`[gmailDev:${jobId}] [Step-2] Successfully fetched ${fullEmails.length} full emails`);
+
+        // Classify with Step-2 LLM (body + attachments content) with progress updates
+        updateJob(jobId, JobStatus.PROCESSING, {
+          progress: 50,
+          progressMessage: `Step-2: Fetched ${fullEmails.length} full emails, starting classification`
+        });
+
+        logger.info(`[gmailDev:${jobId}] [Step-2] Classifying ${fullEmails.length} emails with body content`);
+        const step2Classifications = await classifyEmailBodies(fullEmails, (completed, total) => {
+          const progress = 50 + Math.floor((completed / total) * 40); // Step-2 is 50-90%
+          updateJob(jobId, JobStatus.PROCESSING, {
+            progress,
+            progressMessage: `Step-2: Analyzing email bodies ${completed}/${total}`
+          });
+        });
+
+        logger.info(`[gmailDev:${jobId}] [Step-2] Classification complete, filtering by confidence threshold`);
+
+        // Apply confidence threshold
+        const threshold = parseFloat(process.env.GMAIL_BODY_ACCEPT_THRESHOLD) || 0.70;
+
+        // Prepare Step-1 candidates for debugging (with Step-1 reasons)
+        const step1CandidatesDebug = candidates.map(email => {
+          const step1Classification = step1Classifications.find(c => c.id === email.id);
           return {
-            ...email,
-            is_lab_likely: classification?.is_lab_likely || false,
-            confidence: classification?.confidence || 0,
-            reason: classification?.reason || 'Classification unavailable'
+            id: email.id,
+            subject: email.subject,
+            from: email.from,
+            date: email.date,
+            step1_confidence: step1Classification?.confidence || 0,
+            step1_reason: step1Classification?.reason || 'Unknown'
           };
         });
 
-        logger.info(`[gmailDev:${jobId}] Job completed successfully with ${results.length} results`);
+        // Prepare ALL Step-2 results (accepted + rejected) for debugging
+        const step2AllResults = fullEmails.map(email => {
+          const classification = step2Classifications.find(c => c.id === email.id);
 
-        setJobResult(jobId, { results });
+          // Acceptance criteria: clinical results + confidence >= threshold
+          const isAccepted =
+            classification?.is_clinical_results_email === true &&
+            classification?.confidence != null &&
+            classification.confidence >= threshold;
+
+          return {
+            id: email.id,
+            subject: email.subject,
+            from: email.from,
+            date: email.date,
+            body_excerpt: email.body.substring(0, 200),
+            attachments: email.attachments.map(a => ({
+              filename: a.filename,
+              mimeType: a.mimeType,
+              size: a.size,
+              attachmentId: a.attachmentId,
+              isInline: a.isInline
+            })),
+            step2_is_clinical: classification?.is_clinical_results_email || false,
+            step2_confidence: classification?.confidence || 0,
+            step2_reason: classification?.reason || 'Unknown',
+            accepted: isAccepted
+          };
+        });
+
+        // Extract only accepted emails for final results
+        const results = step2AllResults.filter(item => item.accepted);
+
+        // Count classification errors
+        const classificationErrors = step2Classifications.filter(c =>
+          c.confidence === 0 && c.reason?.includes('Classification failed')
+        ).length;
+
+        // Count empty body rejections
+        const emptyBodyRejections = step2Classifications.filter(c =>
+          c.reason === 'No body content'
+        ).length;
+
+        // step2_classified = emails SENT to LLM (excludes empty bodies)
+        const step2Classified = step2Classifications.length - emptyBodyRejections;
+
+        const stats = {
+          step1_total_fetched: metadataEmails.length,
+          step1_candidates: candidates.length,
+          step2_fetched_full: fullEmails.length,
+          step2_classified: step2Classified,
+          step2_errors: classificationErrors,
+          final_results: results.length
+        };
+
+        const acceptanceRate = candidates.length > 0 ? ((results.length / candidates.length) * 100).toFixed(0) : 0;
+
+        logger.info(
+          `[gmailDev:${jobId}] Job completed: ${stats.final_results} lab result emails found (${acceptanceRate}% of candidates)` +
+          (stats.step2_errors > 0 ? ` (${stats.step2_errors} classification errors)` : '')
+        );
+
+        setJobResult(jobId, {
+          results,
+          stats,
+          threshold,
+          debug: {
+            step1_candidates: step1CandidatesDebug,
+            step2_all_results: step2AllResults
+          }
+        });
       } catch (error) {
         logger.error(`[gmailDev:${jobId}] Job failed:`, error.message);
         setJobError(jobId, error);
       }
     });
 
-    // Return job ID immediately
     return res.status(202).json({
       job_id: jobId,
       status: 'pending',
-      message: 'Email fetch and classification started. Poll /api/dev-gmail/jobs/:jobId for status.'
+      message: 'Email fetch and classification started (Step-1 → Step-2). Poll /api/dev-gmail/jobs/:jobId for status.'
     });
   } catch (error) {
     logger.error('[gmailDev] Failed to create fetch job:', error.message);

@@ -25,7 +25,7 @@ const logger = pino({
 
 // Configuration
 const DEFAULT_MODEL = process.env.EMAIL_CLASSIFIER_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
-const BATCH_SIZE = 50; // Process 50 emails per batch
+const BATCH_SIZE = 25; // Process 25 emails per batch (optimized for parallel processing)
 const PROMPT_FILE = 'gmail_lab_classifier.txt';
 
 let openAiClient;
@@ -130,9 +130,10 @@ async function classifyBatch(emailBatch, systemPrompt) {
 /**
  * Classify emails as likely/unlikely to contain lab results
  * @param {Array} emails - Array of email metadata objects {id, subject, from, date}
+ * @param {Function} onProgress - Optional callback for progress updates (batchIndex, totalBatches)
  * @returns {Promise<Array>} Array of classification results
  */
-async function classifyEmails(emails) {
+async function classifyEmails(emails, onProgress = null) {
   if (!Array.isArray(emails) || emails.length === 0) {
     logger.info('[emailClassifier] No emails to classify');
     return [];
@@ -150,16 +151,24 @@ async function classifyEmails(emails) {
       batches.push(emails.slice(i, i + BATCH_SIZE));
     }
 
-    logger.info(`[emailClassifier] Processing ${batches.length} batches of ${BATCH_SIZE} emails each`);
+    logger.info(`[emailClassifier] Processing ${batches.length} batches of ${BATCH_SIZE} emails each (parallel)`);
 
-    // Process batches sequentially (using p-limit with concurrency 1)
-    const limit = pLimit(1);
+    // Process batches IN PARALLEL with concurrency limit of 3
+    const limit = pLimit(3);
+    let completedBatches = 0;
 
     const batchResults = await Promise.all(
       batches.map((batch, index) =>
         limit(async () => {
           logger.info(`[emailClassifier] Processing batch ${index + 1}/${batches.length}`);
-          return await classifyBatch(batch, systemPrompt);
+          const result = await classifyBatch(batch, systemPrompt);
+
+          completedBatches++;
+          if (onProgress) {
+            onProgress(completedBatches, batches.length);
+          }
+
+          return result;
         })
       )
     );

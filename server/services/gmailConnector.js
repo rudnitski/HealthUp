@@ -31,6 +31,9 @@ const GMAIL_CONCURRENCY_LIMIT = parseInt(process.env.GMAIL_CONCURRENCY_LIMIT) ||
 const GMAIL_TOKEN_PATH = process.env.GMAIL_TOKEN_PATH || path.join(__dirname, '../config/gmail-token.json');
 const OAUTH_REDIRECT_URI = process.env.GMAIL_OAUTH_REDIRECT_URI || 'http://localhost:3000/api/dev-gmail/oauth-callback';
 
+// Log loaded configuration on module load
+logger.info(`[gmailConnector] Loaded GMAIL_MAX_EMAILS=${GMAIL_MAX_EMAILS} from ${process.env.GMAIL_MAX_EMAILS ? 'env' : 'default'}`);
+
 // OAuth state tokens (in-memory, expire after 10 minutes)
 const oauthStates = new Map();
 const STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
@@ -389,6 +392,208 @@ async function fetchEmailMetadata() {
   }
 }
 
+/**
+ * Recursively extract body text from Gmail payload parts
+ * @param {object} payload - Gmail message payload
+ * @returns {string} Concatenated body text
+ */
+function extractEmailBody(payload) {
+  let bodyText = '';
+
+  function walkParts(part) {
+    // Single-part message (body directly in payload)
+    if (part.body && part.body.data) {
+      // Gmail uses URL-safe base64 (RFC 4648 §5) - requires Node.js 16.14.0+
+      const decoded = Buffer.from(part.body.data, 'base64url').toString('utf8');
+      // Prefer text/plain
+      if (part.mimeType === 'text/plain') {
+        bodyText = decoded + '\n' + bodyText;
+      } else if (part.mimeType === 'text/html' && !bodyText) {
+        // Fallback to HTML if no plain text found
+        bodyText = decoded;
+      }
+    }
+
+    // Multipart message (recurse into parts)
+    if (part.parts && Array.isArray(part.parts)) {
+      part.parts.forEach(walkParts);
+    }
+  }
+
+  walkParts(payload);
+
+  // Strip HTML tags
+  bodyText = bodyText.replace(/<[^>]*>/g, '');
+  // Collapse whitespace
+  bodyText = bodyText.replace(/\s+/g, ' ').trim();
+  // Truncate
+  const maxChars = parseInt(process.env.GMAIL_MAX_BODY_CHARS) || 8000;
+  if (bodyText.length > maxChars) {
+    bodyText = bodyText.substring(0, maxChars) + '...';
+  }
+
+  return bodyText;
+}
+
+/**
+ * Extract attachment metadata from Gmail payload parts
+ * @param {object} payload - Gmail message payload
+ * @returns {array} Array of attachment metadata objects
+ */
+function extractAttachmentMetadata(payload) {
+  const attachments = [];
+
+  function walkParts(part) {
+    // Check if part has a filename (indicates attachment)
+    if (part.filename && part.filename.length > 0) {
+      // Validate attachment metadata per §7 safeguard: "Attachment metadata malformed → Skip attachment, log warning, continue"
+      try {
+        // Validate filename (type, length, no null bytes)
+        if (typeof part.filename !== 'string' || part.filename.length > 255 || part.filename.includes('\0')) {
+          logger.warn('[gmailConnector] Skipping attachment with invalid filename (too long or contains null bytes)');
+          return; // Skip this attachment, continue with others
+        }
+
+        // Validate size (must be valid non-negative integer)
+        const size = parseInt(part.body?.size);
+        if (isNaN(size) || size < 0) {
+          logger.warn(`[gmailConnector] Skipping attachment "${part.filename}" with invalid size: ${part.body?.size}`);
+          return; // Skip this attachment, continue with others
+        }
+
+        // Validate attachmentId (required, non-empty string)
+        const attachmentId = part.body?.attachmentId;
+        if (!attachmentId || typeof attachmentId !== 'string' || attachmentId.trim().length === 0) {
+          logger.warn(`[gmailConnector] Skipping attachment "${part.filename}" with missing or invalid attachmentId`);
+          return; // Skip this attachment, continue with others
+        }
+
+        // Validate mimeType (must be non-empty string if present)
+        const mimeType = part.mimeType || 'application/octet-stream';
+        if (typeof mimeType !== 'string' || mimeType.length === 0) {
+          logger.warn(`[gmailConnector] Skipping attachment "${part.filename}" with invalid mimeType`);
+          return; // Skip this attachment, continue with others
+        }
+
+        // Check for inline disposition
+        let isInline = false;
+        if (part.headers && Array.isArray(part.headers)) {
+          const contentDisposition = part.headers.find(h =>
+            h.name.toLowerCase() === 'content-disposition'
+          );
+          const contentId = part.headers.find(h =>
+            h.name.toLowerCase() === 'content-id'
+          );
+          isInline = (contentDisposition?.value?.includes('inline')) || !!contentId;
+        }
+
+        // All validations passed, add attachment
+        attachments.push({
+          filename: part.filename,
+          mimeType,
+          size,
+          attachmentId,
+          isInline
+        });
+      } catch (error) {
+        // Catch any unexpected errors during validation
+        logger.warn(`[gmailConnector] Skipping malformed attachment "${part.filename}": ${error.message}`);
+        // Continue processing other attachments
+      }
+    }
+
+    // Recurse into nested parts
+    if (part.parts && Array.isArray(part.parts)) {
+      part.parts.forEach(walkParts);
+    }
+  }
+
+  walkParts(payload);
+  return attachments;
+}
+
+/**
+ * Fetch full email content for specific email IDs only
+ * @param {Array<string>} emailIds - Array of Gmail message IDs
+ * @returns {Promise<Array>} Array of email objects with full content
+ */
+async function fetchFullEmailsByIds(emailIds) {
+  const authenticated = await isAuthenticated();
+  if (!authenticated) {
+    throw new Error('Not authenticated with Gmail');
+  }
+
+  if (!Array.isArray(emailIds) || emailIds.length === 0) {
+    logger.info('[gmailConnector] No email IDs provided');
+    return [];
+  }
+
+  try {
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    logger.info(`[gmailConnector] Fetching full content for ${emailIds.length} emails`);
+
+    // Fetch full messages in parallel
+    const limit = pLimit(GMAIL_CONCURRENCY_LIMIT);
+
+    const emailPromises = emailIds.map(id =>
+      limit(async () => {
+        try {
+          const response = await gmail.users.messages.get({
+            userId: 'me',
+            id,
+            format: 'full'
+          });
+
+          const headers = response.data.payload.headers || [];
+          const subject = headers.find(h => h.name === 'Subject')?.value || '';
+          const from = headers.find(h => h.name === 'From')?.value || '';
+          const date = headers.find(h => h.name === 'Date')?.value || '';
+
+          // Extract body and attachments
+          const body = extractEmailBody(response.data.payload);
+          const attachments = extractAttachmentMetadata(response.data.payload);
+
+          return {
+            id,
+            subject: decodeMimeHeader(subject),
+            from: decodeMimeHeader(from),
+            date,
+            body,
+            attachments
+          };
+        } catch (error) {
+          // Check for Gmail API rate limit (429) - fail job immediately
+          if (error.code === 429 || error.message?.includes('429') || error.message?.includes('rate limit')) {
+            logger.error('[gmailConnector] Gmail API rate limit hit (429), failing job');
+            throw new Error('Gmail API rate limit exceeded (429). Please wait and try again.');
+          }
+
+          // For other errors, log but continue with placeholder (graceful degradation)
+          logger.error(`[gmailConnector] Failed to fetch full message ${id}:`, error.message);
+          return {
+            id,
+            subject: '[Error fetching]',
+            from: '[Error fetching]',
+            date: '',
+            body: '',
+            attachments: []
+          };
+        }
+      })
+    );
+
+    const emails = await Promise.all(emailPromises);
+
+    logger.info(`[gmailConnector] Successfully fetched ${emails.length} full emails`);
+
+    return emails;
+  } catch (error) {
+    logger.error('[gmailConnector] Failed to fetch full emails by IDs:', error.message);
+    throw error;
+  }
+}
+
 // Initialize OAuth client on module load
 try {
   initOAuth2Client();
@@ -402,5 +607,6 @@ module.exports = {
   loadCredentials,
   isAuthenticated,
   getOAuth2Client,
-  fetchEmailMetadata
+  fetchEmailMetadata,
+  fetchFullEmailsByIds
 };

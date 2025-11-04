@@ -46,8 +46,11 @@
       <h2>Classification Results</h2>
 
       <div id="job-loading" class="loading-state">
-        <p>Processing emails... This may take 3-5 minutes.</p>
-        <p class="help-text">Fetching metadata and classifying 200 emails using OpenAI (processed in batches)</p>
+        <p id="job-progress-text">Processing emails...</p>
+        <div style="width: 100%; background: #e5e7eb; border-radius: 8px; height: 24px; margin: 16px 0;">
+          <div id="job-progress-bar" style="width: 0%; background: linear-gradient(90deg, #3b82f6, #2563eb); height: 100%; border-radius: 8px; transition: width 0.3s ease; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600;"></div>
+        </div>
+        <p id="job-progress-message" class="help-text">Starting...</p>
       </div>
 
       <div id="job-error" class="error-state" hidden>
@@ -59,32 +62,92 @@
       </div>
 
       <div id="results-container" hidden>
-        <p class="help-text">
-          Found <strong id="results-count">0</strong> emails.
-          Showing <strong id="likely-count">0</strong> likely lab results.
-        </p>
-
-        <div style="margin-bottom: 16px;">
-          <label>
-            <input type="checkbox" id="filter-likely" checked>
-            Show only likely lab results
-          </label>
+        <div style="background: #f3f4f6; border-left: 4px solid #3b82f6; padding: 16px; margin-bottom: 20px;">
+          <h3 style="margin-top: 0;">📊 Processing Summary (Step-1 → Step-2)</h3>
+          <div style="margin-bottom: 12px;">
+            <strong>Step 1: Metadata Classification</strong>
+            <ul style="margin: 4px 0; padding-left: 20px;">
+              <li>Total Fetched: <strong id="step1-total">0</strong> emails</li>
+              <li>Candidates Found: <strong id="step1-candidates">0</strong></li>
+            </ul>
+          </div>
+          <div style="margin-bottom: 12px;">
+            <strong>Step 2: Body Refinement</strong>
+            <ul style="margin: 4px 0; padding-left: 20px;">
+              <li>Fetched Full Content: <strong id="step2-fetched">0</strong> emails</li>
+              <li>Classified with Body: <strong id="step2-classified">0</strong> emails</li>
+              <li>✅ Final Lab Results: <strong id="final-results-count">0</strong></li>
+            </ul>
+          </div>
+          <p style="margin: 8px 0; font-size: 14px; color: #666;">
+            <strong>Applied Threshold:</strong> LLM confidence ≥ <span id="threshold-display">70</span>%
+          </p>
+          <div id="classification-error-warning" hidden></div>
         </div>
 
+        <h3>✅ Final Lab Results (Step-2 Accepted)</h3>
         <table id="results-table" class="admin-table">
           <thead>
             <tr>
+              <th>ID</th>
               <th>Subject</th>
-              <th>Sender</th>
+              <th>From</th>
               <th>Date</th>
-              <th>Verdict</th>
               <th>Confidence</th>
+              <th>Attachments</th>
               <th>Reason</th>
             </tr>
           </thead>
           <tbody id="results-tbody">
           </tbody>
         </table>
+
+        <!-- Debug: Step-1 Candidates -->
+        <div style="margin-top: 30px;">
+          <details open>
+            <summary style="cursor: pointer; font-weight: bold; font-size: 16px; margin-bottom: 10px;">
+              🔍 Debug: Step-1 Candidates (<span id="step1-candidates-count">0</span>)
+            </summary>
+            <table class="admin-table" style="margin-top: 10px;">
+              <thead>
+                <tr style="background: #fef3c7;">
+                  <th>ID</th>
+                  <th>Subject</th>
+                  <th>From</th>
+                  <th>Date</th>
+                  <th>Step-1 Confidence</th>
+                  <th>Step-1 Reason</th>
+                </tr>
+              </thead>
+              <tbody id="step1-candidates-tbody">
+              </tbody>
+            </table>
+          </details>
+        </div>
+
+        <!-- Debug: Step-2 All Results -->
+        <div style="margin-top: 20px;">
+          <details open>
+            <summary style="cursor: pointer; font-weight: bold; font-size: 16px; margin-bottom: 10px;">
+              🔍 Debug: Step-2 All Results (Accepted + Rejected) (<span id="step2-all-count">0</span>)
+            </summary>
+            <table class="admin-table" style="margin-top: 10px;">
+              <thead>
+                <tr style="background: #fef3c7;">
+                  <th>Status</th>
+                  <th>ID</th>
+                  <th>Subject</th>
+                  <th>From</th>
+                  <th>Step-2 Clinical?</th>
+                  <th>Step-2 Confidence</th>
+                  <th>Step-2 Reason</th>
+                </tr>
+              </thead>
+              <tbody id="step2-all-tbody">
+              </tbody>
+            </table>
+          </details>
+        </div>
       </div>
     </section>
 
