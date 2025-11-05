@@ -371,6 +371,47 @@ router.post('/fetch', async (req, res) => {
         // Extract only accepted emails for final results
         const results = step2AllResults.filter(item => item.accepted);
 
+        // Detect duplicates by attachment filename + size
+        const attachmentMap = new Map(); // key: "filename:size", value: [email_ids]
+        const duplicateInfo = new Map(); // key: email_id, value: {is_duplicate, duplicate_group_id, group_size}
+
+        results.forEach(email => {
+          if (email.attachments && email.attachments.length > 0) {
+            email.attachments.forEach(att => {
+              const key = `${att.filename}:${att.size}`;
+              if (!attachmentMap.has(key)) {
+                attachmentMap.set(key, []);
+              }
+              attachmentMap.get(key).push(email.id);
+            });
+          }
+        });
+
+        // Mark duplicates (first occurrence is NOT a duplicate, subsequent ones ARE)
+        attachmentMap.forEach((emailIds, key) => {
+          if (emailIds.length > 1) {
+            // Multiple emails with same attachment
+            emailIds.forEach((emailId, index) => {
+              duplicateInfo.set(emailId, {
+                is_duplicate: index > 0, // First one is NOT duplicate
+                duplicate_group_id: key,
+                duplicate_group_size: emailIds.length
+              });
+            });
+          }
+        });
+
+        // Add duplicate flags to results
+        const resultsWithDuplicates = results.map(email => {
+          const dupInfo = duplicateInfo.get(email.id);
+          return {
+            ...email,
+            is_duplicate: dupInfo?.is_duplicate || false,
+            duplicate_group_id: dupInfo?.duplicate_group_id || null,
+            duplicate_group_size: dupInfo?.duplicate_group_size || 1
+          };
+        });
+
         // Count classification errors
         const classificationErrors = step2Classifications.filter(c =>
           c.confidence === 0 && c.reason?.includes('Classification failed')
@@ -390,10 +431,10 @@ router.post('/fetch', async (req, res) => {
           step2_fetched_full: fullEmails.length,
           step2_classified: step2Classified,
           step2_errors: classificationErrors,
-          final_results: results.length
+          final_results: resultsWithDuplicates.length
         };
 
-        const acceptanceRate = candidates.length > 0 ? ((results.length / candidates.length) * 100).toFixed(0) : 0;
+        const acceptanceRate = candidates.length > 0 ? ((resultsWithDuplicates.length / candidates.length) * 100).toFixed(0) : 0;
 
         logger.info(
           `[gmailDev:${jobId}] Job completed: ${stats.final_results} lab result emails found (${acceptanceRate}% of candidates)` +
@@ -401,7 +442,7 @@ router.post('/fetch', async (req, res) => {
         );
 
         setJobResult(jobId, {
-          results,
+          results: resultsWithDuplicates,
           stats,
           threshold,
           debug: {
