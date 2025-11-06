@@ -800,7 +800,10 @@ function stopPolling() {
  */
 function updateStep3Table(summary) {
   summary.attachments.forEach(attachment => {
+    // Match on both messageId and attachmentId to handle cases where
+    // different messages may have the same attachmentId
     const row = Array.from(document.querySelectorAll('#step3TableBody tr')).find(r =>
+      r.dataset.messageId === attachment.messageId &&
       r.dataset.attachmentId === attachment.attachmentId
     );
 

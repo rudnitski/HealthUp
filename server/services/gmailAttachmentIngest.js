@@ -403,6 +403,7 @@ function getBatchSummary(batchId) {
 
   return {
     attachments: attachments.map(a => ({
+      messageId: a.messageId,
       attachmentId: a.attachmentId,
       filename: a.filename,
       status: a.status,
