@@ -40,6 +40,34 @@ const ATTACHMENT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const attachmentJobs = new Map(); // attachmentId → { status, progress, progressMessage, jobId, reportId, error, ... }
 
 /**
+ * Check if a file is valid based on MIME type or file extension
+ * Handles cases where Gmail returns 'application/octet-stream' for PDFs
+ */
+function isValidAttachment(filename, mimeType, allowedMimes) {
+  // Normalize MIME type to lowercase for comparison
+  const normalizedMime = (mimeType || '').toLowerCase();
+
+  // Check if MIME type is in allowed list (case-insensitive)
+  const normalizedAllowedMimes = allowedMimes.map(m => m.toLowerCase());
+  if (normalizedAllowedMimes.includes(normalizedMime)) {
+    return true;
+  }
+
+  // Fallback: Check file extension for common cases where Gmail misidentifies MIME type
+  const filenameLower = (filename || '').toLowerCase();
+
+  // If MIME type is generic (application/octet-stream), check extension
+  if (normalizedMime === 'application/octet-stream' || !mimeType) {
+    if (filenameLower.endsWith('.pdf')) return true;
+    if (filenameLower.endsWith('.png')) return true;
+    if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) return true;
+    if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) return true;
+  }
+
+  return false;
+}
+
+/**
  * Start batch ingestion of selected attachments
  * @param {Array} selections - Array of { messageId, attachmentId, filename, mimeType, size }
  * @returns {Object} - { batchId, count }
@@ -60,7 +88,7 @@ async function startBatchIngestion(selections) {
   const maxBytes = parseInt(process.env.GMAIL_MAX_ATTACHMENT_MB || '15') * 1024 * 1024;
 
   const validSelections = selections.filter(sel => {
-    if (!allowedMimes.includes(sel.mimeType)) {
+    if (!isValidAttachment(sel.filename, sel.mimeType, allowedMimes)) {
       logger.warn(`Skipping ${sel.filename}: unsupported MIME type ${sel.mimeType}`);
       return false;
     }
@@ -170,11 +198,28 @@ async function ingestAttachment(selection, batchId) {
 
     logger.info(`[gmailAttachmentIngest] Created job ${jobId} for ${selection.filename}`);
 
+    // Normalize MIME type based on file extension (Gmail sometimes returns generic types)
+    let normalizedMimeType = selection.mimeType.toLowerCase();
+    const filenameLower = selection.filename.toLowerCase();
+
+    if (normalizedMimeType === 'application/octet-stream' || !selection.mimeType) {
+      if (filenameLower.endsWith('.pdf')) {
+        normalizedMimeType = 'application/pdf';
+        logger.info(`[gmailAttachmentIngest] Normalized MIME type to application/pdf for ${selection.filename}`);
+      } else if (filenameLower.endsWith('.png')) {
+        normalizedMimeType = 'image/png';
+      } else if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) {
+        normalizedMimeType = 'image/jpeg';
+      } else if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) {
+        normalizedMimeType = 'image/tiff';
+      }
+    }
+
     // Step 5: Process via labReportProcessor
     await labReportProcessor.processLabReport({
       jobId,
       fileBuffer: buffer,
-      mimetype: selection.mimeType,
+      mimetype: normalizedMimeType,
       filename: selection.filename,
       fileSize: buffer.length
     });

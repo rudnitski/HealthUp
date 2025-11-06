@@ -491,6 +491,34 @@ router.get('/jobs/:jobId', (req, res) => {
 });
 
 /**
+ * Check if a file is valid based on MIME type or file extension
+ * Handles cases where Gmail returns 'application/octet-stream' for PDFs
+ */
+function isValidAttachment(filename, mimeType, allowedMimes) {
+  // Normalize MIME type to lowercase for comparison
+  const normalizedMime = (mimeType || '').toLowerCase();
+
+  // Check if MIME type is in allowed list (case-insensitive)
+  const normalizedAllowedMimes = allowedMimes.map(m => m.toLowerCase());
+  if (normalizedAllowedMimes.includes(normalizedMime)) {
+    return true;
+  }
+
+  // Fallback: Check file extension for common cases where Gmail misidentifies MIME type
+  const filenameLower = (filename || '').toLowerCase();
+
+  // If MIME type is generic (application/octet-stream), check extension
+  if (normalizedMime === 'application/octet-stream' || !mimeType) {
+    if (filenameLower.endsWith('.pdf')) return true;
+    if (filenameLower.endsWith('.png')) return true;
+    if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) return true;
+    if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) return true;
+  }
+
+  return false;
+}
+
+/**
  * POST /api/dev-gmail/ingest
  * Start batch ingestion of selected attachments (Step 3)
  */
@@ -533,6 +561,9 @@ router.post('/ingest', async (req, res) => {
       });
     }
 
+    // Get allowed MIME types from env
+    const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/tiff').split(',');
+
     // Validate each selection
     for (const sel of selections) {
       if (!sel.messageId || !sel.attachmentId || !sel.filename || !sel.mimeType) {
@@ -542,12 +573,11 @@ router.post('/ingest', async (req, res) => {
         });
       }
 
-      // Validate MIME type
-      const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/tiff').split(',');
-      if (!allowedMimes.includes(sel.mimeType)) {
+      // Validate MIME type or file extension
+      if (!isValidAttachment(sel.filename, sel.mimeType, allowedMimes)) {
         return res.status(400).json({
           success: false,
-          error: `Unsupported file type: ${sel.mimeType}`
+          error: `Unsupported file type: ${sel.mimeType} (${sel.filename})`
         });
       }
 

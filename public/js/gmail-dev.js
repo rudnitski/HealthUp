@@ -583,6 +583,34 @@ const maxAttachmentBytes = Math.max(
 ) * 1024 * 1024;
 
 /**
+ * Check if a file is valid based on MIME type or file extension
+ * Handles cases where Gmail returns 'application/octet-stream' for PDFs
+ */
+function isValidAttachment(filename, mimeType) {
+  // Normalize MIME type to lowercase for comparison
+  const normalizedMime = (mimeType || '').toLowerCase();
+
+  // Check if MIME type is in allowed list
+  const normalizedAllowedMimes = allowedMimeTypes.map(m => m.toLowerCase());
+  if (normalizedAllowedMimes.includes(normalizedMime)) {
+    return true;
+  }
+
+  // Fallback: Check file extension for common cases where Gmail misidentifies MIME type
+  const filenameLower = (filename || '').toLowerCase();
+
+  // If MIME type is generic (application/octet-stream), check extension
+  if (normalizedMime === 'application/octet-stream' || !mimeType) {
+    if (filenameLower.endsWith('.pdf')) return true;
+    if (filenameLower.endsWith('.png')) return true;
+    if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) return true;
+    if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) return true;
+  }
+
+  return false;
+}
+
+/**
  * Populate Step 3 table from Step 2 results
  */
 function populateStep3Table(step2Results) {
@@ -608,7 +636,8 @@ function populateStep3Table(step2Results) {
         if (attachment.isInline) {
           reasons.push('Inline attachment');
         }
-        if (!allowedMimeTypes.includes(attachment.mimeType)) {
+        // Use helper function to validate MIME type or file extension
+        if (!isValidAttachment(attachment.filename, attachment.mimeType)) {
           reasons.push(`Unsupported type (${attachment.mimeType})`);
         }
         if (attachment.size > maxAttachmentBytes) {
