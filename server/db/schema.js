@@ -207,6 +207,34 @@ const schemaStatements = [
   `
   COMMENT ON TABLE sql_generation_logs IS 'LLM-based SQL generation audit trail';
   `,
+  // Gmail Integration Step 3: Attachment Provenance
+  `
+  CREATE TABLE IF NOT EXISTS gmail_report_provenance (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_id UUID NOT NULL REFERENCES patient_reports(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    attachment_id TEXT NOT NULL,
+    sender_email TEXT,
+    sender_name TEXT,
+    email_subject TEXT,
+    email_date TIMESTAMP,
+    attachment_checksum TEXT NOT NULL,
+    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(message_id, attachment_id)
+  );
+  `,
+  `
+  COMMENT ON TABLE gmail_report_provenance IS 'Audit trail for reports ingested from Gmail';
+  `,
+  `
+  COMMENT ON COLUMN gmail_report_provenance.message_id IS 'Gmail message ID (immutable identifier)';
+  `,
+  `
+  COMMENT ON COLUMN gmail_report_provenance.attachment_id IS 'Gmail attachment ID within the message';
+  `,
+  `
+  COMMENT ON COLUMN gmail_report_provenance.attachment_checksum IS 'SHA-256 hash of attachment for duplicate detection';
+  `,
   // Indexes
   `
   CREATE INDEX IF NOT EXISTS idx_patient_reports_patient_recognized
@@ -259,6 +287,18 @@ const schemaStatements = [
   `
   CREATE INDEX IF NOT EXISTS idx_sql_generation_logs_created_at
     ON sql_generation_logs (created_at DESC);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_gmail_provenance_report
+    ON gmail_report_provenance(report_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_gmail_provenance_checksum
+    ON gmail_report_provenance(attachment_checksum);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_gmail_provenance_message
+    ON gmail_report_provenance(message_id);
   `,
   // Views
   `
@@ -383,6 +423,7 @@ async function resetDatabase() {
     await client.query('DROP TABLE IF EXISTS sql_generation_logs CASCADE');
     await client.query('DROP TABLE IF EXISTS match_reviews CASCADE');
     await client.query('DROP TABLE IF EXISTS pending_analytes CASCADE');
+    await client.query('DROP TABLE IF EXISTS gmail_report_provenance CASCADE');
     await client.query('DROP TABLE IF EXISTS lab_results CASCADE');
     await client.query('DROP TABLE IF EXISTS patient_reports CASCADE');
     await client.query('DROP TABLE IF EXISTS patients CASCADE');

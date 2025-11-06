@@ -6,7 +6,7 @@
 
 const express = require('express');
 const pino = require('pino');
-const { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus } = require('../utils/jobManager');
+const { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus, getJob } = require('../utils/jobManager');
 const {
   getAuthUrl,
   handleOAuthCallback,
@@ -17,6 +17,7 @@ const {
 } = require('../services/gmailConnector');
 const { classifyEmails } = require('../services/emailClassifier');
 const { classifyEmailBodies } = require('../services/bodyClassifier');
+const gmailAttachmentIngest = require('../services/gmailAttachmentIngest');
 
 const router = express.Router();
 
@@ -487,6 +488,139 @@ router.get('/jobs/:jobId', (req, res) => {
   }
 
   return res.status(200).json(jobStatus);
+});
+
+/**
+ * POST /api/dev-gmail/ingest
+ * Start batch ingestion of selected attachments (Step 3)
+ */
+router.post('/ingest', async (req, res) => {
+  if (!process.env.GMAIL_ATTACHMENT_INGEST_ENABLED) {
+    return res.status(403).json({
+      success: false,
+      error: 'Attachment ingestion is not enabled'
+    });
+  }
+
+  try {
+    logger.info('[gmailDev] Attachment ingestion requested');
+
+    // Check authentication status
+    const authenticated = await isAuthenticated();
+    if (!authenticated) {
+      logger.warn('[gmailDev] Ingest failed - not authenticated');
+      return res.status(401).json({
+        success: false,
+        error: 'Gmail authentication required'
+      });
+    }
+
+    const { selections } = req.body;
+
+    if (!Array.isArray(selections) || selections.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No attachments selected'
+      });
+    }
+
+    // Validate batch size limit
+    const maxBatchSize = parseInt(process.env.GMAIL_BATCH_MAX_ATTACHMENTS || '20');
+    if (selections.length > maxBatchSize) {
+      return res.status(400).json({
+        success: false,
+        error: `Batch size exceeds limit of ${maxBatchSize} attachments`
+      });
+    }
+
+    // Validate each selection
+    for (const sel of selections) {
+      if (!sel.messageId || !sel.attachmentId || !sel.filename || !sel.mimeType) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid attachment data'
+        });
+      }
+
+      // Validate MIME type
+      const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/tiff').split(',');
+      if (!allowedMimes.includes(sel.mimeType)) {
+        return res.status(400).json({
+          success: false,
+          error: `Unsupported file type: ${sel.mimeType}`
+        });
+      }
+
+      // Validate size
+      const maxBytes = parseInt(process.env.GMAIL_MAX_ATTACHMENT_MB || '15') * 1024 * 1024;
+      if (sel.size > maxBytes) {
+        return res.status(400).json({
+          success: false,
+          error: `File too large: ${sel.filename} (${Math.round(sel.size / 1024 / 1024)}MB)`
+        });
+      }
+    }
+
+    // Start batch ingestion
+    const result = await gmailAttachmentIngest.startBatchIngestion(selections);
+
+    logger.info(`[gmailDev] Batch ingestion started: ${result.batchId} (${result.count} attachments)`);
+
+    res.json({
+      success: true,
+      batchId: result.batchId,
+      count: result.count,
+      message: `Started ingestion of ${result.count} attachment${result.count > 1 ? 's' : ''}`
+    });
+
+  } catch (error) {
+    logger.error('[gmailDev] Failed to start attachment ingestion:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to start ingestion'
+    });
+  }
+});
+
+/**
+ * GET /api/dev-gmail/jobs/summary
+ * Get batch progress for Step 3 attachment ingestion
+ */
+router.get('/jobs/summary', async (req, res) => {
+  try {
+    const { batchId } = req.query;
+
+    if (!batchId) {
+      return res.status(400).json({
+        success: false,
+        error: 'batchId is required'
+      });
+    }
+
+    logger.info(`[gmailDev] Batch summary requested: ${batchId}`);
+
+    const summary = gmailAttachmentIngest.getBatchSummary(batchId);
+
+    // Also update progress from jobManager for attachments currently being processed
+    for (const attachment of summary.attachments) {
+      if (attachment.jobId && attachment.status === 'processing') {
+        const job = getJob(attachment.jobId);
+        if (job) {
+          attachment.progress = job.progress || attachment.progress;
+          attachment.progressMessage = job.progressMessage || attachment.progressMessage;
+        }
+      }
+    }
+
+    res.json(summary);
+
+  } catch (error) {
+    logger.error('[gmailDev] Failed to get job summary:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to get job summary'
+    });
+  }
 });
 
 module.exports = router;

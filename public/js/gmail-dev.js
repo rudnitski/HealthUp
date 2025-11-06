@@ -556,7 +556,328 @@ function displayResults(results, stats, threshold, debug) {
     step2AllTbody.appendChild(row);
   });
 
+  // Populate Step 3 table with accepted Step 2 results
+  if (results && results.length > 0) {
+    populateStep3Table(results);
+  }
+
   resultsContainer.hidden = false;
+}
+
+/**
+ * =============================
+ * Step 3: Attachment Ingestion
+ * =============================
+ */
+
+let currentBatchId = null;
+let pollingInterval = null;
+const step3SectionEl = document.getElementById('step3Section');
+const allowedMimeTypes = (step3SectionEl?.dataset.allowedMime || 'application/pdf,image/png,image/jpeg,image/tiff')
+  .split(',')
+  .map(type => type.trim())
+  .filter(Boolean);
+const maxAttachmentBytes = Math.max(
+  1,
+  parseInt(step3SectionEl?.dataset.maxSizeMb || '15', 10)
+) * 1024 * 1024;
+
+/**
+ * Populate Step 3 table from Step 2 results
+ */
+function populateStep3Table(step2Results) {
+  const tbody = document.getElementById('step3TableBody');
+  tbody.innerHTML = '';
+
+  // Build client-side duplicate detection map (filename:size → count)
+  const attachmentKeys = new Map();
+  step2Results.forEach(email => {
+    if (email.attachments) {
+      email.attachments.forEach(attachment => {
+        const key = `${attachment.filename.toLowerCase()}:${attachment.size}`;
+        attachmentKeys.set(key, (attachmentKeys.get(key) || 0) + 1);
+      });
+    }
+  });
+
+  // Render attachment rows with duplicate indicators
+  step2Results.forEach(email => {
+    if (email.attachments) {
+      email.attachments.forEach(attachment => {
+        const reasons = [];
+        if (attachment.isInline) {
+          reasons.push('Inline attachment');
+        }
+        if (!allowedMimeTypes.includes(attachment.mimeType)) {
+          reasons.push(`Unsupported type (${attachment.mimeType})`);
+        }
+        if (attachment.size > maxAttachmentBytes) {
+          reasons.push(`Too large (${formatBytes(attachment.size)})`);
+        }
+
+        const isSelectable = reasons.length === 0;
+        const row = document.createElement('tr');
+        row.dataset.messageId = email.id;
+        row.dataset.attachmentId = attachment.attachmentId;
+        row.dataset.filename = attachment.filename;
+        row.dataset.mimeType = attachment.mimeType;
+        row.dataset.size = attachment.size;
+        row.dataset.isSelectable = String(isSelectable);
+
+        // Client-side duplicate detection: mark if filename+size appears more than once
+        const key = `${attachment.filename.toLowerCase()}:${attachment.size}`;
+        const isDuplicate = attachmentKeys.get(key) > 1;
+
+        row.innerHTML = `
+          <td>
+            <input
+              type="checkbox"
+              class="attachment-checkbox"
+              ${isSelectable ? '' : 'disabled'}
+              onchange="updateSelectedCount()"
+            >
+          </td>
+          <td>
+            <div><strong>From:</strong> ${email.from}</div>
+            <div><strong>Subject:</strong> ${email.subject}</div>
+            <div><strong>Date:</strong> ${email.date}</div>
+          </td>
+          <td>${attachment.filename}</td>
+          <td>${formatBytes(attachment.size)}</td>
+          <td>${isDuplicate ? '<span class="duplicate-icon" title="Possible duplicate (same filename+size)">⚠️</span>' : ''}</td>
+          <td class="status-cell">${isSelectable ? '-' : `🚫 ${reasons.join(', ')}`}</td>
+          <td class="progress-cell">-</td>
+          <td class="details-cell">-</td>
+        `;
+
+        tbody.appendChild(row);
+      });
+    }
+  });
+
+  document.getElementById('step3Section').style.display = 'block';
+  updateSelectedCount();
+}
+
+/**
+ * Update selected count
+ */
+function updateSelectedCount() {
+  const checkboxes = document.querySelectorAll('.attachment-checkbox:checked');
+  const count = checkboxes.length;
+  document.getElementById('selectedCount').textContent = count;
+  document.getElementById('ingestBtn').disabled = count === 0;
+}
+
+/**
+ * Select/deselect all
+ */
+function toggleSelectAll() {
+  const selectAll = document.getElementById('selectAllCheckbox').checked;
+  document.querySelectorAll('.attachment-checkbox').forEach(cb => {
+    if (!cb.disabled) {
+      cb.checked = selectAll;
+    } else {
+      cb.checked = false;
+    }
+  });
+  updateSelectedCount();
+}
+
+function selectAllAttachments() {
+  document.getElementById('selectAllCheckbox').checked = true;
+  toggleSelectAll();
+}
+
+function deselectAllAttachments() {
+  document.getElementById('selectAllCheckbox').checked = false;
+  toggleSelectAll();
+}
+
+/**
+ * Toggle section visibility
+ */
+function toggleSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (section) {
+    section.style.display = section.style.display === 'none' ? 'block' : 'none';
+  }
+}
+
+/**
+ * Start ingestion
+ */
+async function startIngestion() {
+  const checkboxes = document.querySelectorAll('.attachment-checkbox:checked');
+
+  if (checkboxes.length === 0) {
+    showToast('Please select at least one attachment', 'error');
+    return;
+  }
+
+  // Build selections array
+  const selections = Array.from(checkboxes)
+    .map(cb => cb.closest('tr'))
+    .filter(row => row && row.dataset.isSelectable === 'true')
+    .map(row => ({
+      messageId: row.dataset.messageId,
+      attachmentId: row.dataset.attachmentId,
+      filename: row.dataset.filename,
+      mimeType: row.dataset.mimeType,
+      size: parseInt(row.dataset.size, 10)
+    }));
+
+  // Disable UI during processing
+  document.getElementById('ingestBtn').disabled = true;
+  document.querySelectorAll('.attachment-checkbox').forEach(cb => cb.disabled = true);
+
+  try {
+    const response = await fetch('/api/dev-gmail/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selections })
+    });
+
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to start ingestion');
+    }
+
+    currentBatchId = result.batchId;
+    showToast(`Started ingestion of ${result.count} attachment(s)`, 'success');
+
+    // Start polling for progress
+    startPolling();
+
+  } catch (error) {
+    console.error('Ingestion failed:', error);
+    showToast(`Failed to start ingestion: ${error.message}`, 'error');
+
+    // Re-enable UI
+    document.getElementById('ingestBtn').disabled = false;
+    document.querySelectorAll('#step3TableBody tr').forEach(row => {
+      const checkbox = row.querySelector('.attachment-checkbox');
+      if (!checkbox) return;
+      checkbox.disabled = row.dataset.isSelectable !== 'true' ? true : false;
+    });
+  }
+}
+
+/**
+ * Polling for progress
+ */
+function startPolling() {
+  if (pollingInterval) clearInterval(pollingInterval);
+
+  pollingInterval = setInterval(async () => {
+    try {
+      const response = await fetch(`/api/dev-gmail/jobs/summary?batchId=${currentBatchId}`);
+      const summary = await response.json();
+
+      updateStep3Table(summary);
+
+      if (summary.allComplete) {
+        stopPolling();
+        showCompletionModal(summary);
+      }
+
+    } catch (error) {
+      console.error('Polling failed:', error);
+    }
+  }, 2000); // Poll every 2 seconds
+}
+
+function stopPolling() {
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+  }
+}
+
+/**
+ * Update Step 3 table with progress
+ */
+function updateStep3Table(summary) {
+  summary.attachments.forEach(attachment => {
+    const row = Array.from(document.querySelectorAll('#step3TableBody tr')).find(r =>
+      r.dataset.attachmentId === attachment.attachmentId
+    );
+
+    if (row) {
+      const statusCell = row.querySelector('.status-cell');
+      const progressCell = row.querySelector('.progress-cell');
+      const detailsCell = row.querySelector('.details-cell');
+
+      // Status with icon
+      const statusIcons = {
+        queued: '⏳',
+        downloading: '⬇️',
+        processing: '🧠',
+        completed: '✅',
+        updated: '🔄',
+        failed: '❌',
+        duplicate: '🔄'
+      };
+      statusCell.innerHTML = `${statusIcons[attachment.status] || ''} ${attachment.status}`;
+
+      // Progress bar
+      if (attachment.progress > 0) {
+        progressCell.innerHTML = `
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: ${attachment.progress}%"></div>
+          </div>
+          <span>${attachment.progress}%</span>
+        `;
+      }
+
+      // Details
+      if ((attachment.status === 'completed' || attachment.status === 'updated') && attachment.reportId) {
+        detailsCell.innerHTML = `<a href="/report.html?id=${attachment.reportId}" target="_blank">View Report</a>`;
+      } else if (attachment.status === 'failed') {
+        detailsCell.innerHTML = `<span class="error-text">${attachment.progressMessage}</span>`;
+      } else if (attachment.status === 'duplicate' && attachment.reportId) {
+        detailsCell.innerHTML = `${attachment.progressMessage} <a href="/report.html?id=${attachment.reportId}" target="_blank">View</a>`;
+      } else {
+        detailsCell.textContent = attachment.progressMessage;
+      }
+    }
+  });
+}
+
+/**
+ * Show completion modal and redirect
+ */
+function showCompletionModal(summary) {
+  const newCount = summary.attachments.filter(a => a.status === 'completed').length;
+  const updatedCount = summary.attachments.filter(a => a.status === 'updated').length;
+  const duplicateCount = summary.attachments.filter(a => a.status === 'duplicate').length;
+  const failureCount = summary.attachments.filter(a => a.status === 'failed').length;
+
+  let message = `Batch processing complete!\n\n`;
+  if (newCount > 0) message += `✅ New reports: ${newCount}\n`;
+  if (updatedCount > 0) message += `🔄 Updated existing reports: ${updatedCount}\n`;
+  if (duplicateCount > 0) message += `🔄 Duplicates skipped: ${duplicateCount}\n`;
+  if (failureCount > 0) message += `❌ Failed: ${failureCount}\n`;
+  message += `\nRedirecting to results page in 3 seconds...`;
+
+  alert(message);
+
+  // Redirect to results page
+  setTimeout(() => {
+    window.location.href = `/gmail-results.html?batchId=${currentBatchId}`;
+  }, 3000);
+}
+
+/**
+ * Helper: Format bytes to human-readable
+ */
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
 /**
