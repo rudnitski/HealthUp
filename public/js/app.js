@@ -10,6 +10,10 @@
     return;
   }
 
+  // Check for reportId in URL parameters and auto-load report
+  const urlParams = new URLSearchParams(window.location.search);
+  const reportIdParam = urlParams.get('reportId');
+
   const defaultButtonText = analyzeBtn.textContent;
   const progressBarEl = document.querySelector('#progress-bar');
   const progressStepsEl = document.querySelector('#progress-steps');
@@ -1718,5 +1722,41 @@
         }
       });
     }
+  }
+
+  // Auto-load report if reportId is in URL parameters
+  if (reportIdParam) {
+    (async () => {
+      try {
+        setResultMessage('Loading report...', 'loading');
+        const persistedPayload = await fetchPersistedReport(reportIdParam);
+
+        if (persistedPayload) {
+          renderDetails(persistedPayload, 0);
+
+          const parametersForMessage = Array.isArray(persistedPayload.parameters)
+            ? persistedPayload.parameters
+            : [];
+          const total = parametersForMessage.length;
+
+          if (total > 0) {
+            setResultMessage(`Loaded report with ${total} parameter${total === 1 ? '' : 's'}.`, 'success');
+          } else {
+            setResultMessage('Report loaded (no parameters detected).', 'info');
+          }
+
+          setRawOutput(
+            typeof persistedPayload.raw_model_output === 'string'
+              ? persistedPayload.raw_model_output
+              : '',
+          );
+        } else {
+          setResultMessage('Report not found.', 'error');
+        }
+      } catch (error) {
+        console.error('Failed to load report:', error);
+        setResultMessage('Failed to load report.', 'error');
+      }
+    })();
   }
 })();

@@ -149,11 +149,62 @@
             </table>
           </details>
         </div>
+
+        <!-- Step 3: Attachment Ingestion -->
+        <div style="margin-top: 30px;">
+          <div
+            class="result-section"
+            id="step3Section"
+            data-allowed-mime="application/pdf,image/png,image/jpeg,image/tiff"
+            data-max-size-mb="15"
+            style="display:none;"
+          >
+            <h3>
+              <span class="toggle-icon" onclick="toggleSection('step3Content')">▼</span>
+              Step 3: Attachment Ingestion
+            </h3>
+            <div id="step3Content" class="collapsible-content">
+              <div class="step3-controls">
+                <button id="selectAllBtn" onclick="selectAllAttachments()">Select All</button>
+                <button id="deselectAllBtn" onclick="deselectAllAttachments()">Deselect All</button>
+                <button id="ingestBtn" onclick="startIngestion()" disabled>Download & Recognize Selected (<span id="selectedCount">0</span>)</button>
+              </div>
+
+              <table id="step3Table" class="admin-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()"></th>
+                    <th>Email Details</th>
+                    <th>Filename</th>
+                    <th>Size</th>
+                    <th>Duplicate</th>
+                    <th>Status</th>
+                    <th>Progress</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody id="step3TableBody">
+                  <!-- Populated dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <!-- Completion Modal -->
+    <div id="completionModal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <h2>Batch Processing Complete!</h2>
+        <div id="completionSummary" style="margin: 20px 0; line-height: 1.8;"></div>
+        <p id="redirectCountdown" style="font-size: 14px; color: #666; margin-top: 20px;"></p>
+        <button id="closeCompletionModal" class="analyze-button" style="margin-top: 10px;">Close</button>
+      </div>
+    </div>
   </main>
 
   <script src="/js/gmail-dev.js"></script>

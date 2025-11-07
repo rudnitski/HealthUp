@@ -594,6 +594,28 @@ async function fetchFullEmailsByIds(emailIds) {
   }
 }
 
+/**
+ * Get authenticated Gmail API client for direct use
+ * Must be called after isAuthenticated() to ensure tokens are loaded
+ * @returns {Promise<gmail_v1.Gmail>} Authenticated Gmail API client
+ * @throws {Error} If not authenticated
+ */
+async function getAuthenticatedGmailClient() {
+  const authenticated = await isAuthenticated();
+
+  if (!authenticated) {
+    throw new Error('Gmail not authenticated. Call isAuthenticated() first.');
+  }
+
+  if (!oauth2Client) {
+    throw new Error('OAuth client not initialized');
+  }
+
+  // Uses existing top-level `google` import (line 7 of gmailConnector.js)
+  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+  return gmail;
+}
+
 // Initialize OAuth client on module load
 try {
   initOAuth2Client();
@@ -608,5 +630,6 @@ module.exports = {
   isAuthenticated,
   getOAuth2Client,
   fetchEmailMetadata,
-  fetchFullEmailsByIds
+  fetchFullEmailsByIds,
+  getAuthenticatedGmailClient
 };
