@@ -195,6 +195,16 @@
 
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <!-- Completion Modal -->
+    <div id="completionModal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <h2>Batch Processing Complete!</h2>
+        <div id="completionSummary" style="margin: 20px 0; line-height: 1.8;"></div>
+        <p id="redirectCountdown" style="font-size: 14px; color: #666; margin-top: 20px;"></p>
+        <button id="closeCompletionModal" class="analyze-button" style="margin-top: 10px;">Close</button>
+      </div>
+    </div>
   </main>
 
   <script src="/js/gmail-dev.js"></script>

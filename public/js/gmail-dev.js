@@ -865,11 +865,11 @@ function updateStep3Table(summary) {
 
       // Details
       if ((attachment.status === 'completed' || attachment.status === 'updated') && attachment.reportId) {
-        detailsCell.innerHTML = `<a href="/report.html?id=${attachment.reportId}" target="_blank">View Report</a>`;
+        detailsCell.innerHTML = `<a href="/index.html?reportId=${attachment.reportId}" target="_blank">View Report</a>`;
       } else if (attachment.status === 'failed') {
         detailsCell.innerHTML = `<span class="error-text">${attachment.progressMessage}</span>`;
       } else if (attachment.status === 'duplicate' && attachment.reportId) {
-        detailsCell.innerHTML = `${attachment.progressMessage} <a href="/report.html?id=${attachment.reportId}" target="_blank">View</a>`;
+        detailsCell.innerHTML = `${attachment.progressMessage} <a href="/index.html?reportId=${attachment.reportId}" target="_blank">View</a>`;
       } else {
         detailsCell.textContent = attachment.progressMessage;
       }
@@ -886,19 +886,40 @@ function showCompletionModal(summary) {
   const duplicateCount = summary.attachments.filter(a => a.status === 'duplicate').length;
   const failureCount = summary.attachments.filter(a => a.status === 'failed').length;
 
-  let message = `Batch processing complete!\n\n`;
-  if (newCount > 0) message += `✅ New reports: ${newCount}\n`;
-  if (updatedCount > 0) message += `🔄 Updated existing reports: ${updatedCount}\n`;
-  if (duplicateCount > 0) message += `🔄 Duplicates skipped: ${duplicateCount}\n`;
-  if (failureCount > 0) message += `❌ Failed: ${failureCount}\n`;
-  message += `\nRedirecting to results page in 3 seconds...`;
+  // Build summary HTML
+  let summaryHTML = '';
+  if (newCount > 0) summaryHTML += `<div style="font-size: 16px;">✅ New reports: <strong>${newCount}</strong></div>`;
+  if (updatedCount > 0) summaryHTML += `<div style="font-size: 16px;">🔄 Updated existing reports: <strong>${updatedCount}</strong></div>`;
+  if (duplicateCount > 0) summaryHTML += `<div style="font-size: 16px;">🔄 Duplicates skipped: <strong>${duplicateCount}</strong></div>`;
+  if (failureCount > 0) summaryHTML += `<div style="font-size: 16px;">❌ Failed: <strong>${failureCount}</strong></div>`;
 
-  alert(message);
+  // Show modal
+  const modal = document.getElementById('completionModal');
+  const summaryDiv = document.getElementById('completionSummary');
+  const countdownP = document.getElementById('redirectCountdown');
 
-  // Redirect to results page
-  setTimeout(() => {
-    window.location.href = `/gmail-results.html?batchId=${currentBatchId}`;
-  }, 3000);
+  summaryDiv.innerHTML = summaryHTML;
+  modal.style.display = 'flex';
+
+  // Countdown timer
+  let secondsLeft = 3;
+  countdownP.textContent = `Redirecting to results page in ${secondsLeft} seconds...`;
+
+  const countdownInterval = setInterval(() => {
+    secondsLeft--;
+    if (secondsLeft > 0) {
+      countdownP.textContent = `Redirecting to results page in ${secondsLeft} seconds...`;
+    } else {
+      clearInterval(countdownInterval);
+      window.location.href = `/gmail-results.html?batchId=${currentBatchId}`;
+    }
+  }, 1000);
+
+  // Allow user to close modal (but still redirect)
+  document.getElementById('closeCompletionModal').onclick = () => {
+    modal.style.display = 'none';
+    // Redirect will still happen
+  };
 }
 
 /**

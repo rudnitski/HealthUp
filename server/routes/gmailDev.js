@@ -472,6 +472,48 @@ router.post('/fetch', async (req, res) => {
 });
 
 /**
+ * GET /api/dev-gmail/jobs/summary
+ * Get batch progress for Step 3 attachment ingestion
+ * NOTE: This route must come BEFORE /jobs/:jobId to avoid matching "summary" as a jobId
+ */
+router.get('/jobs/summary', async (req, res) => {
+  try {
+    const { batchId } = req.query;
+
+    if (!batchId) {
+      return res.status(400).json({
+        success: false,
+        error: 'batchId is required'
+      });
+    }
+
+    logger.info(`[gmailDev] Batch summary requested: ${batchId}`);
+
+    const summary = gmailAttachmentIngest.getBatchSummary(batchId);
+
+    // Also update progress from jobManager for attachments currently being processed
+    for (const attachment of summary.attachments) {
+      if (attachment.jobId && attachment.status === 'processing') {
+        const job = getJob(attachment.jobId);
+        if (job) {
+          attachment.progress = job.progress || attachment.progress;
+          attachment.progressMessage = job.progressMessage || attachment.progressMessage;
+        }
+      }
+    }
+
+    res.json(summary);
+
+  } catch (error) {
+    logger.error('[gmailDev] Failed to get job summary:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to get job summary'
+    });
+  }
+});
+
+/**
  * GET /api/dev-gmail/jobs/:jobId
  * Get job status and results
  */
@@ -608,47 +650,6 @@ router.post('/ingest', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to start ingestion'
-    });
-  }
-});
-
-/**
- * GET /api/dev-gmail/jobs/summary
- * Get batch progress for Step 3 attachment ingestion
- */
-router.get('/jobs/summary', async (req, res) => {
-  try {
-    const { batchId } = req.query;
-
-    if (!batchId) {
-      return res.status(400).json({
-        success: false,
-        error: 'batchId is required'
-      });
-    }
-
-    logger.info(`[gmailDev] Batch summary requested: ${batchId}`);
-
-    const summary = gmailAttachmentIngest.getBatchSummary(batchId);
-
-    // Also update progress from jobManager for attachments currently being processed
-    for (const attachment of summary.attachments) {
-      if (attachment.jobId && attachment.status === 'processing') {
-        const job = getJob(attachment.jobId);
-        if (job) {
-          attachment.progress = job.progress || attachment.progress;
-          attachment.progressMessage = job.progressMessage || attachment.progressMessage;
-        }
-      }
-    }
-
-    res.json(summary);
-
-  } catch (error) {
-    logger.error('[gmailDev] Failed to get job summary:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to get job summary'
     });
   }
 });
