@@ -62,7 +62,7 @@ async function runTest(testCase) {
     const result = await handleGeneration({
       question: testCase.question,
       userIdentifier: 'test-user',
-      model: 'gpt-5-mini'
+      model: process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini'
     });
 
     const duration = Date.now() - startTime;

@@ -44,6 +44,9 @@ const CONFIG = {
   AMBIGUITY_DELTA: 0.05,
 };
 
+// Model configuration for LLM mapping (Tier C)
+const MAPPING_MODEL = process.env.ANALYTE_MAPPING_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
+
 /**
  * Normalize a parameter name for matching
  * Handles multilingual lab reports (English, Russian, Ukrainian)
@@ -372,14 +375,14 @@ async function proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema) {
   try {
     // Log full input prompt for debugging
     logger.info({
-      model: 'gpt-5-mini',
+      model: MAPPING_MODEL,
       unmapped_count: unmappedRows.length,
       prompt_length: inputPrompt.length,
       full_prompt: inputPrompt
     }, 'Calling LLM API with full prompt');
 
     const response = await openai.responses.create({
-      model: 'gpt-5-mini',
+      model: MAPPING_MODEL,
       input: inputPrompt,
       max_output_tokens: 8000,  // Increased from 2000 to handle large batches
       reasoning: {
