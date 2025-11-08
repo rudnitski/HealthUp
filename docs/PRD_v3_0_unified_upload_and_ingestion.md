@@ -440,7 +440,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 </div>
 <p class="help-text">
   Drag & drop files or click above<br>
-  Supported: PDF, PNG, JPEG, TIFF (max 10MB each)
+  Supported: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB each)
 </p>
 ```
 
@@ -510,7 +510,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
     <h3>Fetching Lab Tests from Gmail</h3>
     <progress id="gmail-progress-bar" max="100" value="0"></progress>
     <ul id="gmail-step-list" class="step-list">
-      <!-- 5 steps populated here -->
+      <!-- 2 steps populated here (metadata classification + body analysis) -->
     </ul>
     <p id="gmail-time-estimate"></p>
   </div>
@@ -990,7 +990,7 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 │  └────────────────────┘  └─────────────────────┘  │
 │                                                     │
 │  Drag & drop files or click above                  │
-│  Supported: PDF, PNG, JPEG, TIFF (max 10MB)        │
+│  Supported: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB) │
 │                                                     │
 │  ─────────────────────────────────────────────────  │
 │                                                     │
