@@ -48,29 +48,6 @@ HealthUp currently has two completely separate implementations for uploading and
 - Editing queue before processing (no remove functionality)
 - In-page batch restart (full page refresh required)
 
-### Peer Review Addressed
-
-This PRD has been updated to address technical review feedback (3 rounds):
-
-**Round 1:**
-1. ✅ **TIFF Support Removed**: Manual uploads only support PDF, PNG, JPEG, WebP, GIF, HEIC (matches backend `ALLOWED_MIME_TYPES`)
-2. ✅ **Duplicate Detection Scoped**: Only Gmail batches show duplicate count (manual uploads lack duplicate detection in backend)
-3. ✅ **Gmail Progress Fixed**: Changed from 5 fictional steps to 2 actual steps (0-50%, 50-90%) matching backend implementation
-4. ✅ **Patient Column Removed**: Results tables simplified to 3 columns (Filename, Status, Action) - patient data requires N additional API calls
-5. ✅ **Dual Polling Documented**: Clarified that manual and Gmail use different polling strategies (per-job vs. batch summary) - no unification
-
-**Round 2:**
-6. ✅ **TIFF References Fixed**: Removed TIFF from all wireframes, help text, and component specs
-7. ✅ **5-Step Comment Fixed**: Updated HTML comment from "5 steps" to "2 steps (metadata classification + body analysis)"
-
-**Round 3 (Architectural Issues):**
-8. ✅ **Manual Batch Support Added**: Documented new backend endpoints (`POST /api/analyze-labs/batch`, `GET /api/analyze-labs/batches/:batchId`) with batch tracking in job manager
-9. ✅ **Status Icons Simplified**: Manual uploads use 4 backend statuses (pending, processing, completed, failed) - no fake "uploading" status
-10. ✅ **Updated Status Added**: Gmail batches now handle "updated" status (🔄 Updated badge, counts toward succeeded)
-11. ✅ **Migration Plan Clarified**: Phase 4 deletes old files AFTER production verification (not in Phase 2)
-12. ✅ **gmail-dev.js Consolidation**: Mandated merge into `app.js` (not optional, not separate module)
-13. ✅ **Concurrency Specified**: Backend throttles to 3 concurrent uploads, documented in batch processing logic
-
 ---
 
 ## Current State Analysis
@@ -243,22 +220,21 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 ```
 
 **Status Icons:**
-- ⏳ Queued
-- ⬆️ Uploading
-- 🧠 AI Processing
-- ✅ Completed
-- ❌ Failed
-- 🔄 Duplicate
+- ⏳ Pending
+- 🧠 Processing
+- ✅ Done
+- ❌ Error
 
 **Progress Bar:**
 - Visual progress bar per file (0-100%)
 - Updates from job polling
 
 **Backend Flow:**
-- Create batch with unique `batchId`
-- For each file: call `POST /api/analyze-labs` → get `jobId`
-- Poll each job independently
-- Update row status as jobs progress
+- Frontend sends all files to `POST /api/analyze-labs/batch`
+- Backend returns `batchId` and array of `jobId`s
+- Backend processes files with throttled concurrency (max 3 concurrent)
+- Frontend polls `GET /api/analyze-labs/batches/:batchId` for unified batch status
+- Update all rows from single batch response
 
 #### Step 4: Results
 
@@ -712,7 +688,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - Extract 2-step fetch progress renderer (updated from 5 steps)
 - Extract attachment selection table logic
 - Merge download & recognize button handler
-- **Note:** Progress polling remains separate (see "Dual Polling Strategies" below)
+- **Note:** Both manual and Gmail now use unified batch polling strategy (see "Unified Batch Polling Strategy" section)
 
 **`public/css/style.css`:**
 - Add styles for upload source buttons
@@ -804,15 +780,11 @@ Unlike the Gmail flow which already has batch tracking, the manual upload path n
 
 `POST /api/analyze-labs/batch`
 
-**Request:**
-```json
-{
-  "files": [
-    { "filename": "lab1.pdf", "data": "<base64>", "mimetype": "application/pdf", "size": 123456 },
-    { "filename": "test.jpg", "data": "<base64>", "mimetype": "image/jpeg", "size": 98765 }
-  ]
-}
-```
+**Request Format:** `multipart/form-data` (following existing upload pattern)
+
+Files uploaded via express-fileupload middleware:
+- Field name: `files` (array)
+- Each file contains: `data` (buffer), `mimetype`, `name`, `size`
 
 **Response (202 Accepted):**
 ```json
@@ -942,9 +914,9 @@ async function processBatchFiles(files, batchId) {
       const file = queue.shift();
       const promise = processLabReport({
         jobId: file.jobId,
-        fileBuffer: Buffer.from(file.data, 'base64'),
+        fileBuffer: file.data, // Already a buffer from express-fileupload
         mimetype: file.mimetype,
-        filename: file.filename,
+        filename: file.name,
         fileSize: file.size
       }).finally(() => active.delete(promise));
 
