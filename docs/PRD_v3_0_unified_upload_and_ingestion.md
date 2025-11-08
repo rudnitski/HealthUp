@@ -903,14 +903,22 @@ function createBatch(userId, files) {
     status: 'pending'
   }));
 
+  // Persist jobId on the uploaded file objects so downstream workers can
+  // report status updates against the right job records.
+  const filesWithJobIds = files.map((file, index) => ({
+    ...file,
+    jobId: jobs[index].jobId
+  }));
+
   batches.set(batchId, {
     batchId,
     userId,
     jobs,
+    files: filesWithJobIds,
     createdAt: Date.now()
   });
 
-  return { batchId, jobs };
+  return { batchId, jobs, files: filesWithJobIds };
 }
 
 function getBatchStatus(batchId) {
@@ -947,11 +955,12 @@ Frontend sends all files to `POST /api/analyze-labs/batch`, backend queues proce
 ```javascript
 // In batch upload handler (server/routes/analyzeLabReportBatch.js)
 router.post('/batch', (req, res) => {
-  // ... validation, create batch, create jobs ...
+  // ... validation ...
+  const { batchId, jobs, files: filesWithJobIds } = createBatch(req.user.id, files);
 
   // Queue processing in background (don't await!)
   setImmediate(async () => {
-    await processBatchFiles(files, batchId);
+    await processBatchFiles(filesWithJobIds, batchId);
   });
 
   // Return 202 immediately
