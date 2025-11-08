@@ -165,7 +165,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 │  └──────────────────────┘  └──────────────────────┘ │
 │                                                      │
 │  Drag & drop files or click above                    │
-│  Supported: PDF, PNG, JPEG, HEIC (max 10MB)          │
+│  Supported: PDF, PNG, JPEG, HEIC, TIFF (max 10MB)    │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -174,7 +174,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - OR drag & drop files onto designated area
 
 **Validation:**
-- Check file types (PDF, PNG, JPEG, HEIC)
+- Check file types (PDF, PNG, JPEG, HEIC, TIFF)
 - Check file sizes (max 10MB each)
 - Reject invalid files with toast notification
 
@@ -434,20 +434,25 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 </div>
 <p class="help-text">
   Drag & drop files or click above<br>
-  Supported: PDF, PNG, JPEG, HEIC (max 10MB each)
+  Supported: PDF, PNG, JPEG, HEIC, TIFF (max 10MB each)
 </p>
 ```
 
 **Behavior:**
 - Manual Upload button: Opens file picker (multi-select)
 - Gmail Import button: Shows/slides in Gmail section below
-- Both buttons always visible at top
 - Drag & drop zone covers entire area
 
+**Gmail Feature Flag Handling:**
+- On page load, check Gmail availability: `GET /api/dev-gmail/status`
+- If disabled (`GMAIL_INTEGRATION_ENABLED !== 'true'` or production): Hide Gmail button entirely
+- If enabled: Show Gmail button and enable OAuth flow
+- No tooltips/warnings needed (feature simply doesn't appear when disabled)
+
 **States:**
-- Default: Both enabled
-- During processing: Both disabled
-- During results view: Both disabled (require page refresh)
+- Default: Manual button enabled, Gmail button shown only if feature enabled
+- During processing: Both buttons disabled
+- During results view: Both buttons disabled (require page refresh)
 
 ---
 
@@ -791,9 +796,10 @@ Unlike the Gmail flow which already has batch tracking, the manual upload path n
 - Old endpoint can be removed (no backward compatibility needed for MVP)
 
 **File Type Standardization:**
-- **Manual uploads** (`analyzeLabReport.js` `ALLOWED_MIME_TYPES`): PDF, PNG, JPEG, HEIC
-- **Gmail ingestion** (`.env` `GMAIL_ALLOWED_MIME`): PDF, PNG, JPEG, HEIC
-- Remove from both: WebP, GIF, TIFF (standardize to core formats)
+- **Manual uploads** (`analyzeLabReport.js` `ALLOWED_MIME_TYPES`): PDF, PNG, JPEG, HEIC, TIFF
+- **Gmail ingestion** (`.env` `GMAIL_ALLOWED_MIME`): PDF, PNG, JPEG, HEIC, TIFF
+- **Rationale:** TIFF is common for scanned/faxed lab results and already has fallback handling in Gmail ingestion
+- Remove from both: WebP, GIF (web formats rarely used for lab reports)
 
 **New Batch Endpoints Required:**
 
@@ -804,7 +810,10 @@ Unlike the Gmail flow which already has batch tracking, the manual upload path n
 **Request Format:** `multipart/form-data` (following existing upload pattern)
 
 Files uploaded via express-fileupload middleware:
-- Field name: `files` (array)
+- Field name: `analysisFile` (same as existing single-file endpoint)
+- Frontend uses `<input type="file" name="analysisFile" multiple>` for multi-file selection
+- Express-fileupload automatically converts to array when multiple files submitted
+- Backend checks: `Array.isArray(req.files.analysisFile) ? req.files.analysisFile : [req.files.analysisFile]`
 - Each file contains: `data` (buffer), `mimetype`, `name`, `size`
 
 **Response (202 Accepted):**
@@ -822,7 +831,8 @@ Files uploaded via express-fileupload middleware:
 
 **Backend Implementation:**
 - Generate unique `batch_id` (e.g., `batch_${Date.now()}`)
-- Validate each file: check MIME type (PDF, PNG, JPEG, HEIC) and size (max 10MB)
+- Validate each file: check MIME type (PDF, PNG, JPEG, HEIC, TIFF) and size (max 10MB)
+- Enforce batch limits: max 20 files per batch, 100MB aggregate size
 - For each file: call existing `processLabReport()` logic, create individual `job_id`
 - Store batch metadata in job manager: `{ batchId, jobs: [{ jobId, filename }], createdAt }`
 - Process files with **throttled concurrency** (max 3 concurrent uploads to backend)
@@ -956,6 +966,34 @@ async function processBatchFiles(files, batchId) {
 }
 ```
 
+**5. Batch Size Limits & Memory Management**
+
+**Constraints:**
+- **Maximum files per batch:** 20 files
+- **Maximum file size:** 10MB each
+- **Maximum aggregate size:** 100MB per batch (across all files)
+- **Memory consideration:** Currently `useTempFiles: false` stores all buffers in memory
+
+**Validation:**
+- Reject batches exceeding 20 files with clear error message
+- Reject individual files > 10MB
+- Calculate total size and reject if aggregate > 100MB
+- Return 400 Bad Request with details: `{ error: 'Batch exceeds limits', limit: 'max_files|max_size|aggregate_size', ... }`
+
+**Future Optimization:**
+- Consider enabling `useTempFiles: true` for batch endpoint to reduce memory pressure
+- Would require cleanup of temp files after processing
+- Trade-off: disk I/O vs memory consumption
+
+**Gmail Endpoints:**
+
+**New Status Check Endpoint:**
+- `GET /api/dev-gmail/status` - Check if Gmail integration is available
+  - Returns: `{ enabled: true/false, reason?: string }`
+  - Logic: `enabled = (GMAIL_INTEGRATION_ENABLED === 'true' && NODE_ENV !== 'production')`
+  - Frontend uses this on page load to show/hide Gmail button
+  - Does NOT require feature flag guard (allows checking status)
+
 **Existing Gmail Endpoints (unchanged):**
 - `POST /api/dev-gmail/fetch` (email classification)
 - `GET /api/dev-gmail/jobs/:jobId` (fetch job polling)
@@ -1005,8 +1043,10 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 
 - [ ] User can select multiple files via file picker (multi-select enabled)
 - [ ] User can drag & drop multiple files onto upload area
-- [ ] Only accepts: PDF, PNG, JPEG, HEIC (max 10MB each)
+- [ ] Only accepts: PDF, PNG, JPEG, HEIC, TIFF (max 10MB each)
+- [ ] Enforces batch limits: max 20 files, 100MB aggregate size
 - [ ] Invalid files (wrong type, too large) are rejected with toast notification
+- [ ] Batch exceeding limits shows clear error message
 - [ ] Selected files appear in queue table with filename, size, type
 - [ ] "Start Processing" button shows correct file count
 - [ ] Clicking "Start Processing" sends batch to `POST /api/analyze-labs/batch`
@@ -1023,6 +1063,9 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 
 ### Gmail Import Path
 
+- [ ] On page load, frontend checks `GET /api/dev-gmail/status`
+- [ ] If Gmail disabled: Gmail button hidden entirely (no tooltip/warning)
+- [ ] If Gmail enabled: Gmail button visible and functional
 - [ ] User clicks "Import from Gmail" → dedicated section slides in below buttons
 - [ ] If not authenticated, "Connect Gmail" button shown
 - [ ] Clicking "Connect Gmail" opens OAuth popup
@@ -1077,20 +1120,27 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 
 ### Phase 1: Build New Backend (Backend Changes)
 
-1. **Standardize file type support:**
-   - Update `analyzeLabReport.js` `ALLOWED_MIME_TYPES` to: PDF, PNG, JPEG, HEIC
-   - Update `.env` `GMAIL_ALLOWED_MIME` to: `application/pdf,image/png,image/jpeg,image/heic`
-   - Remove: WebP, GIF, TIFF
-2. **Implement batch endpoints** in backend:
+1. **Implement Gmail status endpoint:**
+   - Add `GET /api/dev-gmail/status` endpoint (does NOT require feature flag guard)
+   - Returns `{ enabled: boolean, reason?: string }`
+   - Logic: `enabled = (process.env.GMAIL_INTEGRATION_ENABLED === 'true' && process.env.NODE_ENV !== 'production')`
+2. **Standardize file type support:**
+   - Update `analyzeLabReport.js` `ALLOWED_MIME_TYPES` to: PDF, PNG, JPEG, HEIC, TIFF
+   - Update `.env` `GMAIL_ALLOWED_MIME` to: `application/pdf,image/png,image/jpeg,image/heic,image/tiff`
+   - Keep TIFF (common for scanned/faxed lab results)
+   - Remove: WebP, GIF (web formats rarely used for lab reports)
+3. **Implement batch endpoints** in backend:
    - `POST /api/analyze-labs/batch` (accepts multiple files, returns batch_id)
    - `GET /api/analyze-labs/batches/:batchId` (batch status polling)
    - Extend `server/utils/jobManager.js` with batch tracking
    - Implement throttled concurrency (3 concurrent uploads)
-3. **Test backend thoroughly:**
+4. **Test backend thoroughly:**
    - Upload multiple files via new batch endpoint
    - Verify throttled processing (max 3 concurrent)
    - Check batch status polling returns correct data
-   - Verify file type validation (accepts PDF/PNG/JPEG/HEIC, rejects others)
+   - Verify file type validation (accepts PDF/PNG/JPEG/HEIC/TIFF, rejects others)
+   - Test batch limits: reject batches > 20 files or > 100MB aggregate
+   - Test field name: `analysisFile` with multiple files
 
 ### Phase 2: Build New UI (No Breaking Changes Yet)
 
@@ -1225,7 +1275,7 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 │  └────────────────────┘  └─────────────────────┘  │
 │                                                     │
 │  Drag & drop files or click above                  │
-│  Supported: PDF, PNG, JPEG, HEIC (max 10MB)        │
+│  Supported: PDF, PNG, JPEG, HEIC, TIFF (max 10MB)  │
 │                                                     │
 │  ─────────────────────────────────────────────────  │
 │                                                     │
