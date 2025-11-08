@@ -43,10 +43,10 @@ HealthUp currently has two completely separate implementations for uploading and
 ### Non-Goals (Out of Scope)
 
 - Reports Library / History page (separate future PRD)
-- Backend endpoint consolidation (keep existing APIs for now)
 - Batch naming or user-defined labels
 - Editing queue before processing (no remove functionality)
 - In-page batch restart (full page refresh required)
+- Backward compatibility with old single-file endpoint (will be replaced)
 
 ---
 
@@ -165,7 +165,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 │  └──────────────────────┘  └──────────────────────┘ │
 │                                                      │
 │  Drag & drop files or click above                    │
-│  Supported: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB) │
+│  Supported: PDF, PNG, JPEG, HEIC (max 10MB)          │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -174,7 +174,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - OR drag & drop files onto designated area
 
 **Validation:**
-- Check file types (PDF, PNG, JPEG, WebP, GIF, HEIC)
+- Check file types (PDF, PNG, JPEG, HEIC)
 - Check file sizes (max 10MB each)
 - Reject invalid files with toast notification
 
@@ -206,17 +206,17 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 
 **User clicks "Start Processing" → Queue table transforms into progress table:**
 ```
-┌─────────────────────────────────────────────────────┐
-│  Processing Files                                    │
-│                                                      │
-│  ┌──────────────────┬──────────┬────────┬─────────┐ │
-│  │ Filename         │ Status   │ Progress│ Details │ │
-│  ├──────────────────┼──────────┼────────┼─────────┤ │
-│  │ lab_jan_2024.pdf │ ✅ Done  │ ████████│ 12 parm │ │
-│  │ blood_test.jpg   │ 🧠 AI... │ ████▓▓▓▓│ Analyz..│ │
-│  │ results.pdf      │ ⏳ Queue │ ▓▓▓▓▓▓▓▓│ Waiting │ │
-│  └──────────────────┴──────────┴────────┴─────────┘ │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Processing Files                                            │
+│                                                              │
+│  ┌──────────────────┬──────────┬────────┬─────────────────┐ │
+│  │ Filename         │ Status   │ Progress│ Details         │ │
+│  ├──────────────────┼──────────┼────────┼─────────────────┤ │
+│  │ lab_jan_2024.pdf │ ✅ Done  │ ████████│ Completed       │ │
+│  │ blood_test.jpg   │ 🧠 Proc. │ ████▓▓▓▓│ Analyzing with… │ │
+│  │ results.pdf      │ ⏳ Pend. │ ▓▓▓▓▓▓▓▓│ File uploaded   │ │
+│  └──────────────────┴──────────┴────────┴─────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 **Status Icons:**
@@ -228,6 +228,11 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 **Progress Bar:**
 - Visual progress bar per file (0-100%)
 - Updates from job polling
+
+**Details Column:**
+- Displays `progressMessage` from job status
+- Examples: "File uploaded", "Analyzing with OPENAI", "Mapping analytes", "Completed"
+- Updated in real-time during processing
 
 **Backend Flow:**
 - Frontend sends all files to `POST /api/analyze-labs/batch`
@@ -429,7 +434,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 </div>
 <p class="help-text">
   Drag & drop files or click above<br>
-  Supported: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB each)
+  Supported: PDF, PNG, JPEG, HEIC (max 10MB each)
 </p>
 ```
 
@@ -780,6 +785,16 @@ function pollGmailBatch(batchId) {
 
 Unlike the Gmail flow which already has batch tracking, the manual upload path needs new batch support to enable unified progress tracking and results display.
 
+**Endpoint Migration:**
+- **Replace** `POST /api/analyze-labs` (single file) with `POST /api/analyze-labs/batch` (multi-file)
+- New unified UI calls only the batch endpoint (even for single files)
+- Old endpoint can be removed (no backward compatibility needed for MVP)
+
+**File Type Standardization:**
+- **Manual uploads** (`analyzeLabReport.js` `ALLOWED_MIME_TYPES`): PDF, PNG, JPEG, HEIC
+- **Gmail ingestion** (`.env` `GMAIL_ALLOWED_MIME`): PDF, PNG, JPEG, HEIC
+- Remove from both: WebP, GIF, TIFF (standardize to core formats)
+
 **New Batch Endpoints Required:**
 
 **1. Batch Upload Endpoint**
@@ -807,6 +822,7 @@ Files uploaded via express-fileupload middleware:
 
 **Backend Implementation:**
 - Generate unique `batch_id` (e.g., `batch_${Date.now()}`)
+- Validate each file: check MIME type (PDF, PNG, JPEG, HEIC) and size (max 10MB)
 - For each file: call existing `processLabReport()` logic, create individual `job_id`
 - Store batch metadata in job manager: `{ batchId, jobs: [{ jobId, filename }], createdAt }`
 - Process files with **throttled concurrency** (max 3 concurrent uploads to backend)
@@ -829,7 +845,7 @@ Files uploaded via express-fileupload middleware:
       "filename": "lab1.pdf",
       "status": "completed",
       "progress": 100,
-      "progress_message": "Completed: 12 parameters extracted",
+      "progress_message": "Completed",
       "report_id": "rpt_abc123",
       "error": null
     },
@@ -838,7 +854,7 @@ Files uploaded via express-fileupload middleware:
       "filename": "test.jpg",
       "status": "processing",
       "progress": 65,
-      "progress_message": "Analyzing with AI...",
+      "progress_message": "Analyzing with OPENAI",
       "report_id": null,
       "error": null
     }
@@ -989,7 +1005,7 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 
 - [ ] User can select multiple files via file picker (multi-select enabled)
 - [ ] User can drag & drop multiple files onto upload area
-- [ ] Only accepts: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB each) - **TIFF NOT supported for manual uploads**
+- [ ] Only accepts: PDF, PNG, JPEG, HEIC (max 10MB each)
 - [ ] Invalid files (wrong type, too large) are rejected with toast notification
 - [ ] Selected files appear in queue table with filename, size, type
 - [ ] "Start Processing" button shows correct file count
@@ -1061,15 +1077,20 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 
 ### Phase 1: Build New Backend (Backend Changes)
 
-1. **Implement batch endpoints** in backend:
+1. **Standardize file type support:**
+   - Update `analyzeLabReport.js` `ALLOWED_MIME_TYPES` to: PDF, PNG, JPEG, HEIC
+   - Update `.env` `GMAIL_ALLOWED_MIME` to: `application/pdf,image/png,image/jpeg,image/heic`
+   - Remove: WebP, GIF, TIFF
+2. **Implement batch endpoints** in backend:
    - `POST /api/analyze-labs/batch` (accepts multiple files, returns batch_id)
    - `GET /api/analyze-labs/batches/:batchId` (batch status polling)
    - Extend `server/utils/jobManager.js` with batch tracking
    - Implement throttled concurrency (3 concurrent uploads)
-2. **Test backend thoroughly:**
+3. **Test backend thoroughly:**
    - Upload multiple files via new batch endpoint
    - Verify throttled processing (max 3 concurrent)
    - Check batch status polling returns correct data
+   - Verify file type validation (accepts PDF/PNG/JPEG/HEIC, rejects others)
 
 ### Phase 2: Build New UI (No Breaking Changes Yet)
 
@@ -1109,9 +1130,12 @@ CREATE TABLE IF NOT EXISTS batch_reports (
    - Old single-file upload form
    - Old linear progress bar
    - Old inline results display
-3. **Clean up unused CSS**
-4. **Update CLAUDE.md** with new architecture
-5. **Update any screenshots/documentation**
+3. **Remove old backend endpoint:**
+   - Delete/replace `POST /api/analyze-labs` (single file) route
+   - Keep only `POST /api/analyze-labs/batch` (multi-file) route
+4. **Clean up unused CSS**
+5. **Update CLAUDE.md** with new architecture
+6. **Update any screenshots/documentation**
 
 **Important:** Do NOT delete old files in Phase 2. Keep them for rollback until new flow is verified in production.
 
@@ -1201,7 +1225,7 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 │  └────────────────────┘  └─────────────────────┘  │
 │                                                     │
 │  Drag & drop files or click above                  │
-│  Supported: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB) │
+│  Supported: PDF, PNG, JPEG, HEIC (max 10MB)        │
 │                                                     │
 │  ─────────────────────────────────────────────────  │
 │                                                     │
