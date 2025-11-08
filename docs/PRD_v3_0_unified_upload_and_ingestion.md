@@ -445,8 +445,10 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 
 **Gmail Feature Flag Handling:**
 - On page load, check Gmail availability: `GET /api/dev-gmail/status`
-- If disabled (`GMAIL_INTEGRATION_ENABLED !== 'true'` or production): Hide Gmail button entirely
-- If enabled: Show Gmail button and enable OAuth flow
+- Response includes: `{ enabled, connected, email?, reason? }`
+- If `enabled === false`: Hide Gmail button entirely
+- If `enabled === true && connected === false`: Show Gmail button, render "Connect Gmail Account" in Gmail section
+- If `enabled === true && connected === true`: Show Gmail button, render "✅ Connected: {email}" with "Fetch Emails" button
 - No tooltips/warnings needed (feature simply doesn't appear when disabled)
 
 **States:**
@@ -889,8 +891,8 @@ const batches = new Map(); // batchId → { batchId, jobs: [...], createdAt }
 function createBatch(userId, files) {
   const batchId = `batch_${Date.now()}`;
   const jobs = files.map(file => ({
-    jobId: createJob(userId, { filename: file.filename, batchId }),
-    filename: file.filename,
+    jobId: createJob(userId, { filename: file.name, batchId }),
+    filename: file.name,
     status: 'pending'
   }));
 
@@ -988,11 +990,43 @@ async function processBatchFiles(files, batchId) {
 **Gmail Endpoints:**
 
 **New Status Check Endpoint:**
-- `GET /api/dev-gmail/status` - Check if Gmail integration is available
-  - Returns: `{ enabled: true/false, reason?: string }`
-  - Logic: `enabled = (GMAIL_INTEGRATION_ENABLED === 'true' && NODE_ENV !== 'production')`
-  - Frontend uses this on page load to show/hide Gmail button
-  - Does NOT require feature flag guard (allows checking status)
+
+`GET /api/dev-gmail/status` - Check Gmail integration availability and connection status
+
+**Response:**
+```json
+{
+  "enabled": boolean,     // Feature flag + environment check
+  "connected": boolean,   // Has valid OAuth token (only if enabled=true)
+  "email": string,        // User's Gmail address (only if connected=true)
+  "reason": string        // Why disabled (only if enabled=false)
+}
+```
+
+**Example Responses:**
+```json
+// Feature disabled in production
+{ "enabled": false, "connected": false, "reason": "Gmail integration disabled in production" }
+
+// Feature enabled, not connected
+{ "enabled": true, "connected": false }
+
+// Feature enabled, connected
+{ "enabled": true, "connected": true, "email": "user@gmail.com" }
+```
+
+**Implementation:**
+- Logic: `enabled = (GMAIL_INTEGRATION_ENABLED === 'true' && NODE_ENV !== 'production')`
+- If enabled: check `gmailConnector.hasValidToken()` for `connected` status
+- If connected: get email from cached token or Gmail API
+- **CRITICAL ROUTE ORDERING:** This endpoint MUST be registered BEFORE `featureFlagGuard` middleware
+  - Register with: `router.get('/status', statusHandler);` BEFORE `router.use(featureFlagGuard);`
+  - Similar to `/jobs/summary` vs `/jobs/:jobId` ordering requirement
+  - If guard applied first, returns 403 and frontend can't distinguish disabled states
+- Frontend uses this on page load to:
+  - Show/hide Gmail button (if !enabled)
+  - Render "Connect Gmail" vs "Fetch Emails" button (based on connected)
+  - Display email address in status (if connected)
 
 **Existing Gmail Endpoints (unchanged):**
 - `POST /api/dev-gmail/fetch` (email classification)
@@ -1064,10 +1098,12 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 ### Gmail Import Path
 
 - [ ] On page load, frontend checks `GET /api/dev-gmail/status`
-- [ ] If Gmail disabled: Gmail button hidden entirely (no tooltip/warning)
-- [ ] If Gmail enabled: Gmail button visible and functional
+- [ ] Status endpoint returns: `{ enabled, connected, email?, reason? }`
+- [ ] If `enabled === false`: Gmail button hidden entirely (no tooltip/warning)
+- [ ] If `enabled === true`: Gmail button visible
 - [ ] User clicks "Import from Gmail" → dedicated section slides in below buttons
-- [ ] If not authenticated, "Connect Gmail" button shown
+- [ ] If `connected === false`: Show "Connect Gmail" button
+- [ ] If `connected === true`: Show "✅ Connected: {email}" with "Fetch Emails" button
 - [ ] Clicking "Connect Gmail" opens OAuth popup
 - [ ] On successful auth, button changes to "Fetch Emails"
 - [ ] Clicking "Fetch Emails" shows **2-step progress** with percentage bar (NOT 5 steps)
@@ -1121,9 +1157,12 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 ### Phase 1: Build New Backend (Backend Changes)
 
 1. **Implement Gmail status endpoint:**
-   - Add `GET /api/dev-gmail/status` endpoint (does NOT require feature flag guard)
-   - Returns `{ enabled: boolean, reason?: string }`
+   - Add `GET /api/dev-gmail/status` endpoint
+   - Returns `{ enabled: boolean, connected: boolean, email?: string, reason?: string }`
    - Logic: `enabled = (process.env.GMAIL_INTEGRATION_ENABLED === 'true' && process.env.NODE_ENV !== 'production')`
+   - Check `gmailConnector.hasValidToken()` for `connected` status
+   - Get email from token cache or Gmail API if connected
+   - **CRITICAL:** Register BEFORE `featureFlagGuard` middleware (route ordering requirement)
 2. **Standardize file type support:**
    - Update `analyzeLabReport.js` `ALLOWED_MIME_TYPES` to: PDF, PNG, JPEG, HEIC, TIFF
    - Update `.env` `GMAIL_ALLOWED_MIME` to: `application/pdf,image/png,image/jpeg,image/heic,image/tiff`
