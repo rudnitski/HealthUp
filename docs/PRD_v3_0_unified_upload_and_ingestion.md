@@ -262,8 +262,8 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - No "Patient" column (data not available without additional API calls)
 
 **User Actions:**
-- Click "View" on any successful row → navigate to `/?reportId=xxx`
-- Report parameter table loads on same page
+- Click "View" on any successful row → opens `/?reportId=xxx` in **new tab**
+- Report parameter table loads in new tab, batch results remain visible in original tab
 - Click "Log" on failed row → show error details in toast/alert
 
 ---
@@ -404,7 +404,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 
 **Duplicate Handling:**
 - Status shows 🔄 Duplicate
-- "View" button still enabled (links to existing `reportId`)
+- "View" button still enabled (opens existing `reportId` in new tab)
 - Details column explains: "Already processed (existing report)"
 
 ---
@@ -632,13 +632,13 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
   <td>lab_jan_2024.pdf</td>
   <td><span class="status-badge status-completed">✅ Done</span></td>
   <td>
-    <a href="/?reportId=rpt_abc123" class="view-button">View</a>
+    <a href="/?reportId=rpt_abc123" target="_blank" class="view-button">View</a>
   </td>
 </tr>
 ```
 
 **Action Buttons:**
-- **View**: Navigate to `/?reportId=xxx` (loads report parameter table)
+- **View**: Opens `/?reportId=xxx` in new tab (batch results remain visible in original tab)
 - **Log** (for failures): Show error details in toast/modal
 
 **Summary Stats:**
@@ -646,6 +646,12 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - **Duplicates:** Only shown for Gmail batches (hidden for manual uploads)
 - **Updated:** Gmail batches may show "updated" status (reprocessed reports) - count toward "Succeeded"
 - Patient data removed (not available without N additional API calls)
+
+**New Tab Behavior:**
+- All "View" buttons open reports in new tabs (`target="_blank"`)
+- Batch results remain visible in original tab (no page reload)
+- Users can review multiple reports simultaneously in separate tabs
+- To upload more files: refresh the original tab (batch results tab)
 
 **Status Badge Mapping:**
 - `completed` → ✅ Done (green badge)
@@ -823,6 +829,7 @@ Files uploaded via express-fileupload middleware:
       "filename": "lab1.pdf",
       "status": "completed",
       "progress": 100,
+      "progress_message": "Completed: 12 parameters extracted",
       "report_id": "rpt_abc123",
       "error": null
     },
@@ -831,6 +838,7 @@ Files uploaded via express-fileupload middleware:
       "filename": "test.jpg",
       "status": "processing",
       "progress": 65,
+      "progress_message": "Analyzing with AI...",
       "report_id": null,
       "error": null
     }
@@ -881,6 +889,7 @@ function getBatchStatus(batchId) {
       filename,
       status: job.status,
       progress: job.progress,
+      progress_message: job.progressMessage || '',
       report_id: job.result?.report_id || null,
       error: job.error
     };
@@ -992,7 +1001,8 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 - [ ] When all jobs complete, progress table transforms to results table
 - [ ] Results table shows summary stats: **succeeded and failed only** (NO duplicate count, NO updated count)
 - [ ] Results table has 3 columns: Filename, Status, Action (NO Patient column)
-- [ ] Clicking "View" on a result navigates to `/?reportId=xxx` and loads report
+- [ ] Clicking "View" on a result opens `/?reportId=xxx` in **new tab** (batch results remain visible)
+- [ ] View buttons use `target="_blank"` attribute
 - [ ] Clicking "Log" on a failed result shows error details
 
 ### Gmail Import Path
@@ -1025,12 +1035,15 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 - [ ] Results table differences: Gmail shows duplicate/updated counts, manual uploads show only succeeded/failed
 - [ ] No "source" column in progress or results tables
 - [ ] No "patient" column in results tables (data not available)
+- [ ] All "View" buttons open reports in new tab (`target="_blank"`), batch results remain visible
+- [ ] Users can open multiple reports in separate tabs for parallel review
 - [ ] Upload source buttons disabled during processing
 - [ ] Page refresh resets state and shows initial upload buttons
 - [ ] No console errors during any flow
 - [ ] Responsive design works on mobile/tablet
 - [ ] Batch polling implemented for both paths (manual: `/api/analyze-labs/batches/:batchId`, Gmail: `/api/dev-gmail/jobs/summary?batchId=xxx`)
 - [ ] Backend throttles manual uploads to 3 concurrent processing jobs
+- [ ] Batch status endpoint includes `progress_message` field for Details column rendering
 
 ### Code Quality
 
