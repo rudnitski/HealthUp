@@ -680,19 +680,19 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 #### Files to Modify
 
 **`public/index.html`:**
-- Remove single-file upload form (lines 17-29)
-- Remove old progress bar (lines 32-35)
-- Add new upload source buttons
+- **Phase 2 (Coexistence):** Keep old single-file upload form but hide it (CSS `display: none` or feature flag)
+- **Phase 2:** Add new upload source buttons (visible by default)
 - Add upload queue section
 - Add Gmail section (collapsed by default)
 - Add unified progress table section
 - Add results table section
 - Keep existing parameter table section (for report detail view)
+- **Phase 4 (Cleanup):** Remove old single-file upload form and old progress bar entirely
 
 **`public/js/app.js`:**
-- Remove old single-file upload handler
+- **Phase 2:** Keep old single-file upload handler but disable it (or gate with feature flag)
 - Add multi-file drag & drop support
-- Add file validation (type, size)
+- Add file validation (type, size, batch limits)
 - Add queue table renderer
 - Add "Start Processing" button handler
 - Add unified progress table renderer
@@ -700,6 +700,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - Add results table renderer
 - Add Gmail section toggle handler
 - Keep existing SQL generator and plot logic
+- **Phase 4:** Remove old single-file upload handler
 
 **`public/js/gmail-dev.js` → Merge into `app.js`:**
 - Extract OAuth status check logic
@@ -793,9 +794,12 @@ function pollGmailBatch(batchId) {
 Unlike the Gmail flow which already has batch tracking, the manual upload path needs new batch support to enable unified progress tracking and results display.
 
 **Endpoint Migration:**
-- **Replace** `POST /api/analyze-labs` (single file) with `POST /api/analyze-labs/batch` (multi-file)
-- New unified UI calls only the batch endpoint (even for single files)
-- Old endpoint can be removed (no backward compatibility needed for MVP)
+- **Phase 1:** ADD `POST /api/analyze-labs/batch` (new multi-file endpoint)
+- **Phase 1:** KEEP `POST /api/analyze-labs` (existing single-file endpoint) untouched
+- **Phase 2:** New unified UI calls only the batch endpoint
+- **Phase 2-3:** Old endpoint remains available for rollback safety
+- **Phase 4:** REMOVE `POST /api/analyze-labs` (single file) after production verification
+- No backward compatibility needed beyond rollback period
 
 **File Type Standardization:**
 - **Manual uploads** (`analyzeLabReport.js` `ALLOWED_MIME_TYPES`): PDF, PNG, JPEG, HEIC, TIFF
@@ -835,10 +839,13 @@ Files uploaded via express-fileupload middleware:
 - Generate unique `batch_id` (e.g., `batch_${Date.now()}`)
 - Validate each file: check MIME type (PDF, PNG, JPEG, HEIC, TIFF) and size (max 10MB)
 - Enforce batch limits: max 20 files per batch, 100MB aggregate size
-- For each file: call existing `processLabReport()` logic, create individual `job_id`
+- For each file: create individual `job_id` via `createJob()`
 - Store batch metadata in job manager: `{ batchId, jobs: [{ jobId, filename }], createdAt }`
-- Process files with **throttled concurrency** (max 3 concurrent uploads to backend)
-- Return immediately (don't wait for processing)
+- **CRITICAL ASYNC PATTERN:** Queue batch processing in background via `setImmediate()`
+  - Similar to existing single-file endpoint pattern
+  - Do NOT await `processBatchFiles()` in request handler
+  - Return 202 Accepted immediately with batch_id
+- Process files with **throttled concurrency** (max 3 concurrent) in background worker
 
 **2. Batch Status Endpoint**
 
@@ -935,10 +942,23 @@ function getBatchStatus(batchId) {
 
 **4. Upload Concurrency Control**
 
-Frontend will send all files to `POST /api/analyze-labs/batch`, but backend should process with throttled concurrency:
+Frontend sends all files to `POST /api/analyze-labs/batch`, backend queues processing in background:
 
 ```javascript
-// In batch upload handler
+// In batch upload handler (server/routes/analyzeLabReportBatch.js)
+router.post('/batch', (req, res) => {
+  // ... validation, create batch, create jobs ...
+
+  // Queue processing in background (don't await!)
+  setImmediate(async () => {
+    await processBatchFiles(files, batchId);
+  });
+
+  // Return 202 immediately
+  return res.status(202).json({ batch_id: batchId, jobs, ... });
+});
+
+// Background worker function (runs in setImmediate callback)
 async function processBatchFiles(files, batchId) {
   const CONCURRENCY = 3; // Process 3 files at a time
 
@@ -1017,8 +1037,10 @@ async function processBatchFiles(files, batchId) {
 
 **Implementation:**
 - Logic: `enabled = (GMAIL_INTEGRATION_ENABLED === 'true' && NODE_ENV !== 'production')`
-- If enabled: check `gmailConnector.hasValidToken()` for `connected` status
-- If connected: get email from cached token or Gmail API
+- If enabled: check `gmailConnector.isAuthenticated()` for `connected` status
+- If connected: call `gmailConnector.getUserEmail()` helper (needs to be added to gmailConnector.js)
+  - Extract email from stored token file, OR
+  - Call Gmail API: `gmail.users.getProfile({ userId: 'me' })` to get `emailAddress`
 - **CRITICAL ROUTE ORDERING:** This endpoint MUST be registered BEFORE `featureFlagGuard` middleware
   - Register with: `router.get('/status', statusHandler);` BEFORE `router.use(featureFlagGuard);`
   - Similar to `/jobs/summary` vs `/jobs/:jobId` ordering requirement
@@ -1160,19 +1182,19 @@ CREATE TABLE IF NOT EXISTS batch_reports (
    - Add `GET /api/dev-gmail/status` endpoint
    - Returns `{ enabled: boolean, connected: boolean, email?: string, reason?: string }`
    - Logic: `enabled = (process.env.GMAIL_INTEGRATION_ENABLED === 'true' && process.env.NODE_ENV !== 'production')`
-   - Check `gmailConnector.hasValidToken()` for `connected` status
-   - Get email from token cache or Gmail API if connected
+   - Check `gmailConnector.isAuthenticated()` for `connected` status
+   - Add `getUserEmail()` helper to gmailConnector.js (extract from token file or Gmail API)
    - **CRITICAL:** Register BEFORE `featureFlagGuard` middleware (route ordering requirement)
-2. **Standardize file type support:**
-   - Update `analyzeLabReport.js` `ALLOWED_MIME_TYPES` to: PDF, PNG, JPEG, HEIC, TIFF
-   - Update `.env` `GMAIL_ALLOWED_MIME` to: `application/pdf,image/png,image/jpeg,image/heic,image/tiff`
-   - Keep TIFF (common for scanned/faxed lab results)
-   - Remove: WebP, GIF (web formats rarely used for lab reports)
-3. **Implement batch endpoints** in backend:
+2. **Implement batch endpoints** in backend (ADD new, don't touch old):
+   - Create NEW file: `server/routes/analyzeLabReportBatch.js` (or add route to existing file)
    - `POST /api/analyze-labs/batch` (accepts multiple files, returns batch_id)
+   - Use standardized MIME types: PDF, PNG, JPEG, HEIC, TIFF
    - `GET /api/analyze-labs/batches/:batchId` (batch status polling)
    - Extend `server/utils/jobManager.js` with batch tracking
    - Implement throttled concurrency (3 concurrent uploads)
+   - **DO NOT modify** existing `POST /api/analyze-labs` endpoint
+3. **Update Gmail config** (does not affect old manual upload endpoint):
+   - Update `.env` `GMAIL_ALLOWED_MIME` to: `application/pdf,image/png,image/jpeg,image/heic,image/tiff`
 4. **Test backend thoroughly:**
    - Upload multiple files via new batch endpoint
    - Verify throttled processing (max 3 concurrent)
