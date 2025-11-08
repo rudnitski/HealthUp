@@ -50,13 +50,26 @@ HealthUp currently has two completely separate implementations for uploading and
 
 ### Peer Review Addressed
 
-This PRD has been updated to address technical review feedback:
+This PRD has been updated to address technical review feedback (3 rounds):
 
+**Round 1:**
 1. ✅ **TIFF Support Removed**: Manual uploads only support PDF, PNG, JPEG, WebP, GIF, HEIC (matches backend `ALLOWED_MIME_TYPES`)
 2. ✅ **Duplicate Detection Scoped**: Only Gmail batches show duplicate count (manual uploads lack duplicate detection in backend)
 3. ✅ **Gmail Progress Fixed**: Changed from 5 fictional steps to 2 actual steps (0-50%, 50-90%) matching backend implementation
 4. ✅ **Patient Column Removed**: Results tables simplified to 3 columns (Filename, Status, Action) - patient data requires N additional API calls
 5. ✅ **Dual Polling Documented**: Clarified that manual and Gmail use different polling strategies (per-job vs. batch summary) - no unification
+
+**Round 2:**
+6. ✅ **TIFF References Fixed**: Removed TIFF from all wireframes, help text, and component specs
+7. ✅ **5-Step Comment Fixed**: Updated HTML comment from "5 steps" to "2 steps (metadata classification + body analysis)"
+
+**Round 3 (Architectural Issues):**
+8. ✅ **Manual Batch Support Added**: Documented new backend endpoints (`POST /api/analyze-labs/batch`, `GET /api/analyze-labs/batches/:batchId`) with batch tracking in job manager
+9. ✅ **Status Icons Simplified**: Manual uploads use 4 backend statuses (pending, processing, completed, failed) - no fake "uploading" status
+10. ✅ **Updated Status Added**: Gmail batches now handle "updated" status (🔄 Updated badge, counts toward succeeded)
+11. ✅ **Migration Plan Clarified**: Phase 4 deletes old files AFTER production verification (not in Phase 2)
+12. ✅ **gmail-dev.js Consolidation**: Mandated merge into `app.js` (not optional, not separate module)
+13. ✅ **Concurrency Specified**: Backend throttles to 3 concurrent uploads, documented in batch processing logic
 
 ---
 
@@ -582,13 +595,23 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 ```
 
 **Status Icons & Labels:**
-- ⏳ Queued
-- ⬆️ Uploading
-- ⬇️ Downloading (Gmail only)
-- 🧠 AI Processing
-- ✅ Completed
-- 🔄 Duplicate
-- ❌ Failed
+
+**Manual Uploads (maps to job manager statuses):**
+- ⏳ Pending → Backend: `pending`
+- 🧠 Processing → Backend: `processing` (use progress message for detail: "Uploading...", "Analyzing...", etc.)
+- ✅ Done → Backend: `completed`
+- ❌ Error → Backend: `failed`
+
+**Gmail Batches (richer status from gmailAttachmentIngest):**
+- ⏳ Queued → Backend: `queued`
+- ⬇️ Downloading → Backend: `downloading`
+- 🧠 Processing → Backend: `processing`
+- ✅ Done → Backend: `completed`
+- 🔄 Updated → Backend: `updated` (reprocessed existing report with new data)
+- 🔄 Duplicate → Backend: `duplicate` (skipped, links to existing report)
+- ❌ Error → Backend: `failed`
+
+**Note:** Manual uploads have simpler status vocabulary because the backend job manager only exposes `pending`, `processing`, `completed`, `failed`. Gmail batches track more granular states in `gmailAttachmentIngest`.
 
 **Polling Logic:**
 - Track array of `{ jobId, filename, status, progress, reportId }`
@@ -645,7 +668,14 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 **Summary Stats:**
 - Count by status: succeeded, failed
 - **Duplicates:** Only shown for Gmail batches (hidden for manual uploads)
+- **Updated:** Gmail batches may show "updated" status (reprocessed reports) - count toward "Succeeded"
 - Patient data removed (not available without N additional API calls)
+
+**Status Badge Mapping:**
+- `completed` → ✅ Done (green badge)
+- `updated` → 🔄 Updated (orange badge) - Gmail only
+- `duplicate` → 🔄 Duplicate (blue badge) - Gmail only
+- `failed` → ❌ Error (red badge)
 
 ---
 
@@ -711,21 +741,30 @@ class BatchTracker {
 
 This encapsulates batch state management.
 
-#### Files to Delete
+#### Files to Delete (Phase 4 Only - After Production Verification)
 
-- `public/gmail-dev.html` (functionality merged into index.html)
-- `public/gmail-results.html` (results now shown on index.html)
-- Optionally consolidate `public/js/gmail-dev.js` into `app.js`
+**Do NOT delete during Phase 2 implementation:**
+- `public/gmail-dev.html` (keep for rollback)
+- `public/gmail-results.html` (keep for rollback)
+- `public/js/gmail-dev.js` (keep until fully merged and verified)
 
-#### Dual Polling Strategies
+**Delete in Phase 4 (after production verification):**
+- `public/gmail-dev.html` → Functionality merged into `index.html`
+- `public/gmail-results.html` → Results shown on `index.html`
+- `public/js/gmail-dev.js` → **Merge into `app.js`** (single file for MVP)
 
-**Important:** The PRD does NOT unify polling mechanisms. Manual and Gmail uploads use different APIs:
+**Gmail Dev JS Consolidation:**
+The PRD mandates merging `gmail-dev.js` into `app.js` (not keeping as separate module). This simplifies the codebase for MVP since both flows live on the same page. Extract to modules later if `app.js` grows too large.
+
+#### Unified Batch Polling Strategy
+
+**Both manual and Gmail uploads now use batch polling:**
 
 **Manual Upload Polling:**
-- For each uploaded file, poll `GET /api/analyze-labs/jobs/:jobId`
-- Returns: `{ status, progress, result, error, ... }`
-- Frontend manages N concurrent polls (one per file)
-- Poll interval: 2-4 seconds
+- Poll `GET /api/analyze-labs/batches/:batchId` once per batch
+- Returns: `{ batch_id, total_count, completed_count, all_complete, jobs: [{ job_id, filename, status, progress, report_id, error }] }`
+- Frontend updates all rows from single response
+- Poll interval: 2 seconds
 
 **Gmail Batch Polling:**
 - Poll `GET /api/dev-gmail/jobs/summary?batchId=xxx` once per batch
@@ -733,50 +772,198 @@ This encapsulates batch state management.
 - Frontend updates all rows from single response
 - Poll interval: 2 seconds
 
-**Why keep them separate?**
-- Different backend architectures (per-job vs. batch tracking)
-- Gmail endpoint is more efficient for large batches (1 request vs. N requests)
-- Manual upload needs per-job granularity for concurrent processing
-- Future optimization can unify after backend refactoring
-
 **Implementation Note:**
-Frontend should have two polling functions:
+Frontend should have two polling functions (similar structure):
 ```javascript
-function pollManualJobs(jobIds) { /* poll each jobId individually */ }
-function pollGmailBatch(batchId) { /* poll batch summary */ }
+function pollManualBatch(batchId) {
+  const response = await fetch(`/api/analyze-labs/batches/${batchId}`);
+  const batch = await response.json();
+  updateProgressTable(batch.jobs);
+  return batch.all_complete;
+}
+
+function pollGmailBatch(batchId) {
+  const response = await fetch(`/api/dev-gmail/jobs/summary?batchId=${batchId}`);
+  const summary = await response.json();
+  updateProgressTable(summary.attachments);
+  return summary.allComplete;
+}
 ```
 
 ---
 
 ### Backend Changes
 
-#### No Major Backend Changes Required
+#### Required Backend Changes
 
-**Keep existing endpoints:**
-- `POST /api/analyze-labs` (manual upload)
-- `GET /api/analyze-labs/jobs/:jobId` (job polling)
-- `POST /api/dev-gmail/fetch` (email classification)
-- `GET /api/dev-gmail/jobs/:jobId` (fetch job polling)
-- `POST /api/dev-gmail/ingest` (attachment download & process)
-- `GET /api/dev-gmail/jobs/summary?batchId=xxx` (batch summary)
+Unlike the Gmail flow which already has batch tracking, the manual upload path needs new batch support to enable unified progress tracking and results display.
 
-**Why no consolidation?**
-- Different preliminary steps (Gmail requires fetch/classify, manual doesn't)
-- Different job structures (Gmail has attachment metadata, manual has file buffer)
-- Refactoring can be done in a future PRD after UI is stable
+**New Batch Endpoints Required:**
 
-**Potential future optimization:**
-Create unified `/api/reports/ingest` endpoint that accepts:
+**1. Batch Upload Endpoint**
+
+`POST /api/analyze-labs/batch`
+
+**Request:**
 ```json
 {
-  "sources": [
-    { "type": "file", "data": "base64...", "filename": "test.pdf" },
-    { "type": "gmail", "messageId": "...", "attachmentId": "..." }
+  "files": [
+    { "filename": "lab1.pdf", "data": "<base64>", "mimetype": "application/pdf", "size": 123456 },
+    { "filename": "test.jpg", "data": "<base64>", "mimetype": "image/jpeg", "size": 98765 }
   ]
 }
 ```
 
-But this is out of scope for v3.0.
+**Response (202 Accepted):**
+```json
+{
+  "batch_id": "batch_1730900000000",
+  "jobs": [
+    { "job_id": "job_123", "filename": "lab1.pdf", "status": "pending" },
+    { "job_id": "job_456", "filename": "test.jpg", "status": "pending" }
+  ],
+  "total_count": 2,
+  "message": "Batch processing started. Poll /api/analyze-labs/batches/{batch_id} for status."
+}
+```
+
+**Backend Implementation:**
+- Generate unique `batch_id` (e.g., `batch_${Date.now()}`)
+- For each file: call existing `processLabReport()` logic, create individual `job_id`
+- Store batch metadata in job manager: `{ batchId, jobs: [{ jobId, filename }], createdAt }`
+- Process files with **throttled concurrency** (max 3 concurrent uploads to backend)
+- Return immediately (don't wait for processing)
+
+**2. Batch Status Endpoint**
+
+`GET /api/analyze-labs/batches/:batchId`
+
+**Response:**
+```json
+{
+  "batch_id": "batch_1730900000000",
+  "total_count": 2,
+  "completed_count": 1,
+  "all_complete": false,
+  "jobs": [
+    {
+      "job_id": "job_123",
+      "filename": "lab1.pdf",
+      "status": "completed",
+      "progress": 100,
+      "report_id": "rpt_abc123",
+      "error": null
+    },
+    {
+      "job_id": "job_456",
+      "filename": "test.jpg",
+      "status": "processing",
+      "progress": 65,
+      "report_id": null,
+      "error": null
+    }
+  ]
+}
+```
+
+**Backend Implementation:**
+- Look up batch by `batchId` in job manager
+- Aggregate status from all individual jobs
+- Return array of job statuses with filenames
+- Similar structure to `GET /api/dev-gmail/jobs/summary?batchId=xxx`
+
+**3. Job Manager Extensions**
+
+Extend `server/utils/jobManager.js`:
+
+```javascript
+// New batch tracking structure
+const batches = new Map(); // batchId → { batchId, jobs: [...], createdAt }
+
+function createBatch(userId, files) {
+  const batchId = `batch_${Date.now()}`;
+  const jobs = files.map(file => ({
+    jobId: createJob(userId, { filename: file.filename, batchId }),
+    filename: file.filename,
+    status: 'pending'
+  }));
+
+  batches.set(batchId, {
+    batchId,
+    userId,
+    jobs,
+    createdAt: Date.now()
+  });
+
+  return { batchId, jobs };
+}
+
+function getBatchStatus(batchId) {
+  const batch = batches.get(batchId);
+  if (!batch) return null;
+
+  const jobsWithStatus = batch.jobs.map(({ jobId, filename }) => {
+    const job = getJobStatus(jobId);
+    return {
+      job_id: jobId,
+      filename,
+      status: job.status,
+      progress: job.progress,
+      report_id: job.result?.report_id || null,
+      error: job.error
+    };
+  });
+
+  return {
+    batch_id: batchId,
+    total_count: batch.jobs.length,
+    completed_count: jobsWithStatus.filter(j => j.status === 'completed').length,
+    all_complete: jobsWithStatus.every(j => j.status === 'completed' || j.status === 'failed'),
+    jobs: jobsWithStatus
+  };
+}
+```
+
+**4. Upload Concurrency Control**
+
+Frontend will send all files to `POST /api/analyze-labs/batch`, but backend should process with throttled concurrency:
+
+```javascript
+// In batch upload handler
+async function processBatchFiles(files, batchId) {
+  const CONCURRENCY = 3; // Process 3 files at a time
+
+  const queue = [...files];
+  const active = new Set();
+
+  while (queue.length || active.size) {
+    // Start new jobs up to concurrency limit
+    while (active.size < CONCURRENCY && queue.length) {
+      const file = queue.shift();
+      const promise = processLabReport({
+        jobId: file.jobId,
+        fileBuffer: Buffer.from(file.data, 'base64'),
+        mimetype: file.mimetype,
+        filename: file.filename,
+        fileSize: file.size
+      }).finally(() => active.delete(promise));
+
+      active.add(promise);
+    }
+
+    // Wait for at least one to complete
+    if (active.size) {
+      await Promise.race(active);
+    }
+  }
+}
+```
+
+**Existing Gmail Endpoints (unchanged):**
+- `POST /api/dev-gmail/fetch` (email classification)
+- `GET /api/dev-gmail/jobs/:jobId` (fetch job polling)
+- `POST /api/dev-gmail/ingest` (attachment download & process)
+- `GET /api/dev-gmail/jobs/summary?batchId=xxx` (batch summary)
 
 ---
 
@@ -825,11 +1012,13 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 - [ ] Invalid files (wrong type, too large) are rejected with toast notification
 - [ ] Selected files appear in queue table with filename, size, type
 - [ ] "Start Processing" button shows correct file count
-- [ ] Clicking "Start Processing" transitions queue table to progress table
-- [ ] Progress table shows per-file status icons and progress bars
-- [ ] Progress updates in real-time via polling (every 2-4 seconds, per-job polling)
+- [ ] Clicking "Start Processing" sends batch to `POST /api/analyze-labs/batch`
+- [ ] Backend processes files with throttled concurrency (max 3 concurrent)
+- [ ] Queue table transitions to progress table
+- [ ] Progress table shows per-file status icons: ⏳ Pending, 🧠 Processing, ✅ Done, ❌ Error
+- [ ] Progress updates in real-time via batch polling (`GET /api/analyze-labs/batches/:batchId` every 2 seconds)
 - [ ] When all jobs complete, progress table transforms to results table
-- [ ] Results table shows summary stats: **succeeded and failed only** (NO duplicate count)
+- [ ] Results table shows summary stats: **succeeded and failed only** (NO duplicate count, NO updated count)
 - [ ] Results table has 3 columns: Filename, Status, Action (NO Patient column)
 - [ ] Clicking "View" on a result navigates to `/?reportId=xxx` and loads report
 - [ ] Clicking "Log" on a failed result shows error details
@@ -849,60 +1038,97 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 - [ ] "Download & Recognize" button shows selected count and enables when count > 0
 - [ ] Clicking "Download & Recognize" hides Gmail section and shows progress table
 - [ ] Gmail files show download status (⬇️) before OCR processing
-- [ ] Progress polling uses batch summary endpoint (NOT per-job polling like manual uploads)
+- [ ] Progress polling uses batch summary endpoint (`GET /api/dev-gmail/jobs/summary?batchId=xxx`)
 - [ ] When all downloads/processing complete, progress table transforms to results table
 - [ ] Results table shows summary stats: **succeeded, duplicates, and failed** (duplicates only for Gmail)
+- [ ] Results table handles "updated" status (🔄 Updated badge, counts toward succeeded)
 - [ ] Results table has 3 columns: Filename, Status, Action (NO Patient column)
-- [ ] Duplicate detection works (shows 🔄 status and links to existing report)
+- [ ] Duplicate detection works (shows 🔄 Duplicate status, links to existing report)
+- [ ] Updated reports work (shows 🔄 Updated status, links to reprocessed report)
 
 ### Shared Requirements
 
 - [ ] Both paths use identical progress table structure (same columns, same styling)
 - [ ] Both paths use same results table structure (3 columns: Filename, Status, Action)
-- [ ] Results table differences: Gmail shows duplicate count, manual uploads don't
+- [ ] Results table differences: Gmail shows duplicate/updated counts, manual uploads show only succeeded/failed
 - [ ] No "source" column in progress or results tables
 - [ ] No "patient" column in results tables (data not available)
 - [ ] Upload source buttons disabled during processing
 - [ ] Page refresh resets state and shows initial upload buttons
 - [ ] No console errors during any flow
 - [ ] Responsive design works on mobile/tablet
-- [ ] Dual polling strategies implemented correctly (per-job for manual, batch summary for Gmail)
+- [ ] Batch polling implemented for both paths (manual: `/api/analyze-labs/batches/:batchId`, Gmail: `/api/dev-gmail/jobs/summary?batchId=xxx`)
+- [ ] Backend throttles manual uploads to 3 concurrent processing jobs
 
 ### Code Quality
 
-- [ ] `gmail-dev.html` and `gmail-results.html` deleted
+- [ ] `gmail-dev.html` and `gmail-results.html` deleted (Phase 4 only, after production verification)
+- [ ] `gmail-dev.js` merged into `app.js` (Phase 4 only)
 - [ ] No duplicate progress rendering logic (unified in `app.js`)
 - [ ] Code is well-commented for future maintainers
 - [ ] Error handling for network failures, API errors, etc.
 - [ ] Loading states for all async operations
+- [ ] Backend batch endpoints fully tested and documented
 
 ---
 
 ## Migration Plan
 
-### Phase 1: Build New UI (No Breaking Changes)
+### Phase 1: Build New Backend (Backend Changes)
 
-1. Add new upload source buttons to `index.html`
-2. Add new sections (queue, Gmail, progress, results) - all hidden by default
-3. Implement new JavaScript logic in `app.js`
-4. Test manual upload path thoroughly
-5. Test Gmail import path thoroughly
-6. Keep old UI hidden but functional (for rollback)
+1. **Implement batch endpoints** in backend:
+   - `POST /api/analyze-labs/batch` (accepts multiple files, returns batch_id)
+   - `GET /api/analyze-labs/batches/:batchId` (batch status polling)
+   - Extend `server/utils/jobManager.js` with batch tracking
+   - Implement throttled concurrency (3 concurrent uploads)
+2. **Test backend thoroughly:**
+   - Upload multiple files via new batch endpoint
+   - Verify throttled processing (max 3 concurrent)
+   - Check batch status polling returns correct data
 
-### Phase 2: Remove Old Code
+### Phase 2: Build New UI (No Breaking Changes Yet)
 
-1. Delete old single-file upload form from `index.html`
-2. Delete old progress bar code
-3. Delete old inline results display logic
-4. Remove `gmail-dev.html` and `gmail-results.html`
-5. Remove unused CSS
+1. **Keep old files intact** for rollback safety:
+   - `index.html` (old single-file form remains)
+   - `gmail-dev.html` and `gmail-results.html` remain
+2. **Add new sections to `index.html`** (feature-flagged or hidden):
+   - Upload source buttons (manual + Gmail)
+   - Upload queue table
+   - Gmail section (OAuth, fetch progress, selection)
+   - Unified progress table
+   - Results table
+3. **Merge `gmail-dev.js` into `app.js`:**
+   - Extract OAuth logic
+   - Extract fetch/classify UI
+   - Extract attachment selection
+   - Add batch upload logic for manual files
+   - Add unified progress polling
+4. **Test new UI thoroughly:**
+   - Manual multi-file upload → batch processing → results
+   - Gmail OAuth → fetch → select → ingest → results
+   - Verify both use unified progress/results tables
 
-### Phase 3: Cleanup
+### Phase 3: Deploy and Verify
 
-1. Remove dead code from `app.js` (old upload handler)
-2. Consolidate `gmail-dev.js` into `app.js` or separate module
-3. Update README.md with new upload flow documentation
-4. Update any screenshots/demos
+1. **Deploy to staging/production**
+2. **Monitor for issues** (1-2 weeks)
+3. **Verify user feedback**
+
+### Phase 4: Remove Old Code (After Verification)
+
+1. **Delete old UI files:**
+   - `public/gmail-dev.html`
+   - `public/gmail-results.html`
+   - `public/js/gmail-dev.js` (if fully merged into `app.js`)
+2. **Remove old code from `index.html`:**
+   - Old single-file upload form
+   - Old linear progress bar
+   - Old inline results display
+3. **Clean up unused CSS**
+4. **Update CLAUDE.md** with new architecture
+5. **Update any screenshots/documentation**
+
+**Important:** Do NOT delete old files in Phase 2. Keep them for rollback until new flow is verified in production.
 
 ---
 
