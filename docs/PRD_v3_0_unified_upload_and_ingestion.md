@@ -48,6 +48,16 @@ HealthUp currently has two completely separate implementations for uploading and
 - Editing queue before processing (no remove functionality)
 - In-page batch restart (full page refresh required)
 
+### Peer Review Addressed
+
+This PRD has been updated to address technical review feedback:
+
+1. ✅ **TIFF Support Removed**: Manual uploads only support PDF, PNG, JPEG, WebP, GIF, HEIC (matches backend `ALLOWED_MIME_TYPES`)
+2. ✅ **Duplicate Detection Scoped**: Only Gmail batches show duplicate count (manual uploads lack duplicate detection in backend)
+3. ✅ **Gmail Progress Fixed**: Changed from 5 fictional steps to 2 actual steps (0-50%, 50-90%) matching backend implementation
+4. ✅ **Patient Column Removed**: Results tables simplified to 3 columns (Filename, Status, Action) - patient data requires N additional API calls
+5. ✅ **Dual Polling Documented**: Clarified that manual and Gmail use different polling strategies (per-job vs. batch summary) - no unification
+
 ---
 
 ## Current State Analysis
@@ -165,7 +175,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 │  └──────────────────────┘  └──────────────────────┘ │
 │                                                      │
 │  Drag & drop files or click above                    │
-│  Supported: PDF, PNG, JPEG, TIFF (max 10MB each)    │
+│  Supported: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB) │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -174,7 +184,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - OR drag & drop files onto designated area
 
 **Validation:**
-- Check file types (PDF, PNG, JPEG, TIFF)
+- Check file types (PDF, PNG, JPEG, WebP, GIF, HEIC)
 - Check file sizes (max 10MB each)
 - Reject invalid files with toast notification
 
@@ -244,19 +254,23 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 ┌─────────────────────────────────────────────────────┐
 │  Processing Complete                                 │
 │                                                      │
-│  ✅ Succeeded: 2    🔄 Duplicates: 0    ❌ Failed: 1 │
+│  ✅ Succeeded: 2    ❌ Failed: 1                     │
 │                                                      │
-│  ┌──────────────────┬──────────┬─────────┬────────┐ │
-│  │ Filename         │ Status   │ Patient │ Action │ │
-│  ├──────────────────┼──────────┼─────────┼────────┤ │
-│  │ lab_jan_2024.pdf │ ✅ Done  │ John D. │ [View] │ │
-│  │ blood_test.jpg   │ ✅ Done  │ John D. │ [View] │ │
-│  │ results.pdf      │ ❌ Error │ -       │ [Log]  │ │
-│  └──────────────────┴──────────┴─────────┴────────┘ │
+│  ┌──────────────────┬──────────┬────────┐           │
+│  │ Filename         │ Status   │ Action │           │
+│  ├──────────────────┼──────────┼────────┤           │
+│  │ lab_jan_2024.pdf │ ✅ Done  │ [View] │           │
+│  │ blood_test.jpg   │ ✅ Done  │ [View] │           │
+│  │ results.pdf      │ ❌ Error │ [Log]  │           │
+│  └──────────────────┴──────────┴────────┘           │
 │                                                      │
 │  To upload more files, refresh this page            │
 └─────────────────────────────────────────────────────┘
 ```
+
+**Notes:**
+- Manual uploads do NOT show duplicate count (no duplicate detection for manual path)
+- No "Patient" column (data not available without additional API calls)
 
 **User Actions:**
 - Click "View" on any successful row → navigate to `/?reportId=xxx`
@@ -299,18 +313,17 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 
 #### Step 2: Email Fetch & Classification
 
-**User clicks "Fetch Emails" → Section shows 5-step progress:**
+**User clicks "Fetch Emails" → Section shows 2-step progress:**
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Fetching Lab Tests from Gmail                       │
 │                                                      │
 │  [==============================    ] 75%           │
 │                                                      │
-│  ✅ Step 1: Fetched 200 emails                      │
-│  ✅ Step 2: Classified subjects (45 candidates)     │
-│  ✅ Step 3: Fetched full content (45 emails)        │
-│  🔄 Step 4: Classifying bodies... (30/45)           │
-│  ⏳ Step 5: Checking duplicates...                  │
+│  ✅ Step 1: Fetching & classifying metadata         │
+│     (200 emails → 45 candidates)                    │
+│                                                      │
+│  🔄 Step 2: Analyzing email bodies... (30/45)       │
 │                                                      │
 │  Estimated time: ~30 seconds                        │
 └─────────────────────────────────────────────────────┘
@@ -322,12 +335,10 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - Client polls `GET /api/dev-gmail/jobs/:jobId`
 - Job returns progress object with step-by-step breakdown
 
-**Progress Mapping:**
-- 0-20%: Step 1 (fetch metadata)
-- 20-40%: Step 2 (classify subjects)
-- 40-60%: Step 3 (fetch full emails)
-- 60-80%: Step 4 (classify bodies)
-- 80-100%: Step 5 (duplicate detection)
+**Progress Mapping (matches backend implementation):**
+- 0-50%: Step 1 (fetch metadata + classify subjects)
+- 50-90%: Step 2 (fetch full emails + classify bodies)
+- 90-100%: Final processing (duplicate detection, results assembly)
 
 #### Step 3: Attachment Selection
 
@@ -597,7 +608,7 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
   <h3>Processing Complete</h3>
   <div class="results-summary">
     <span class="summary-stat">✅ Succeeded: <strong id="success-count">0</strong></span>
-    <span class="summary-stat">🔄 Duplicates: <strong id="duplicate-count">0</strong></span>
+    <span class="summary-stat" id="duplicate-stat" hidden>🔄 Duplicates: <strong id="duplicate-count">0</strong></span>
     <span class="summary-stat">❌ Failed: <strong id="failed-count">0</strong></span>
   </div>
   <table class="results-table">
@@ -605,7 +616,6 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
       <tr>
         <th>Filename</th>
         <th>Status</th>
-        <th>Patient</th>
         <th>Action</th>
       </tr>
     </thead>
@@ -622,7 +632,6 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 <tr data-report-id="rpt_abc123">
   <td>lab_jan_2024.pdf</td>
   <td><span class="status-badge status-completed">✅ Done</span></td>
-  <td>John Doe</td>
   <td>
     <a href="/?reportId=rpt_abc123" class="view-button">View</a>
   </td>
@@ -634,8 +643,9 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 - **Log** (for failures): Show error details in toast/modal
 
 **Summary Stats:**
-- Count by status: succeeded, duplicates, failed
-- Update dynamically as results come in
+- Count by status: succeeded, failed
+- **Duplicates:** Only shown for Gmail batches (hidden for manual uploads)
+- Patient data removed (not available without N additional API calls)
 
 ---
 
@@ -669,10 +679,10 @@ Both flows ultimately call `labReportProcessor.processLabReport()`, so core OCR 
 
 **`public/js/gmail-dev.js` → Merge into `app.js`:**
 - Extract OAuth status check logic
-- Extract 5-step fetch progress renderer
+- Extract 2-step fetch progress renderer (updated from 5 steps)
 - Extract attachment selection table logic
 - Merge download & recognize button handler
-- Unify progress polling (use same mechanism as manual upload)
+- **Note:** Progress polling remains separate (see "Dual Polling Strategies" below)
 
 **`public/css/style.css`:**
 - Add styles for upload source buttons
@@ -706,6 +716,35 @@ This encapsulates batch state management.
 - `public/gmail-dev.html` (functionality merged into index.html)
 - `public/gmail-results.html` (results now shown on index.html)
 - Optionally consolidate `public/js/gmail-dev.js` into `app.js`
+
+#### Dual Polling Strategies
+
+**Important:** The PRD does NOT unify polling mechanisms. Manual and Gmail uploads use different APIs:
+
+**Manual Upload Polling:**
+- For each uploaded file, poll `GET /api/analyze-labs/jobs/:jobId`
+- Returns: `{ status, progress, result, error, ... }`
+- Frontend manages N concurrent polls (one per file)
+- Poll interval: 2-4 seconds
+
+**Gmail Batch Polling:**
+- Poll `GET /api/dev-gmail/jobs/summary?batchId=xxx` once per batch
+- Returns: `{ attachments: [{ filename, status, progress, reportId, ... }], allComplete, ... }`
+- Frontend updates all rows from single response
+- Poll interval: 2 seconds
+
+**Why keep them separate?**
+- Different backend architectures (per-job vs. batch tracking)
+- Gmail endpoint is more efficient for large batches (1 request vs. N requests)
+- Manual upload needs per-job granularity for concurrent processing
+- Future optimization can unify after backend refactoring
+
+**Implementation Note:**
+Frontend should have two polling functions:
+```javascript
+function pollManualJobs(jobIds) { /* poll each jobId individually */ }
+function pollGmailBatch(batchId) { /* poll batch summary */ }
+```
 
 ---
 
@@ -782,14 +821,16 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 
 - [ ] User can select multiple files via file picker (multi-select enabled)
 - [ ] User can drag & drop multiple files onto upload area
+- [ ] Only accepts: PDF, PNG, JPEG, WebP, GIF, HEIC (max 10MB each) - **TIFF NOT supported for manual uploads**
 - [ ] Invalid files (wrong type, too large) are rejected with toast notification
 - [ ] Selected files appear in queue table with filename, size, type
 - [ ] "Start Processing" button shows correct file count
 - [ ] Clicking "Start Processing" transitions queue table to progress table
 - [ ] Progress table shows per-file status icons and progress bars
-- [ ] Progress updates in real-time via polling (every 2 seconds)
+- [ ] Progress updates in real-time via polling (every 2-4 seconds, per-job polling)
 - [ ] When all jobs complete, progress table transforms to results table
-- [ ] Results table shows summary stats (succeeded, duplicates, failed)
+- [ ] Results table shows summary stats: **succeeded and failed only** (NO duplicate count)
+- [ ] Results table has 3 columns: Filename, Status, Action (NO Patient column)
 - [ ] Clicking "View" on a result navigates to `/?reportId=xxx` and loads report
 - [ ] Clicking "Log" on a failed result shows error details
 
@@ -799,8 +840,8 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 - [ ] If not authenticated, "Connect Gmail" button shown
 - [ ] Clicking "Connect Gmail" opens OAuth popup
 - [ ] On successful auth, button changes to "Fetch Emails"
-- [ ] Clicking "Fetch Emails" shows 5-step progress with percentage bar
-- [ ] Progress updates reflect backend job status (Step 1 → 5)
+- [ ] Clicking "Fetch Emails" shows **2-step progress** with percentage bar (NOT 5 steps)
+- [ ] Progress updates reflect backend job status: 0-50% (Step 1), 50-90% (Step 2)
 - [ ] When fetch completes, attachment selection table appears
 - [ ] Selection table shows email details, filename, size, duplicate warning
 - [ ] Invalid attachments (wrong MIME, too large) are disabled
@@ -808,18 +849,24 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 - [ ] "Download & Recognize" button shows selected count and enables when count > 0
 - [ ] Clicking "Download & Recognize" hides Gmail section and shows progress table
 - [ ] Gmail files show download status (⬇️) before OCR processing
+- [ ] Progress polling uses batch summary endpoint (NOT per-job polling like manual uploads)
 - [ ] When all downloads/processing complete, progress table transforms to results table
+- [ ] Results table shows summary stats: **succeeded, duplicates, and failed** (duplicates only for Gmail)
+- [ ] Results table has 3 columns: Filename, Status, Action (NO Patient column)
 - [ ] Duplicate detection works (shows 🔄 status and links to existing report)
 
 ### Shared Requirements
 
 - [ ] Both paths use identical progress table structure (same columns, same styling)
-- [ ] Both paths use identical results table structure
+- [ ] Both paths use same results table structure (3 columns: Filename, Status, Action)
+- [ ] Results table differences: Gmail shows duplicate count, manual uploads don't
 - [ ] No "source" column in progress or results tables
+- [ ] No "patient" column in results tables (data not available)
 - [ ] Upload source buttons disabled during processing
 - [ ] Page refresh resets state and shows initial upload buttons
 - [ ] No console errors during any flow
 - [ ] Responsive design works on mobile/tablet
+- [ ] Dual polling strategies implemented correctly (per-job for manual, batch summary for Gmail)
 
 ### Code Quality
 
@@ -997,11 +1044,11 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 │  │                                              │ │
 │  │  [====================          ] 60%        │ │
 │  │                                              │ │
-│  │  ✅ Step 1: Fetched 200 emails              │ │
-│  │  ✅ Step 2: Classified subjects (45)        │ │
-│  │  ✅ Step 3: Fetched full content (45)       │ │
-│  │  🔄 Step 4: Classifying bodies... (27/45)   │ │
-│  │  ⏳ Step 5: Checking duplicates...          │ │
+│  │  ✅ Step 1: Fetching & classifying metadata │ │
+│  │     (200 emails → 45 candidates)            │ │
+│  │                                              │ │
+│  │  🔄 Step 2: Analyzing email bodies...       │ │
+│  │     (27/45 completed)                       │ │
 │  │                                              │ │
 │  │  Estimated time: ~40 seconds                │ │
 │  └──────────────────────────────────────────────┘ │
@@ -1027,7 +1074,7 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 └────────────────────────────────────────────────────┘
 ```
 
-### Results Table
+### Results Table (Manual Upload)
 ```
 ┌────────────────────────────────────────────────────┐
 │  HealthUp - Upload Analysis                         │
@@ -1035,14 +1082,36 @@ CREATE TABLE IF NOT EXISTS batch_reports (
 │                                                     │
 │  Processing Complete                                │
 │                                                     │
-│  ✅ Succeeded: 3    🔄 Duplicates: 0   ❌ Failed: 1 │
+│  ✅ Succeeded: 3    ❌ Failed: 1                    │
 │                                                     │
-│  Filename          Status    Patient    Action     │
-│  ───────────────── ────────  ────────   ──────     │
-│  lab_jan_2024.pdf  ✅ Done   John D.    [View]     │
-│  blood_test.jpg    ✅ Done   John D.    [View]     │
-│  results.pdf       ✅ Done   John D.    [View]     │
-│  corrupted.pdf     ❌ Error  -          [Log]      │
+│  Filename              Status       Action          │
+│  ────────────────────  ──────────   ──────          │
+│  lab_jan_2024.pdf      ✅ Done      [View]          │
+│  blood_test.jpg        ✅ Done      [View]          │
+│  results.pdf           ✅ Done      [View]          │
+│  corrupted.pdf         ❌ Error     [Log]           │
+│                                                     │
+│  To upload more files, refresh this page            │
+│                                                     │
+└────────────────────────────────────────────────────┘
+```
+
+### Results Table (Gmail Import)
+```
+┌────────────────────────────────────────────────────┐
+│  HealthUp - Upload Analysis                         │
+├────────────────────────────────────────────────────┤
+│                                                     │
+│  Processing Complete                                │
+│                                                     │
+│  ✅ Succeeded: 3   🔄 Duplicates: 1   ❌ Failed: 0  │
+│                                                     │
+│  Filename              Status       Action          │
+│  ────────────────────  ──────────   ──────          │
+│  lab_jan_2024.pdf      ✅ Done      [View]          │
+│  blood_test.jpg        ✅ Done      [View]          │
+│  results.pdf           🔄 Duplicate [View]          │
+│  test_report.pdf       ✅ Done      [View]          │
 │                                                     │
 │  To upload more files, refresh this page            │
 │                                                     │
