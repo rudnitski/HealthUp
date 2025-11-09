@@ -56,6 +56,7 @@
   const queueSection = document.getElementById('upload-queue-section');
   const queueTbody = document.getElementById('queue-tbody');
   const startProcessingBtn = document.getElementById('start-processing-btn');
+  const clearQueueBtn = document.getElementById('clear-queue-btn');
   const fileCountSpan = document.getElementById('file-count');
 
   // DOM Elements - Gmail
@@ -143,16 +144,32 @@
     return { valid: errors.length === 0, errors };
   }
 
-  function handleFileSelection(files) {
-    const validation = validateFiles(files);
+  function handleFileSelection(files, append = false) {
+    // If appending, combine with existing files
+    const filesToValidate = append
+      ? [...selectedFiles, ...Array.from(files)]
+      : Array.from(files);
+
+    const validation = validateFiles(filesToValidate);
 
     if (!validation.valid) {
       showToast(validation.errors.join('\n'), 'error');
       return;
     }
 
-    selectedFiles = Array.from(files);
+    selectedFiles = filesToValidate;
     renderQueue();
+  }
+
+  function clearQueue() {
+    selectedFiles = [];
+    queueSection.hidden = true;
+    queueTbody.innerHTML = '';
+    fileCountSpan.textContent = '0';
+
+    // Re-enable upload buttons
+    manualUploadBtn.disabled = false;
+    gmailImportBtn.disabled = false;
   }
 
   function renderQueue() {
@@ -169,11 +186,13 @@
     });
 
     fileCountSpan.textContent = selectedFiles.length;
-    queueSection.hidden = false;
+    queueSection.hidden = selectedFiles.length === 0;
 
-    // Disable upload buttons during queue
-    manualUploadBtn.disabled = true;
-    gmailImportBtn.disabled = true;
+    // Disable upload buttons when queue has files
+    if (selectedFiles.length > 0) {
+      manualUploadBtn.disabled = true;
+      gmailImportBtn.disabled = true;
+    }
   }
 
   // ======================
@@ -784,7 +803,10 @@
   // File input change
   multiFileInput.addEventListener('change', (e) => {
     if (e.target.files.length > 0) {
-      handleFileSelection(e.target.files);
+      // Append files when using file picker (allows adding more files)
+      handleFileSelection(e.target.files, true);
+      // Reset the input so the same files can be selected again if needed
+      e.target.value = '';
     }
   });
 
@@ -808,12 +830,16 @@
     uploadSourceSelector.style.borderColor = '';
 
     if (e.dataTransfer.files.length > 0) {
-      handleFileSelection(e.dataTransfer.files);
+      // Append files when drag-and-dropping (allows adding files one by one)
+      handleFileSelection(e.dataTransfer.files, true);
     }
   });
 
   // Start processing button
   startProcessingBtn.addEventListener('click', startBatchProcessing);
+
+  // Clear queue button
+  clearQueueBtn.addEventListener('click', clearQueue);
 
   // Gmail import button
   gmailImportBtn.addEventListener('click', showGmailSection);
