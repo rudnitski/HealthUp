@@ -819,6 +819,17 @@
   // Initialization
   // ======================
 
-  // Check Gmail status on page load
-  checkGmailStatus();
+  // Check if we're viewing a specific report (reportId in URL)
+  const urlParams = new URLSearchParams(window.location.search);
+  const reportIdParam = urlParams.get('reportId');
+
+  if (reportIdParam) {
+    // User is viewing a specific report - hide unified UI, show old UI
+    document.getElementById('unified-upload-ui').hidden = true;
+    document.getElementById('old-upload-ui').style.display = 'block';
+    // The old app.js will handle loading the report
+  } else {
+    // Normal upload flow - show unified UI
+    checkGmailStatus();
+  }
 })();
