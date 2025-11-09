@@ -396,15 +396,35 @@
       const statusClass = job.status === 'completed' ? 'status-completed' : 'status-failed';
       const statusLabel = job.status === 'completed' ? '✅ Done' : '❌ Error';
 
-      const actionHtml = job.status === 'completed' && job.report_id
-        ? `<a href="/?reportId=${job.report_id}" target="_blank" class="view-button">View</a>`
-        : `<button class="secondary-button" onclick="alert('${job.error || 'Unknown error'}')">Log</button>`;
+      const filenameCell = document.createElement('td');
+      filenameCell.textContent = job.filename || '';
+      row.appendChild(filenameCell);
 
-      row.innerHTML = `
-        <td>${job.filename}</td>
-        <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
-        <td>${actionHtml}</td>
-      `;
+      const statusCell = document.createElement('td');
+      const statusBadge = document.createElement('span');
+      statusBadge.className = `status-badge ${statusClass}`;
+      statusBadge.textContent = statusLabel;
+      statusCell.appendChild(statusBadge);
+      row.appendChild(statusCell);
+
+      const actionCell = document.createElement('td');
+      if (job.status === 'completed' && job.report_id) {
+        const viewLink = document.createElement('a');
+        viewLink.href = `/?reportId=${job.report_id}`;
+        viewLink.target = '_blank';
+        viewLink.className = 'view-button';
+        viewLink.textContent = 'View';
+        actionCell.appendChild(viewLink);
+      } else {
+        const logButton = document.createElement('button');
+        logButton.type = 'button';
+        logButton.className = 'secondary-button';
+        logButton.textContent = 'Log';
+        const errorMessage = job.error || 'Unknown error';
+        logButton.addEventListener('click', () => alert(errorMessage));
+        actionCell.appendChild(logButton);
+      }
+      row.appendChild(actionCell);
 
       resultsTbody.appendChild(row);
     });
@@ -603,20 +623,53 @@
       email.attachments.forEach(att => {
         const row = document.createElement('tr');
 
-        const isDuplicate = email.is_duplicate || false;
-        const dupWarning = isDuplicate ? '⚠️' : '-';
+        const checkboxCell = document.createElement('td');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'attachment-checkbox';
+        checkbox.dataset.emailId = email.id;
+        checkbox.dataset.attachmentId = att.attachmentId;
+        checkbox.dataset.filename = att.filename;
+        checkbox.dataset.mimetype = att.mimeType;
+        checkbox.dataset.size = att.size;
+        checkboxCell.appendChild(checkbox);
+        row.appendChild(checkboxCell);
 
-        row.innerHTML = `
-          <td><input type="checkbox" class="attachment-checkbox" data-email-id="${email.id}" data-attachment-id="${att.attachmentId}" data-filename="${att.filename}" data-mimetype="${att.mimeType}" data-size="${att.size}"></td>
-          <td>
-            <div><strong>From:</strong> ${email.from}</div>
-            <div><strong>Subject:</strong> ${email.subject}</div>
-            <div><strong>Date:</strong> ${email.date}</div>
-          </td>
-          <td>${att.filename}</td>
-          <td>${formatFileSize(att.size)}</td>
-          <td>${dupWarning}</td>
-        `;
+        const infoCell = document.createElement('td');
+        const fromDiv = document.createElement('div');
+        const fromStrong = document.createElement('strong');
+        fromStrong.textContent = 'From:';
+        fromDiv.appendChild(fromStrong);
+        fromDiv.appendChild(document.createTextNode(` ${email.from || ''}`));
+
+        const subjectDiv = document.createElement('div');
+        const subjectStrong = document.createElement('strong');
+        subjectStrong.textContent = 'Subject:';
+        subjectDiv.appendChild(subjectStrong);
+        subjectDiv.appendChild(document.createTextNode(` ${email.subject || ''}`));
+
+        const dateDiv = document.createElement('div');
+        const dateStrong = document.createElement('strong');
+        dateStrong.textContent = 'Date:';
+        dateDiv.appendChild(dateStrong);
+        dateDiv.appendChild(document.createTextNode(` ${email.date || ''}`));
+
+        infoCell.appendChild(fromDiv);
+        infoCell.appendChild(subjectDiv);
+        infoCell.appendChild(dateDiv);
+        row.appendChild(infoCell);
+
+        const filenameCell = document.createElement('td');
+        filenameCell.textContent = att.filename || '';
+        row.appendChild(filenameCell);
+
+        const sizeCell = document.createElement('td');
+        sizeCell.textContent = formatFileSize(att.size);
+        row.appendChild(sizeCell);
+
+        const duplicateCell = document.createElement('td');
+        duplicateCell.textContent = (email.is_duplicate || false) ? '⚠️' : '-';
+        row.appendChild(duplicateCell);
 
         attachmentSelectionTbody.appendChild(row);
       });
@@ -814,15 +867,35 @@
         statusLabel = '❌ Error';
       }
 
-      const actionHtml = att.reportId
-        ? `<a href="/?reportId=${att.reportId}" target="_blank" class="view-button">View</a>`
-        : `<button class="secondary-button" onclick="alert('${att.error || 'Unknown error'}')">Log</button>`;
+      const filenameCell = document.createElement('td');
+      filenameCell.textContent = att.filename || '';
+      row.appendChild(filenameCell);
 
-      row.innerHTML = `
-        <td>${att.filename}</td>
-        <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
-        <td>${actionHtml}</td>
-      `;
+      const statusCell = document.createElement('td');
+      const statusBadge = document.createElement('span');
+      statusBadge.className = `status-badge ${statusClass}`;
+      statusBadge.textContent = statusLabel;
+      statusCell.appendChild(statusBadge);
+      row.appendChild(statusCell);
+
+      const actionCell = document.createElement('td');
+      if (att.reportId) {
+        const viewLink = document.createElement('a');
+        viewLink.href = `/?reportId=${att.reportId}`;
+        viewLink.target = '_blank';
+        viewLink.className = 'view-button';
+        viewLink.textContent = 'View';
+        actionCell.appendChild(viewLink);
+      } else {
+        const logButton = document.createElement('button');
+        logButton.type = 'button';
+        logButton.className = 'secondary-button';
+        logButton.textContent = 'Log';
+        const errorMessage = att.error || 'Unknown error';
+        logButton.addEventListener('click', () => alert(errorMessage));
+        actionCell.appendChild(logButton);
+      }
+      row.appendChild(actionCell);
 
       resultsTbody.appendChild(row);
     });
