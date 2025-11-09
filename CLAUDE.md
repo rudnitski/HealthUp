@@ -202,7 +202,8 @@ Static UI (`public/`) with async polling for long operations:
   - Unified progress table (works for both manual and Gmail batches)
   - Results table with status badges (✅ Done, 🔄 Duplicate, ❌ Error)
   - "View" buttons open reports in new tabs (batch results persist in original tab)
-  - Old single-file upload UI hidden but preserved for rollback (Phase 2)
+  - Automatic duplicate file detection (filename+size+lastModified)
+  - Unique composite keys for Gmail attachments (messageId-attachmentId)
 - SQL generator → polls agentic iterations → copies SQL
 - Plot renderer (`js/plotRenderer.js`) with Chart.js + zoom/datalabels
 - Parameter table view with out-of-range highlighting (red outline)
@@ -211,11 +212,6 @@ Static UI (`public/`) with async polling for long operations:
 - Pending analytes review (approve/discard with rationale)
 - Ambiguous matches resolution (select correct analyte)
 - All actions logged to `admin_actions` audit trail
-
-**Gmail Dev Pages (DEPRECATED in v3.0, kept for rollback):**
-- `gmail-dev.html`, `gmail-results.html`, `js/gmail-dev.js`
-- Functionality fully merged into `index.html` + `unified-upload.js`
-- Will be removed in Phase 4 after production verification
 
 ## Plot Generation Contract
 

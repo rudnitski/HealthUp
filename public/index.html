@@ -158,21 +158,8 @@
       </section>
     </div>
 
-    <!-- OLD SINGLE-FILE UPLOAD UI (Phase 2: Hidden for rollback safety) -->
-    <div id="old-upload-ui" style="display: none;">
-      <form class="upload-form" aria-label="Upload analysis form">
-        <label for="file-input">Choose an image or PDF</label>
-        <input
-          id="file-input"
-          class="file-input"
-          type="file"
-          name="analysisFile"
-          accept="image/*,.pdf"
-          aria-describedby="file-help"
-        >
-        <p id="file-help" class="help-text">Supported formats: images and PDF. Only one file at a time.</p>
-        <button id="analyze-btn" class="analyze-button" type="button">Upload &amp; Analyze</button>
-      </form>
+    <!-- Report Viewing UI (shown when ?reportId= parameter is present) -->
+    <div id="report-view-ui" style="display: none;">
       <p id="file-message" class="message" aria-live="polite" hidden></p>
       <p id="analysis-result" class="message" aria-live="polite" hidden></p>
       <section class="progress" aria-live="polite" hidden>
@@ -182,6 +169,7 @@
       <section id="analysis-details" class="result-details" aria-live="polite" hidden></section>
       <pre id="analysis-raw" class="raw-output" hidden></pre>
     </div>
+
     <section class="sql-generator" aria-labelledby="sql-generator-title">
       <div class="sql-generator__header">
         <h2 id="sql-generator-title">Ask the Database</h2>
