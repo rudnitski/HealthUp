@@ -1,20 +1,14 @@
 (() => {
-  const fileInput = document.querySelector('#file-input');
+  // Report viewing elements (shown when ?reportId= parameter is present)
   const fileMessageEl = document.querySelector('#file-message');
-  const analyzeBtn = document.querySelector('#analyze-btn');
   const resultEl = document.querySelector('#analysis-result');
   const detailsEl = document.querySelector('#analysis-details');
   const rawOutputEl = document.querySelector('#analysis-raw');
-
-  if (!fileInput || !fileMessageEl || !analyzeBtn || !resultEl || !detailsEl || !rawOutputEl) {
-    return;
-  }
 
   // Check for reportId in URL parameters and auto-load report
   const urlParams = new URLSearchParams(window.location.search);
   const reportIdParam = urlParams.get('reportId');
 
-  const defaultButtonText = analyzeBtn.textContent;
   const progressBarEl = document.querySelector('#progress-bar');
   const progressStepsEl = document.querySelector('#progress-steps');
   const progressContainerEl = progressBarEl?.parentElement || null;
@@ -562,33 +556,8 @@
     rawOutputEl.hidden = false;
   };
 
-  const resetAnalyzeButton = () => {
-    analyzeBtn.disabled = false;
-    analyzeBtn.textContent = defaultButtonText;
-  };
-
-  fileInput.addEventListener('change', () => {
-    const [file] = fileInput.files || [];
-    updateFileMessage(file ? file.name : '');
-    hideDetails();
-    setRawOutput('');
-
-    if (file) {
-      setResultMessage('Ready to analyze. Click "Upload & Analyze" when you\'re ready.', 'info');
-    } else {
-      setResultMessage('');
-    }
-  });
-
-  fileInput.addEventListener('input', () => {
-    const [file] = fileInput.files || [];
-    if (!file) {
-      updateFileMessage('');
-      hideDetails();
-      setRawOutput('');
-      setResultMessage('');
-    }
-  });
+  // Old upload functionality removed (now handled by unified-upload.js)
+  // Kept here as dead code for reference during transition
 
   // Map numeric progress (0-100) to pipeline steps
   const mapProgressToSteps = (progressPercent, jobStatus) => {
@@ -673,150 +642,8 @@
     throw new Error('Analysis timed out. Please try again.');
   };
 
-  analyzeBtn.addEventListener('click', async () => {
-    const [file] = fileInput.files || [];
 
-    if (!file) {
-      setResultMessage('Select a file before analyzing.', 'error');
-      hideDetails();
-      return;
-    }
-
-    const analysisStartedAt = performance.now();
-
-    const formData = new FormData();
-    formData.append('analysisFile', file, file.name || 'upload');
-
-    analyzeBtn.disabled = true;
-    analyzeBtn.textContent = 'Analyzing…';
-    hideDetails();
-    setResultMessage('Uploading your lab report…', 'loading');
-    renderProgress([{ id: 'uploaded', status: 'in_progress' }]);
-
-    try {
-      // Step 1: Upload file and get job ID
-      const uploadResponse = await fetch('/api/analyze-labs', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const uploadPayload = await uploadResponse.json().catch(() => ({}));
-
-      if (!uploadResponse.ok) {
-        const errorMessage = typeof uploadPayload.error === 'string' && uploadPayload.error
-          ? uploadPayload.error
-          : 'Upload failed. Please try again later.';
-        setResultMessage(errorMessage, 'error');
-        setRawOutput('');
-        hideDetails();
-        return;
-      }
-
-      // Check for job ID (async processing)
-      if (uploadResponse.status === 202 && uploadPayload.job_id) {
-        const jobId = uploadPayload.job_id;
-
-        setResultMessage('Analyzing your lab report…', 'loading');
-        renderProgress([{ id: 'uploaded', status: 'completed' }]);
-
-        // Step 2: Poll for job completion
-        const result = await pollJobStatus(jobId, (progress, message, status) => {
-          // Update progress message
-          if (message) {
-            setResultMessage(message, 'loading');
-          }
-
-          // Update progress UI with mapped steps
-          const mappedSteps = mapProgressToSteps(progress, status);
-          renderProgress(mappedSteps);
-        });
-
-        // Step 3: Display results
-        const elapsedMs = performance.now() - analysisStartedAt;
-        let persistedPayload = null;
-
-        if (typeof result.report_id === 'string' && result.report_id) {
-          setResultMessage('Loading results…', 'loading');
-          persistedPayload = await fetchPersistedReport(result.report_id);
-        }
-
-        const displayPayload = persistedPayload || result || {};
-
-        renderDetails(displayPayload, elapsedMs);
-
-        // Mark all steps as completed
-        renderProgress(mapProgressToSteps(100, 'completed'));
-
-        const parametersForMessage = Array.isArray(displayPayload.parameters)
-          ? displayPayload.parameters
-          : [];
-        const total = parametersForMessage.length;
-
-        let statusMessage;
-        let statusState;
-
-        if (total > 0) {
-          statusMessage = `Extracted ${total} parameter${total === 1 ? '' : 's'}.`;
-          statusState = 'success';
-        } else {
-          statusMessage = 'No parameters detected.';
-          statusState = 'info';
-        }
-
-        setResultMessage(statusMessage, statusState);
-        setRawOutput(
-          typeof displayPayload.raw_model_output === 'string'
-            ? displayPayload.raw_model_output
-            : '',
-        );
-      } else {
-        // Legacy synchronous response (backwards compatibility)
-        renderProgress(uploadPayload.progress || []);
-
-        const elapsedMs = performance.now() - analysisStartedAt;
-        let persistedPayload = null;
-
-        if (typeof uploadPayload.report_id === 'string' && uploadPayload.report_id) {
-          setResultMessage('Saving your results…', 'loading');
-          persistedPayload = await fetchPersistedReport(uploadPayload.report_id);
-        }
-
-        const displayPayload = persistedPayload || uploadPayload || {};
-
-        renderDetails(displayPayload, elapsedMs);
-        renderProgress((uploadPayload && uploadPayload.progress) || []);
-
-        const parametersForMessage = Array.isArray(displayPayload.parameters)
-          ? displayPayload.parameters
-          : [];
-        const total = parametersForMessage.length;
-
-        let statusMessage;
-        let statusState;
-
-        if (total > 0) {
-          statusMessage = `Extracted ${total} parameter${total === 1 ? '' : 's'}.`;
-          statusState = 'success';
-        } else {
-          statusMessage = 'No parameters detected.';
-          statusState = 'info';
-        }
-
-        setResultMessage(statusMessage, statusState);
-        setRawOutput(
-          typeof displayPayload.raw_model_output === 'string'
-            ? displayPayload.raw_model_output
-            : '',
-        );
-      }
-    } catch (error) {
-      setResultMessage(error.message || 'Unable to analyze right now. Please try again later.', 'error');
-      setRawOutput('');
-      hideDetails();
-    } finally {
-      resetAnalyzeButton();
-    }
-  });
+  // Old upload button event listener removed (functionality moved to unified-upload.js)
 
   const sqlQuestionInput = document.querySelector('#sql-question');
   const sqlGenerateBtn = document.querySelector('#sql-generate-btn');

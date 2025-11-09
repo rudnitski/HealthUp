@@ -6,6 +6,7 @@
  */
 
 const jobs = new Map();
+const batches = new Map();
 
 // Job statuses
 const JobStatus = {
@@ -15,13 +16,23 @@ const JobStatus = {
   FAILED: 'failed'
 };
 
-// Automatic cleanup of old jobs (older than 1 hour)
+// Automatic cleanup of old jobs and batches (older than 1 hour)
 setInterval(() => {
   const oneHourAgo = Date.now() - (60 * 60 * 1000);
+
+  // Clean up old jobs
   for (const [jobId, job] of jobs.entries()) {
     if (job.createdAt < oneHourAgo) {
       jobs.delete(jobId);
       console.log(`[JobManager] Cleaned up old job: ${jobId}`);
+    }
+  }
+
+  // Clean up old batches
+  for (const [batchId, batch] of batches.entries()) {
+    if (batch.createdAt < oneHourAgo) {
+      batches.delete(batchId);
+      console.log(`[JobManager] Cleaned up old batch: ${batchId}`);
     }
   }
 }, 5 * 60 * 1000); // Run every 5 minutes
@@ -193,6 +204,87 @@ function getUserJobs(userId) {
   return Array.from(jobs.values()).filter(job => job.userId === userId);
 }
 
+/**
+ * Create a new batch of jobs
+ * @param {string} userId - User ID who initiated the batch
+ * @param {array} files - Array of file objects with {name, data, mimetype, size}
+ * @returns {object} { batchId, jobs, files: filesWithJobIds }
+ */
+function createBatch(userId, files) {
+  const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const jobs = files.map(file => {
+    const jobId = createJob(userId, {
+      filename: file.name,
+      batchId
+    });
+    return {
+      jobId,
+      filename: file.name,
+      status: 'pending'
+    };
+  });
+
+  // Persist jobId on the uploaded file objects so downstream workers can
+  // report status updates against the right job records.
+  const filesWithJobIds = files.map((file, index) => ({
+    ...file,
+    jobId: jobs[index].jobId
+  }));
+
+  batches.set(batchId, {
+    batchId,
+    userId,
+    jobs,
+    files: filesWithJobIds,
+    createdAt: Date.now()
+  });
+
+  console.log(`[JobManager] Created batch: ${batchId} with ${jobs.length} jobs`);
+  return { batchId, jobs, files: filesWithJobIds };
+}
+
+/**
+ * Get batch status
+ * @param {string} batchId - Batch ID
+ * @returns {object|null} Batch status or null if not found
+ */
+function getBatchStatus(batchId) {
+  const batch = batches.get(batchId);
+  if (!batch) return null;
+
+  const jobsWithStatus = batch.jobs.map(({ jobId, filename }) => {
+    const job = getJobStatus(jobId);
+    return {
+      job_id: jobId,
+      filename,
+      status: job?.status || 'pending',
+      progress: job?.progress || 0,
+      progress_message: job?.progressMessage || '',
+      report_id: job?.result?.report_id || null,
+      error: job?.error || null
+    };
+  });
+
+  const completedJobs = jobsWithStatus.filter(j => j.status === 'completed' || j.status === 'failed');
+
+  return {
+    batch_id: batchId,
+    total_count: batch.jobs.length,
+    completed_count: completedJobs.length,
+    all_complete: completedJobs.length === batch.jobs.length,
+    jobs: jobsWithStatus
+  };
+}
+
+/**
+ * Get batch by ID
+ * @param {string} batchId - Batch ID
+ * @returns {object|null} Batch object or null if not found
+ */
+function getBatch(batchId) {
+  return batches.get(batchId) || null;
+}
+
 module.exports = {
   JobStatus,
   createJob,
@@ -204,5 +296,8 @@ module.exports = {
   getJobStatus,
   jobExists,
   deleteJob,
-  getUserJobs
+  getUserJobs,
+  createBatch,
+  getBatchStatus,
+  getBatch
 };

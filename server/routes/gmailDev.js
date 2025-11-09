@@ -54,28 +54,51 @@ function featureFlagGuard(req, res, next) {
   next();
 }
 
-// Apply feature flag guard to all routes
-router.use(featureFlagGuard);
-
 /**
  * GET /api/dev-gmail/status
- * Check Gmail authentication status
+ * Check Gmail integration availability and connection status
+ * CRITICAL: This endpoint must come BEFORE featureFlagGuard middleware
+ * to allow frontend to distinguish between disabled/not-connected states
  */
 router.get('/status', async (req, res) => {
   try {
     logger.info('[gmailDev] Status check requested');
 
+    // Check if feature is enabled
+    const enabled = process.env.GMAIL_INTEGRATION_ENABLED === 'true' && NODE_ENV !== 'production';
+
+    if (!enabled) {
+      const reason = NODE_ENV === 'production'
+        ? 'Gmail integration disabled in production'
+        : 'Gmail integration is not enabled (set GMAIL_INTEGRATION_ENABLED=true)';
+
+      return res.status(200).json({
+        enabled: false,
+        connected: false,
+        reason
+      });
+    }
+
+    // Feature is enabled, check if connected
     const clientStatus = await getOAuth2Client();
 
-    return res.status(200).json(clientStatus);
+    return res.status(200).json({
+      enabled: true,
+      connected: clientStatus.connected,
+      email: clientStatus.email || undefined
+    });
   } catch (error) {
     logger.error('[gmailDev] Failed to check status:', error.message);
     return res.status(500).json({
+      enabled: true,
       connected: false,
       error: 'Failed to check authentication status'
     });
   }
 });
+
+// Apply feature flag guard to all routes EXCEPT /status
+router.use(featureFlagGuard);
 
 /**
  * GET /api/dev-gmail/auth-url
@@ -554,7 +577,6 @@ function isValidAttachment(filename, mimeType, allowedMimes) {
     if (filenameLower.endsWith('.pdf')) return true;
     if (filenameLower.endsWith('.png')) return true;
     if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) return true;
-    if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) return true;
   }
 
   return false;
@@ -604,7 +626,7 @@ router.post('/ingest', async (req, res) => {
     }
 
     // Get allowed MIME types from env
-    const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/tiff').split(',');
+    const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/heic').split(',');
 
     // Validate each selection
     for (const sel of selections) {

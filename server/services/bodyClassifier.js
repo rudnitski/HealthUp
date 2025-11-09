@@ -51,11 +51,10 @@ function hasOcrableAttachments(attachments) {
     'image/png',
     'image/jpeg',
     'image/jpg',
-    'image/tiff',
-    'image/tif'
+    'image/heic'
   ];
 
-  const ocrableExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'tif', 'tiff'];
+  const ocrableExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'heic'];
 
   return attachments.some(a => {
     if (a.isInline) return false; // Skip inline images
