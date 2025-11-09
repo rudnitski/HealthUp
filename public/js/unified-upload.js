@@ -695,7 +695,8 @@
           progressTbody.innerHTML = '';
           summary.attachments.forEach(att => {
             const row = document.createElement('tr');
-            row.dataset.filename = att.filename;
+            // Use composite key (messageId-attachmentId) to handle duplicate filenames
+            row.dataset.attachmentKey = `${att.messageId}-${att.attachmentId}`;
             row.innerHTML = `
               <td class="filename">${att.filename}</td>
               <td class="status"><span class="status-icon">⏳</span> Queued</td>
@@ -713,7 +714,8 @@
 
         // Update rows
         summary.attachments.forEach(att => {
-          const row = progressTbody.querySelector(`tr[data-filename="${att.filename}"]`);
+          const attachmentKey = `${att.messageId}-${att.attachmentId}`;
+          const row = progressTbody.querySelector(`tr[data-attachment-key="${attachmentKey}"]`);
           if (!row) return;
 
           // Update status
