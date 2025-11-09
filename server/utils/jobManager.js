@@ -211,7 +211,7 @@ function getUserJobs(userId) {
  * @returns {object} { batchId, jobs, files: filesWithJobIds }
  */
 function createBatch(userId, files) {
-  const batchId = `batch_${Date.now()}`;
+  const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const jobs = files.map(file => {
     const jobId = createJob(userId, {
       filename: file.name,
