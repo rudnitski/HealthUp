@@ -4,6 +4,29 @@
  */
 
 (() => {
+  // Check if we're viewing a specific report (reportId in URL)
+  // If so, show old UI and exit early - app.js will handle the report loading
+  const urlParams = new URLSearchParams(window.location.search);
+  const reportIdParam = urlParams.get('reportId');
+
+  if (reportIdParam) {
+    const unifiedUi = document.getElementById('unified-upload-ui');
+    const oldUi = document.getElementById('old-upload-ui');
+
+    if (unifiedUi) {
+      unifiedUi.style.display = 'none';
+      unifiedUi.hidden = true;
+    }
+
+    if (oldUi) {
+      oldUi.style.display = 'block';
+      oldUi.hidden = false;
+    }
+
+    console.log('[unified-upload] Report view mode - showing old UI for reportId:', reportIdParam);
+    return; // Exit early - app.js will handle loading the report
+  }
+
   // Constants
   const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
   const MAX_BATCH_SIZE = 20;
@@ -819,17 +842,6 @@
   // Initialization
   // ======================
 
-  // Check if we're viewing a specific report (reportId in URL)
-  const urlParams = new URLSearchParams(window.location.search);
-  const reportIdParam = urlParams.get('reportId');
-
-  if (reportIdParam) {
-    // User is viewing a specific report - hide unified UI, show old UI
-    document.getElementById('unified-upload-ui').hidden = true;
-    document.getElementById('old-upload-ui').style.display = 'block';
-    // The old app.js will handle loading the report
-  } else {
-    // Normal upload flow - show unified UI
-    checkGmailStatus();
-  }
+  // Check Gmail status on page load (only in normal upload mode)
+  checkGmailStatus();
 })();
