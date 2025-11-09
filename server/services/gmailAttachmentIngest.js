@@ -61,7 +61,6 @@ function isValidAttachment(filename, mimeType, allowedMimes) {
     if (filenameLower.endsWith('.pdf')) return true;
     if (filenameLower.endsWith('.png')) return true;
     if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) return true;
-    if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) return true;
   }
 
   return false;
@@ -84,7 +83,7 @@ async function startBatchIngestion(selections) {
   }
 
   // Validate selections (mime type, size limits)
-  const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/tiff').split(',');
+  const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/heic').split(',');
   const maxBytes = parseInt(process.env.GMAIL_MAX_ATTACHMENT_MB || '15') * 1024 * 1024;
 
   const validSelections = selections.filter(sel => {
@@ -210,8 +209,6 @@ async function ingestAttachment(selection, batchId) {
         normalizedMimeType = 'image/png';
       } else if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) {
         normalizedMimeType = 'image/jpeg';
-      } else if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) {
-        normalizedMimeType = 'image/tiff';
       }
     }
 

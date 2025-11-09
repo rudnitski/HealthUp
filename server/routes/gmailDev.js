@@ -577,7 +577,6 @@ function isValidAttachment(filename, mimeType, allowedMimes) {
     if (filenameLower.endsWith('.pdf')) return true;
     if (filenameLower.endsWith('.png')) return true;
     if (filenameLower.endsWith('.jpg') || filenameLower.endsWith('.jpeg')) return true;
-    if (filenameLower.endsWith('.tif') || filenameLower.endsWith('.tiff')) return true;
   }
 
   return false;
@@ -627,7 +626,7 @@ router.post('/ingest', async (req, res) => {
     }
 
     // Get allowed MIME types from env
-    const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/tiff').split(',');
+    const allowedMimes = (process.env.GMAIL_ALLOWED_MIME || 'application/pdf,image/png,image/jpeg,image/heic').split(',');
 
     // Validate each selection
     for (const sel of selections) {

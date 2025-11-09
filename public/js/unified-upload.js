@@ -35,9 +35,7 @@
     'application/pdf',
     'image/png',
     'image/jpeg',
-    'image/heic',
-    'image/tiff',
-    'image/tif'
+    'image/heic'
   ]);
   const POLL_INTERVAL = 2000; // 2 seconds
 

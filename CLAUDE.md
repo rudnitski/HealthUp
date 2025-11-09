@@ -119,7 +119,7 @@ Pattern prevents Cloudflare 524 timeouts for 20-60+ second operations.
 - `GET /api/analyze-labs/batches/:batchId` - Poll batch status (returns all job statuses)
 - Field name: `analysisFile` (express-fileupload auto-converts to array for multiple files)
 - Throttled concurrency: Max 3 files processed simultaneously
-- Supported types: PDF, PNG, JPEG, HEIC, TIFF
+- Supported types: PDF, PNG, JPEG, HEIC
 
 **Batch Job Manager:**
 - Extended `jobManager.js` with `createBatch()`, `getBatchStatus()`, `getBatch()`
