@@ -109,6 +109,15 @@
     alert(message);
   }
 
+  /**
+   * Generate unique key for file deduplication
+   * Uses filename + size + lastModified timestamp
+   * Note: Browser security prevents access to full file paths
+   */
+  function getFileKey(file) {
+    return `${file.name}|${file.size}|${file.lastModified}`;
+  }
+
   // ======================
   // File Selection & Validation
   // ======================
@@ -145,11 +154,39 @@
   }
 
   function handleFileSelection(files, append = false) {
-    // If appending, combine with existing files
-    const filesToValidate = append
-      ? [...selectedFiles, ...Array.from(files)]
-      : Array.from(files);
+    // Convert to array
+    const newFiles = Array.from(files);
 
+    // Deduplicate: track unique files by filename + size + lastModified
+    const existingKeys = new Set(selectedFiles.map(f => getFileKey(f)));
+    const uniqueNewFiles = [];
+    const duplicates = [];
+
+    for (const file of newFiles) {
+      const key = getFileKey(file);
+      if (existingKeys.has(key)) {
+        duplicates.push(file.name);
+      } else {
+        uniqueNewFiles.push(file);
+        existingKeys.add(key);
+      }
+    }
+
+    // Show notification if duplicates were skipped
+    if (duplicates.length > 0) {
+      const uniqueNames = [...new Set(duplicates)]; // Remove duplicate names from list
+      const message = uniqueNames.length === 1
+        ? `File "${uniqueNames[0]}" was already added (skipped)`
+        : `${uniqueNames.length} duplicate files were skipped:\n${uniqueNames.join('\n')}`;
+      showToast(message, 'info');
+    }
+
+    // Combine with existing files if appending
+    const filesToValidate = append
+      ? [...selectedFiles, ...uniqueNewFiles]
+      : uniqueNewFiles;
+
+    // Validate the final set
     const validation = validateFiles(filesToValidate);
 
     if (!validation.valid) {
