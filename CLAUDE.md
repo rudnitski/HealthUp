@@ -30,8 +30,15 @@ HealthUp is a Node.js/Express monolith that ingests lab reports (PDF/image), ext
 
 **Core Flow:**
 ```
-Upload → Async Job (jobManager) → Vision OCR → Persistence → Auto-mapping → SQL Generation → Plotting
+Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Persistence → Auto-mapping → SQL Generation → Plotting
 ```
+
+**Unified Upload System (v3.0):**
+- Single UI on `index.html` for both manual multi-file uploads and Gmail import
+- Manual uploads: Multi-file selection (max 20 files, 100MB aggregate), drag & drop support
+- Gmail import: OAuth → Email classification → Attachment selection → Batch ingestion
+- Both paths converge on unified progress/results tables
+- Results open in new tabs, batch view persists in original tab
 
 ### Key Services
 
@@ -72,17 +79,24 @@ Upload → Async Job (jobManager) → Vision OCR → Persistence → Auto-mappin
 
 Express routes must follow specific ordering for correct matching:
 
-**CRITICAL: `/api/dev-gmail/jobs/summary` MUST come BEFORE `/api/dev-gmail/jobs/:jobId`**
+**CRITICAL Route Ordering Rules:**
+1. `/api/dev-gmail/status` MUST come BEFORE `featureFlagGuard` middleware (allows frontend to check if feature is enabled)
+2. `/api/dev-gmail/jobs/summary` MUST come BEFORE `/api/dev-gmail/jobs/:jobId`
+3. `/api/analyze-labs/batches/:batchId` MUST come BEFORE any catch-all routes
 
 Express matches routes in order. The generic `/jobs/:jobId` route will catch `/jobs/summary` if it's defined first, treating "summary" as a jobId parameter. Always define specific routes before parameterized routes.
 
 Example:
 ```javascript
 // CORRECT order
+router.get('/status', ...);        // Status check BEFORE guard
+router.use(featureFlagGuard);      // Guard applies to routes below
 router.get('/jobs/summary', ...);  // Specific route first
 router.get('/jobs/:jobId', ...);   // Generic route second
 
-// WRONG order - will break /jobs/summary
+// WRONG order - will break /jobs/summary and /status
+router.use(featureFlagGuard);      // Guard blocks status check
+router.get('/status', ...);        // Never reached when disabled
 router.get('/jobs/:jobId', ...);   // Generic catches everything
 router.get('/jobs/summary', ...);  // Never reached
 ```
@@ -97,6 +111,28 @@ All long-running operations (lab report processing, Gmail classification, attach
 4. **Job manager** (`server/utils/jobManager.js`) tracks in-memory state with 1-hour TTL
 
 Pattern prevents Cloudflare 524 timeouts for 20-60+ second operations.
+
+## Batch Processing (v3.0)
+
+**Manual Multi-File Upload:**
+- `POST /api/analyze-labs/batch` - Upload multiple files (max 20 files, 10MB each, 100MB aggregate)
+- `GET /api/analyze-labs/batches/:batchId` - Poll batch status (returns all job statuses)
+- Field name: `analysisFile` (express-fileupload auto-converts to array for multiple files)
+- Throttled concurrency: Max 3 files processed simultaneously
+- Supported types: PDF, PNG, JPEG, HEIC, TIFF
+
+**Batch Job Manager:**
+- Extended `jobManager.js` with `createBatch()`, `getBatchStatus()`, `getBatch()`
+- Tracks batches in-memory (1-hour TTL, same as individual jobs)
+- Each batch contains multiple jobs, each job processes one file
+- Backend queues processing via `setImmediate()`, returns 202 Accepted immediately
+- Frontend polls single batch endpoint instead of N individual job endpoints (more efficient)
+
+**Gmail Batch Integration:**
+- Gmail attachment ingestion also uses batch pattern (existing functionality)
+- `POST /api/dev-gmail/ingest` → returns `batchId`
+- `GET /api/dev-gmail/jobs/summary?batchId=xxx` → batch summary
+- Richer status vocabulary: `queued`, `downloading`, `processing`, `completed`, `updated`, `duplicate`, `failed`
 
 ## Gmail Integration (Steps 1-3)
 
@@ -155,8 +191,18 @@ Three-stage pipeline for ingesting lab reports from Gmail:
 
 Static UI (`public/`) with async polling for long operations:
 
-**Main App (`index.html`, `js/app.js`):**
-- Upload form → polls job status → displays results
+**Main App (`index.html`, `js/app.js`, `js/unified-upload.js`):**
+- **Unified upload UI (v3.0):** Single interface for manual multi-file uploads and Gmail import
+  - Upload source buttons (📁 Upload Files, 📧 Import from Gmail)
+  - Multi-file selection with drag & drop support
+  - File validation (type, size, batch limits)
+  - Upload queue table (filename, size, type)
+  - Gmail OAuth flow and email classification (2-step progress)
+  - Gmail attachment selection with duplicate warnings
+  - Unified progress table (works for both manual and Gmail batches)
+  - Results table with status badges (✅ Done, 🔄 Duplicate, ❌ Error)
+  - "View" buttons open reports in new tabs (batch results persist in original tab)
+  - Old single-file upload UI hidden but preserved for rollback (Phase 2)
 - SQL generator → polls agentic iterations → copies SQL
 - Plot renderer (`js/plotRenderer.js`) with Chart.js + zoom/datalabels
 - Parameter table view with out-of-range highlighting (red outline)
@@ -166,12 +212,10 @@ Static UI (`public/`) with async polling for long operations:
 - Ambiguous matches resolution (select correct analyte)
 - All actions logged to `admin_actions` audit trail
 
-**Gmail Dev (`gmail-dev.html`, `js/gmail-dev.js`):**
-- OAuth connection flow
-- Three-stage results (Step 1 → Step 2 → Step 3)
-- Attachment selection with duplicate warnings
-- Progress tracking with live countdown modal
-- Auto-redirect to results page on completion
+**Gmail Dev Pages (DEPRECATED in v3.0, kept for rollback):**
+- `gmail-dev.html`, `gmail-results.html`, `js/gmail-dev.js`
+- Functionality fully merged into `index.html` + `unified-upload.js`
+- Will be removed in Phase 4 after production verification
 
 ## Plot Generation Contract
 
@@ -220,6 +264,7 @@ Feature specs live in `docs/PRD_*.md`:
 - v2.6: Parameter table view
 - v2.7: Multi-provider OCR
 - v2.8: Gmail Integration (Steps 1-3)
+- v3.0: Unified Upload and Ingestion (multi-file manual uploads + Gmail import on single page)
 
 Consult these when drafting new PRDs or understanding feature history.
 
