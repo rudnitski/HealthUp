@@ -336,19 +336,24 @@ async function checkChecksumAlreadyProcessed(checksum) {
 }
 
 /**
- * Check if the report was an update (vs new insert) using PostgreSQL xmax trick
- * xmax = 0 means the row was inserted (not updated)
- * xmax > 0 means the row was updated
+ * Check if the report was an update (vs new insert) using timestamp comparison
+ * If created_at === updated_at, it's a new insert
+ * If created_at !== updated_at, it was updated via ON CONFLICT
  */
 async function checkIfReportWasUpdated(reportId) {
   const result = await pool.query(`
-    SELECT (xmax = 0) AS is_new_insert
+    SELECT created_at, updated_at
     FROM patient_reports
     WHERE id = $1
   `, [reportId]);
 
-  const isNew = result.rows[0]?.is_new_insert ?? true;
-  return !isNew; // Return true if it was an update, false if new insert
+  if (!result.rows[0]) {
+    return false; // Report not found, assume new
+  }
+
+  const { created_at, updated_at } = result.rows[0];
+  // If timestamps differ, it was an update (ON CONFLICT was triggered)
+  return created_at.getTime() !== updated_at.getTime();
 }
 
 /**
