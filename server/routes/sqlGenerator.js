@@ -3,8 +3,86 @@ const { handleGeneration, SqlGeneratorError } = require('../services/sqlGenerato
 const { bustCache, reloadSchemaAliases } = require('../services/schemaSnapshot');
 const { reloadSchemaAliases: reloadPromptAliases } = require('../services/promptBuilder');
 const { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus } = require('../utils/jobManager');
+const { validateSQL } = require('../services/sqlValidator');
+const { pool } = require('../db');
+const logger = console;
 
 const router = express.Router();
+
+/**
+ * Execute a data query (already validated SQL with LIMIT)
+ * @param {string} sqlWithLimit - Validated SQL with LIMIT clause already enforced
+ * @param {string} userIdentifier - User identifier for logging
+ * @returns {Promise<{rows: Array, rowCount: number, fields: Array}>}
+ */
+async function executeDataQuery(sqlWithLimit, userIdentifier) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL statement_timeout = 30000'); // Scoped to this transaction only
+
+    // Execute query (SQL already validated and has LIMIT)
+    const result = await client.query(sqlWithLimit);
+
+    await client.query('COMMIT');
+
+    return {
+      rows: result.rows,
+      rowCount: result.rowCount,
+      fields: result.fields
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Count total rows available (before LIMIT) for pagination info
+ * @param {string} sqlWithLimit - Validated SQL with LIMIT clause already enforced
+ * @param {string} userIdentifier - User identifier for logging
+ * @returns {Promise<number|null>} Total row count or null if count fails
+ */
+async function countTotalRows(sqlWithLimit, userIdentifier) {
+  // Strip LIMIT clause from validated SQL to count total available rows
+  // IMPORTANT: This SQL has already been validated by validateSQL(), so it's safe to manipulate
+
+  let sqlWithoutLimit = sqlWithLimit
+    .replace(/;?\s*$/i, '')       // Remove trailing semicolons and whitespace
+    .replace(/--[^\n]*$/gm, '')   // Remove trailing line comments
+    .trim();
+
+  // Remove LIMIT clause (handles LIMIT N and LIMIT N OFFSET M)
+  sqlWithoutLimit = sqlWithoutLimit.replace(/\s+LIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*$/i, '');
+
+  // Wrap in COUNT query
+  const countSql = `SELECT COUNT(*) as total FROM (${sqlWithoutLimit}) as subq`;
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL statement_timeout = 5000');
+
+    const result = await client.query(countSql);
+    const total = parseInt(result.rows[0]?.total || 0, 10);
+
+    await client.query('COMMIT');
+
+    return total;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    // Count query failed (may timeout on complex queries)
+    // Return null so frontend can use rowCount instead
+    console.warn(`[countTotalRows] Failed to count total rows:`, err.message);
+    return null;
+  } finally {
+    client.release();
+  }
+}
 
 const getUserIdentifier = (req) => {
   if (req?.user?.id) {
@@ -78,22 +156,83 @@ router.post('/', async (req, res) => {
       // Update job to processing
       updateJob(jobId, JobStatus.PROCESSING);
 
-      const result = await handleGeneration({
+      const sqlGenerationResult = await handleGeneration({
         question,
         userIdentifier,
         model,
       });
 
-      // Store result regardless of validation outcome
-      // Validation failures (ok: false) still contain structured error details (hint, violations)
-      // that the frontend needs to display to the user
-      if (result.ok === false) {
-        console.warn(`[sqlGenerator:${requestId}] SQL generation validation failed for job ${jobId}`, result.error);
-      } else {
-        console.log(`[sqlGenerator:${requestId}] SQL generation completed successfully for job ${jobId}`);
+      // Check if generation failed
+      if (!sqlGenerationResult || sqlGenerationResult.ok === false) {
+        console.warn(`[sqlGenerator:${requestId}] SQL generation validation failed for job ${jobId}`, sqlGenerationResult?.error);
+        setJobResult(jobId, sqlGenerationResult); // Return validation failure
+        return;
       }
 
+      console.log(`[sqlGenerator:${requestId}] SQL generation completed successfully for job ${jobId}`);
+
+      // Strip SQL out of the payload before further processing
+      const {
+        sql: rawSql,
+        ...resultWithoutSql
+      } = sqlGenerationResult || {};
+
+      // Determine query type (handle missing field for single-shot mode)
+      const queryType = sqlGenerationResult?.query_type || 'data_query';
+
+      if (queryType !== 'data_query') {
+        // Plot queries: behavior unchanged (SQL still required for plot renderer)
+        setJobResult(jobId, sqlGenerationResult);
+        return;
+      }
+
+      // NEW: Auto-execute data_query SQL
+      console.log(`[sqlGenerator:${requestId}] Auto-executing data query for job ${jobId}`);
+
+      if (!rawSql) {
+        console.error(`[sqlGenerator:${requestId}] Missing SQL for data query job ${jobId}`);
+        setJobError(jobId, 'No SQL was generated for this question.');
+        return;
+      }
+
+      logger.info({
+        requestId,
+        jobId,
+        sql_preview: rawSql.substring(0, 200)
+      }, '[sqlGenerator] Data query SQL generated (server-log only)');
+
+      // Validate SQL (already validated in handleGeneration, but check query_type-specific constraints)
+      const validation = await validateSQL(rawSql, {
+        schemaSnapshotId: sqlGenerationResult.metadata?.schema_snapshot_id,
+        queryType: 'data_query'
+      });
+
+      if (!validation.valid) {
+        // Validation failed (shouldn't happen, but handle gracefully)
+        console.error(`[sqlGenerator:${requestId}] Data query re-validation failed`, validation.violations);
+        setJobError(jobId, 'Query validation failed during execution');
+        return;
+      }
+
+      // Execute validated SQL and count total rows
+      const [executionResult, totalRowCount] = await Promise.all([
+        executeDataQuery(validation.sqlWithLimit, userIdentifier),
+        countTotalRows(validation.sqlWithLimit, userIdentifier)
+      ]);
+
+      // Combine non-SQL metadata + execution results
+      const result = {
+        ...resultWithoutSql,
+        execution: {
+          rows: executionResult.rows,
+          rowCount: executionResult.rowCount,
+          totalRowCount: totalRowCount, // Total available (before LIMIT)
+          fields: executionResult.fields
+        }
+      };
+
       setJobResult(jobId, result);
+      console.log(`[sqlGenerator:${requestId}] Data query executed: ${executionResult.rowCount} rows returned, ${totalRowCount || 'unknown'} total available`);
 
     } catch (error) {
       console.error(`[sqlGenerator:${requestId}] Background SQL generation failed for job ${jobId}:`, {
@@ -104,7 +243,7 @@ router.post('/', async (req, res) => {
       if (error instanceof SqlGeneratorError) {
         setJobError(jobId, error.message);
       } else {
-        setJobError(jobId, 'Unexpected error generating SQL');
+        setJobError(jobId, error.message || 'Unexpected error during query execution');
       }
     }
   });

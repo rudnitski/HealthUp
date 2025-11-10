@@ -379,7 +379,33 @@ const TOOL_DEFINITIONS = [
         properties: {
           sql: {
             type: "string",
-            description: "The final SQL query to answer the user's question"
+            description: `The final SQL query to answer the user's question.
+
+            For data_query (tabular results):
+            - REQUIRED aliases: date, value, unit, reference_interval
+            - OPTIONAL: is_value_out_of_range, parameter_name
+            - Format reference_interval as readable string (e.g., '< 5.2', '30 - 100')
+            - Use COALESCE for null handling
+
+            Example:
+            SELECT
+              test_date as date,
+              value,
+              unit,
+              CASE
+                WHEN reference_lower IS NOT NULL AND reference_upper IS NOT NULL
+                  THEN reference_lower || ' - ' || reference_upper
+                WHEN reference_lower IS NOT NULL
+                  THEN '>= ' || reference_lower
+                WHEN reference_upper IS NOT NULL
+                  THEN '<= ' || reference_upper
+                ELSE NULL
+              END as reference_interval,
+              (value < reference_lower OR value > reference_upper) as is_value_out_of_range
+            FROM v_measurements
+            WHERE parameter_name ILIKE '%cholesterol%'
+            ORDER BY test_date DESC
+            LIMIT 50;`
           },
           explanation: {
             type: "string",

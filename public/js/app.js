@@ -647,24 +647,16 @@
 
   const sqlQuestionInput = document.querySelector('#sql-question');
   const sqlGenerateBtn = document.querySelector('#sql-generate-btn');
-  const sqlRegenerateBtn = document.querySelector('#sql-regenerate-btn');
-  const sqlCopyBtn = document.querySelector('#sql-copy-btn');
   const sqlStatusEl = document.querySelector('#sql-status');
-  const sqlResultEl = document.querySelector('#sql-result');
-  const sqlOutputEl = document.querySelector('#sql-output');
-  const sqlModelEl = document.querySelector('#sql-model');
-  const sqlConfidenceEl = document.querySelector('#sql-confidence');
-  const sqlGeneratedAtEl = document.querySelector('#sql-generated-at');
-  const sqlWarningsEl = document.querySelector('#sql-warnings');
-  const sqlNotesEl = document.querySelector('#sql-notes');
-  const sqlCopyFeedbackEl = document.querySelector('#sql-copy-feedback');
+
+  // Data results elements
+  const dataResultsSection = document.getElementById('data-results-section');
+  const dataResultsTbody = document.getElementById('data-results-tbody');
+  const rowCountMsg = document.getElementById('row-count-message');
 
   if (
     sqlQuestionInput
     && sqlGenerateBtn
-    && sqlCopyBtn
-    && sqlResultEl
-    && sqlOutputEl
   ) {
     let lastQuestion = '';
     let isGeneratingSql = false;
@@ -696,63 +688,8 @@
     const setSqlLoadingState = (isLoading) => {
       isGeneratingSql = isLoading;
       sqlGenerateBtn.disabled = isLoading;
-
-      if (sqlRegenerateBtn) {
-        sqlRegenerateBtn.disabled = isLoading;
-      }
-
-      if (sqlCopyBtn) {
-        sqlCopyBtn.disabled = isLoading;
-      }
     };
 
-    const renderWarnings = (warnings) => {
-      if (!sqlWarningsEl) {
-        return;
-      }
-
-      if (!Array.isArray(warnings) || warnings.length === 0) {
-        sqlWarningsEl.hidden = true;
-        sqlWarningsEl.replaceChildren();
-        return;
-      }
-
-      const fragment = document.createDocumentFragment();
-      let appended = 0;
-      warnings.forEach((warning) => {
-        if (!isNonEmptyString(warning)) {
-          return;
-        }
-        const item = document.createElement('li');
-        item.textContent = warning.trim();
-        fragment.append(item);
-        appended += 1;
-      });
-
-      if (appended === 0) {
-        sqlWarningsEl.hidden = true;
-        sqlWarningsEl.replaceChildren();
-        return;
-      }
-
-      sqlWarningsEl.replaceChildren(fragment);
-      sqlWarningsEl.hidden = false;
-    };
-
-    const renderNotes = (notes) => {
-      if (!sqlNotesEl) {
-        return;
-      }
-
-      if (!isNonEmptyString(notes)) {
-        sqlNotesEl.hidden = true;
-        sqlNotesEl.textContent = '';
-        return;
-      }
-
-      sqlNotesEl.hidden = false;
-      sqlNotesEl.textContent = notes.trim();
-    };
 
     // Track current chart instance for cleanup
     let currentChart = null;
@@ -1248,6 +1185,164 @@
       }
     };
 
+    /**
+     * Formats date string or timestamp to readable format
+     * @param {string|number} date - ISO string, Unix timestamp, or formatted date
+     * @returns {string}
+     */
+    const formatDate = (date) => {
+      if (!date) return '';
+
+      try {
+        const d = new Date(date);
+        if (isNaN(d.getTime())) return date; // Return as-is if invalid
+
+        return d.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        }); // e.g., "Jan 15, 2024"
+      } catch (err) {
+        return date; // Return original on error
+      }
+    };
+
+    /**
+     * Determines if a value should be highlighted as out-of-range
+     * @param {Object} row - Data row
+     * @returns {boolean}
+     */
+    const shouldHighlightOutOfRange = (row) => {
+      // Use database flag if available
+      if (row.is_value_out_of_range !== undefined) {
+        return row.is_value_out_of_range;
+      }
+
+      // Fallback: compute client-side
+      const value = parseFloat(row.value);
+      if (isNaN(value)) return false;
+
+      const lower = parseFloat(row.reference_lower);
+      const upper = parseFloat(row.reference_upper);
+
+      if (!isNaN(lower) && value < lower) return true;
+      if (!isNaN(upper) && value > upper) return true;
+
+      return false;
+    };
+
+    /**
+     * Escapes HTML special characters to prevent XSS attacks
+     * @param {string} str - String to escape
+     * @returns {string} - HTML-safe string
+     */
+    const escapeHtml = (str) => {
+      if (!str) return '';
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    };
+
+    /**
+     * Display error message in data results section
+     * @param {string} message - Error message to display
+     */
+    const showDataError = (message) => {
+      if (dataResultsTbody && dataResultsSection && rowCountMsg) {
+        dataResultsTbody.innerHTML = `<tr><td colspan="4" class="error-message">${escapeHtml(message)}</td></tr>`;
+        rowCountMsg.textContent = '';
+        dataResultsSection.style.display = 'block';
+      }
+    };
+
+    /**
+     * Renders tabular results for data_query type queries
+     * @param {Object} payload - SQL generation result with execution data
+     * @param {Object} payload.execution - Execution results
+     * @param {Array} payload.execution.rows - Result rows
+     * @param {number} payload.execution.rowCount - Number of rows returned
+     * @param {number} payload.execution.totalRowCount - Total rows available (before LIMIT)
+     */
+    const renderDataQueryResults = (payload) => {
+      if (!dataResultsSection || !dataResultsTbody || !rowCountMsg) {
+        console.error('[renderDataQueryResults] Required DOM elements not found');
+        return;
+      }
+
+      // Clear previous results
+      dataResultsTbody.innerHTML = '';
+
+      // Validate execution data
+      if (!payload.execution || !payload.execution.rows) {
+        showDataError('No execution results available');
+        return;
+      }
+
+      const { rows, rowCount, totalRowCount } = payload.execution;
+
+      // Handle empty results
+      if (rowCount === 0) {
+        dataResultsTbody.innerHTML = '<tr><td colspan="4" class="no-data">No data found for your query</td></tr>';
+        rowCountMsg.textContent = 'No results found';
+        dataResultsSection.style.display = 'block';
+        return;
+      }
+
+      // Validate required column aliases (prevent broken UI)
+      if (rowCount > 0) {
+        const firstRow = rows[0];
+        const requiredColumns = ['date', 'value', 'unit', 'reference_interval'];
+        const missingColumns = requiredColumns.filter(col => !(col in firstRow));
+
+        if (missingColumns.length > 0) {
+          console.error('[renderDataQueryResults] Missing required columns:', missingColumns, 'requestId:', payload.metadata?.request_id);
+          showDataError(`Query results are missing required columns: ${missingColumns.join(', ')}. Please try rephrasing your question.`);
+          return;
+        }
+      }
+
+      // Render row count message
+      if (totalRowCount && totalRowCount > rowCount) {
+        rowCountMsg.textContent = `Showing ${rowCount} of ${totalRowCount} total rows`;
+      } else {
+        rowCountMsg.textContent = `Found ${rowCount} row${rowCount !== 1 ? 's' : ''}`;
+      }
+
+      // Render table rows
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+
+        // Date column
+        const dateCell = document.createElement('td');
+        dateCell.textContent = formatDate(row.date) || 'N/A';
+        tr.appendChild(dateCell);
+
+        // Value column (with out-of-range highlighting)
+        const valueCell = document.createElement('td');
+        valueCell.textContent = row.value !== null ? row.value : 'N/A';
+
+        // Apply out-of-range styling if applicable
+        if (shouldHighlightOutOfRange(row)) {
+          valueCell.setAttribute('data-out-of-range', 'true');
+        }
+        tr.appendChild(valueCell);
+
+        // Unit column
+        const unitCell = document.createElement('td');
+        unitCell.textContent = row.unit || '';
+        tr.appendChild(unitCell);
+
+        // Reference Interval column
+        const refCell = document.createElement('td');
+        refCell.textContent = row.reference_interval || 'Unavailable';
+        tr.appendChild(refCell);
+
+        dataResultsTbody.appendChild(tr);
+      });
+
+      dataResultsSection.style.display = 'block';
+    };
+
     const renderSqlResult = (payload) => {
       if (!payload || typeof payload !== 'object') {
         return;
@@ -1281,70 +1376,31 @@
         plotResetBtn.onclick = null;
       }
 
-      if (sqlOutputEl) {
-        const sqlText = isNonEmptyString(payload.sql) ? payload.sql.trim() : '';
-        sqlOutputEl.textContent = sqlText;
+      // Hide/reset data results section
+      if (dataResultsSection) {
+        dataResultsSection.style.display = 'none';
+      }
+      if (dataResultsTbody) {
+        dataResultsTbody.innerHTML = '';
+      }
+      if (rowCountMsg) {
+        rowCountMsg.textContent = '';
       }
 
-      if (sqlResultEl) {
-        sqlResultEl.hidden = !isNonEmptyString(payload.sql);
+      // Determine query type (handle missing field for single-shot mode)
+      const queryType = payload.query_type || 'data_query';
+
+      // Log warning if query_type is missing
+      if (!payload.query_type) {
+        console.warn('[renderSqlResult] query_type field missing, defaulting to data_query. This may indicate agentic mode is disabled.');
       }
 
-      // Handle new metadata structure (PRD v0.9.2)
-      if (sqlModelEl) {
-        const model = payload.metadata && isNonEmptyString(payload.metadata.model)
-          ? payload.metadata.model
-          : payload.model; // Fallback to old format
-        sqlModelEl.textContent = isNonEmptyString(model) ? `Model: ${model}` : '';
-      }
-
-      if (sqlConfidenceEl) {
-        // Old format compatibility
-        if (typeof payload.confidence === 'number' && Number.isFinite(payload.confidence)) {
-          const clamped = Math.max(0, Math.min(payload.confidence, 1));
-          const percent = Math.round(clamped * 100);
-          sqlConfidenceEl.textContent = `Confidence: ${percent}%`;
-        } else {
-          sqlConfidenceEl.textContent = '';
+      // Route based on query type
+      if (queryType === 'plot_query') {
+        // Plot query: use existing plot rendering logic
+        if (dataResultsSection) {
+          dataResultsSection.style.display = 'none';
         }
-      }
-
-      if (sqlGeneratedAtEl) {
-        if (isNonEmptyString(payload.generated_at)) {
-          const generatedDate = new Date(payload.generated_at);
-          if (!Number.isNaN(generatedDate.getTime())) {
-            sqlGeneratedAtEl.textContent = generatedDate.toLocaleString();
-          } else {
-            sqlGeneratedAtEl.textContent = '';
-          }
-        } else {
-          sqlGeneratedAtEl.textContent = '';
-        }
-      }
-
-      // Display explanation (new in PRD v0.9.2)
-      if (isNonEmptyString(payload.explanation)) {
-        renderNotes(payload.explanation);
-      } else {
-        renderNotes(payload.notes); // Fallback to old format
-      }
-
-      // Warnings are deprecated in new format, but keep for compatibility
-      renderWarnings(payload.warnings);
-
-      if (sqlRegenerateBtn) {
-        sqlRegenerateBtn.hidden = false;
-      }
-
-      if (sqlCopyFeedbackEl) {
-        sqlCopyFeedbackEl.hidden = true;
-        sqlCopyFeedbackEl.textContent = 'Copied!';
-      }
-
-      // Check if this is a plot query (render plot after all other UI updates)
-      const isPlotQuery = payload.query_type === 'plot_query';
-      if (isPlotQuery) {
-        // Use setTimeout to ensure DOM is updated before rendering plot
         setTimeout(() => {
           if (window.plotRenderer) {
             renderPlotVisualization(payload).catch(err => {
@@ -1354,6 +1410,9 @@
             console.error('[app] plotRenderer not available');
           }
         }, 100);
+      } else {
+        // Data query: render tabular results
+        renderDataQueryResults(payload);
       }
     };
 
@@ -1456,7 +1515,16 @@
               : inputValue;
 
             renderSqlResult(result);
-            setSqlStatus('SQL generated. Review before using externally.', 'success');
+
+            // Set status message based on query type
+            const queryType = result.query_type || 'data_query';
+            if (queryType === 'plot_query') {
+              setSqlStatus('Visualization generated successfully.', 'success');
+            } else if (queryType === 'data_query') {
+              setSqlStatus('Query results displayed below.', 'success');
+            } else {
+              setSqlStatus('Query completed successfully.', 'success');
+            }
             return; // Done!
 
           } else if (jobStatus.status === 'failed') {
@@ -1486,16 +1554,6 @@
 
     sqlGenerateBtn.addEventListener('click', () => performSqlGeneration({ regenerate: false }));
 
-    if (sqlRegenerateBtn) {
-      sqlRegenerateBtn.addEventListener('click', () => {
-        if (!isNonEmptyString(lastQuestion)) {
-          setSqlStatus('Generate a query before requesting a new version.', 'error');
-          return;
-        }
-        performSqlGeneration({ regenerate: true });
-      });
-    }
-
     sqlQuestionInput.addEventListener('keydown', (event) => {
       if (!event) {
         return;
@@ -1506,49 +1564,6 @@
         performSqlGeneration({ regenerate: false });
       }
     });
-
-    if (sqlCopyBtn) {
-      sqlCopyBtn.addEventListener('click', async () => {
-        if (!sqlOutputEl || !isNonEmptyString(sqlOutputEl.textContent)) {
-          return;
-        }
-
-        const sqlText = sqlOutputEl.textContent;
-
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(sqlText);
-          } else {
-            const tempTextArea = document.createElement('textarea');
-            tempTextArea.value = sqlText;
-            tempTextArea.setAttribute('readonly', '');
-            tempTextArea.style.position = 'absolute';
-            tempTextArea.style.left = '-9999px';
-            document.body.appendChild(tempTextArea);
-            tempTextArea.select();
-            document.execCommand('copy');
-            document.body.removeChild(tempTextArea);
-          }
-
-          if (sqlCopyFeedbackEl) {
-            sqlCopyFeedbackEl.hidden = false;
-            sqlCopyFeedbackEl.textContent = 'Copied!';
-
-            if (copyFeedbackTimeout) {
-              clearTimeout(copyFeedbackTimeout);
-            }
-
-            copyFeedbackTimeout = setTimeout(() => {
-              if (sqlCopyFeedbackEl) {
-                sqlCopyFeedbackEl.hidden = true;
-              }
-            }, 2000);
-          }
-        } catch (_copyError) {
-          setSqlStatus('Unable to copy to clipboard. Copy manually if needed.', 'error');
-        }
-      });
-    }
   }
 
   // Auto-load report if reportId is in URL parameters
