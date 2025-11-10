@@ -194,29 +194,36 @@
           </p>
           <div class="sql-generator__actions">
             <button id="sql-generate-btn" class="analyze-button" type="button">Generate SQL</button>
-            <button id="sql-regenerate-btn" class="secondary-button" type="button" hidden>Regenerate</button>
           </div>
           <p id="sql-status" class="message" aria-live="polite" hidden></p>
         </div>
+      </div>
+
+      <!-- Data query results section -->
+      <div id="data-results-section" class="data-results-section" style="display: none;">
+        <div class="results-header">
+          <h3>Query Results</h3>
+          <p id="row-count-message" class="row-count-message"></p>
+        </div>
+        <div class="parameters-table-wrapper">
+          <table id="data-results-table" class="parameters-table">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Value</th>
+                <th scope="col">Unit</th>
+                <th scope="col">Reference Interval</th>
+              </tr>
+            </thead>
+            <tbody id="data-results-tbody">
+              <!-- Populated dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sql-generator__grid">
         <div class="sql-generator__panel">
-          <div class="sql-generator__banner" role="note">
-            <span class="sql-generator__banner-title">Reminder:</span>
-            <span>Review the SQL before running it externally. Ensure tenant filters and PHI safeguards remain in place.</span>
-          </div>
-          <div id="sql-result" class="sql-generator__result" hidden>
-            <div class="sql-generator__meta">
-              <span id="sql-model" class="sql-generator__meta-item"></span>
-              <span id="sql-confidence" class="sql-generator__meta-item"></span>
-              <time id="sql-generated-at" class="sql-generator__meta-item" aria-live="polite"></time>
-            </div>
-            <div class="sql-generator__result-actions">
-              <button id="sql-copy-btn" class="secondary-button" type="button">Copy SQL</button>
-              <span id="sql-copy-feedback" class="sql-generator__copy-feedback" hidden>Copied!</span>
-            </div>
-            <pre id="sql-output" class="sql-generator__output" aria-live="polite"></pre>
-            <ul id="sql-warnings" class="sql-generator__warnings" hidden></ul>
-            <p id="sql-notes" class="sql-generator__notes" hidden></p>
-          </div>
         </div>
         <!-- Plot visualization with parameter selector (v2.3) -->
         <div id="plot-visualization-container" class="plot-visualization-container" hidden>

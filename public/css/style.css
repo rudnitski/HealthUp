@@ -20,6 +20,8 @@
   --color-info-soft: rgba(10, 132, 255, 0.16);
   --color-danger-soft: rgba(255, 59, 48, 0.18);
   --color-header: #f2f2f7;
+  --text-secondary: #6c757d;
+  --error-color: #dc3545;
 }
 
 * {
@@ -337,6 +339,46 @@ label {
 .parameters-table__row--flagged td:first-child {
   font-weight: 700;
   color: var(--color-danger);
+}
+
+/* Data query results section */
+.data-results-section {
+  margin-top: 2rem;
+}
+
+.results-header {
+  margin-bottom: 1rem;
+}
+
+.results-header h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+}
+
+.row-count-message {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+/* Out-of-range highlighting (reuse existing style) */
+.data-results-section td[data-out-of-range='true'] {
+  outline: 2px solid var(--error-color);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+/* Empty state / error messages */
+.data-results-section .no-data,
+.data-results-section .error-message {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.data-results-section .error-message {
+  color: var(--error-color);
 }
 
 .raw-output {
