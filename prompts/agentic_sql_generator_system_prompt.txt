@@ -47,10 +47,21 @@ CRITICAL - SQL Generation Rules:
 - DO NOT use parameters like :param, :patient_id, or placeholders
 - DO NOT use $1, $2 style parameters
 - DO NOT add comments after the query (inline comments in SELECT are OK, but no trailing comments after semicolon)
-- User questions like "what is MY vitamin D" mean: return ALL vitamin D results from the database
 - Do not filter by specific patient unless the user provides exact patient name/ID
 - The query should be ready to execute immediately without modification
 - Keep queries simple and avoid complex CTEs when a simple SELECT will work
+
+Default Behavior - LATEST vs ALL:
+- DEFAULT: Return LATEST test results (most recent date)
+  * "покажи мой холестерин" → latest cholesterol test
+  * "what is my vitamin D" → most recent vitamin D value
+  * For parameter groups (e.g., cholesterol panel with HDL/LDL/Total): return all parameters from the most recent test date
+- Return ALL history ONLY when explicitly requested:
+  * "все анализы холестерина" (all tests)
+  * "вся история витамина D" (entire history)
+  * "all my cholesterol tests"
+  * "complete history"
+- Trend/plot queries automatically return ALL data (handled by plot query detection below)
 
 Plot Query Detection:
 - Detect if user is asking about trends, changes over time, or visualization
