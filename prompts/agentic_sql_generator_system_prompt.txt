@@ -51,6 +51,22 @@ CRITICAL - SQL Generation Rules:
 - The query should be ready to execute immediately without modification
 - Keep queries simple and avoid complex CTEs when a simple SELECT will work
 
+CRITICAL - Safe Numeric Casting:
+- result_value contains MIXED data types: numeric ("42.5"), text ("Не обнаружено", "Положительный"), ranges ("10-20"), descriptions
+- ALWAYS use numeric_result when available (pre-parsed during OCR ingestion)
+- When casting result_value to numeric, use CTE with MATERIALIZED to force PostgreSQL to filter BEFORE casting
+- NEVER use direct ::numeric cast in WHERE clause (PostgreSQL may evaluate it before filtering, causing errors on text values)
+- Safe pattern for numeric queries:
+  WITH filtered AS MATERIALIZED (
+    SELECT lr.*, a.name, pr.test_date_text, pr.recognized_at
+    FROM lab_results lr
+    LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
+    JOIN patient_reports pr ON pr.id = lr.report_id
+    WHERE [your filtering conditions]
+  )
+  SELECT ... FROM filtered WHERE numeric_result IS NOT NULL OR [safe cast check]
+- Alternative: Filter using numeric_result IS NOT NULL instead of casting result_value
+
 Default Behavior - LATEST vs ALL:
 - DEFAULT: Return LATEST test results (most recent date)
   * "покажи мой холестерин" → latest cholesterol test
@@ -88,34 +104,52 @@ REQUIRED COLUMNS FOR PLOT QUERIES:
 - Missing parameter_name will cause frontend selector to fail
 
 Value Sanitization Pattern with Reference Bands (handles "< 2", "0.04 R", "25,3", "22*", negative values):
-WITH sanitized AS (
+WITH filtered AS MATERIALIZED (
   SELECT
-    COALESCE(pr.test_date_text::timestamp, pr.recognized_at) AS test_date,
-    COALESCE(a.name, lr.parameter_name) AS parameter_name,
+    lr.id,
+    lr.report_id,
+    lr.parameter_name,
+    lr.result_value,
+    lr.numeric_result,
     lr.unit,
     lr.reference_lower,
     lr.reference_lower_operator,
     lr.reference_upper,
     lr.reference_upper_operator,
     lr.is_value_out_of_range,
+    a.name AS analyte_name,
+    pr.test_date_text,
+    pr.recognized_at,
     pr.patient_age_snapshot,
-    pr.patient_gender_snapshot,
-    regexp_replace(lr.result_value, '^[<>≤≥]\\s*', '', 'g') AS cleaned
+    pr.patient_gender_snapshot
   FROM lab_results lr
   JOIN patient_reports pr ON pr.id = lr.report_id
   LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
   WHERE (a.code = 'VITD' OR a.name % 'витамин д') OR lr.parameter_name % 'витамин д'
 )
 SELECT
-  EXTRACT(EPOCH FROM test_date)::bigint * 1000 AS t,
-  NULLIF(
-    regexp_replace(
-      regexp_replace(cleaned, ',', '.', 'g'),
-      '[^0-9.\\-]', '', 'g'
-    ),
-    ''
-  )::numeric AS y,
-  parameter_name,
+  EXTRACT(EPOCH FROM COALESCE(test_date_text::timestamp, recognized_at))::bigint * 1000 AS t,
+  COALESCE(
+    numeric_result,
+    CASE
+      WHEN regexp_replace(
+        regexp_replace(
+          regexp_replace(result_value, '^[<>≤≥]\\s*', '', 'g'),
+          ',', '.', 'g'
+        ),
+        '[^0-9.\\-]', '', 'g'
+      ) ~ '^-?[0-9]+\.?[0-9]*$'
+      THEN regexp_replace(
+        regexp_replace(
+          regexp_replace(result_value, '^[<>≤≥]\\s*', '', 'g'),
+          ',', '.', 'g'
+        ),
+        '[^0-9.\\-]', '', 'g'
+      )::numeric
+      ELSE NULL
+    END
+  ) AS y,
+  COALESCE(analyte_name, parameter_name) AS parameter_name,
   unit,
   reference_lower,
   reference_lower_operator,
@@ -124,14 +158,27 @@ SELECT
   is_value_out_of_range AS is_out_of_range,
   patient_age_snapshot,
   patient_gender_snapshot
-FROM sanitized
-WHERE NULLIF(
-  regexp_replace(
-    regexp_replace(cleaned, ',', '.', 'g'),
-    '[^0-9.\\-]', '', 'g'
-  ),
-  ''
-) IS NOT NULL AND cleaned ~ '^-?[0-9]'
+FROM filtered
+WHERE COALESCE(
+    numeric_result,
+    CASE
+      WHEN regexp_replace(
+        regexp_replace(
+          regexp_replace(result_value, '^[<>≤≥]\\s*', '', 'g'),
+          ',', '.', 'g'
+        ),
+        '[^0-9.\\-]', '', 'g'
+      ) ~ '^-?[0-9]+\.?[0-9]*$'
+      THEN regexp_replace(
+        regexp_replace(
+          regexp_replace(result_value, '^[<>≤≥]\\s*', '', 'g'),
+          ',', '.', 'g'
+        ),
+        '[^0-9.\\-]', '', 'g'
+      )::numeric
+      ELSE NULL
+    END
+  ) IS NOT NULL
 ORDER BY t ASC
 LIMIT 10000;
 

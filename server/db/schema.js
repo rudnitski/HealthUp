@@ -44,6 +44,12 @@ const schemaStatements = [
   COMMENT ON TABLE patient_reports IS 'Lab report documents parsed from PDFs';
   `,
   `
+  COMMENT ON COLUMN patient_reports.test_date_text IS 'Test date as text extracted from lab report (e.g., "2024-03-15"). May be NULL if not found. Parse to timestamp for time-series queries.';
+  `,
+  `
+  COMMENT ON COLUMN patient_reports.recognized_at IS 'Timestamp when the lab report was processed by OCR. Use as fallback date when test_date_text is NULL.';
+  `,
+  `
   CREATE TABLE IF NOT EXISTS analytes (
     analyte_id SERIAL PRIMARY KEY,
     code TEXT UNIQUE NOT NULL,
@@ -62,6 +68,9 @@ const schemaStatements = [
   `,
   `
   COMMENT ON COLUMN analytes.name IS 'Canonical English name for display';
+  `,
+  `
+  COMMENT ON COLUMN analytes.unit_canonical IS 'Standardized unit of measurement for this analyte. May differ from lab_results.unit which contains raw OCR values.';
   `,
   `
   CREATE TABLE IF NOT EXISTS analyte_aliases (
@@ -118,6 +127,30 @@ const schemaStatements = [
   `,
   `
   COMMENT ON COLUMN lab_results.mapping_source IS 'Source of mapping: auto_exact, auto_fuzzy, auto_llm, manual_resolved, manual';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.result_value IS 'Raw result value from lab report. May contain: numeric values (e.g., "42.5", "120"), qualitative text (e.g., "Не обнаружено", "Положительный", "++"), reference ranges (e.g., "10-20"), or descriptive text. Use numeric_result for numeric queries.';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.numeric_result IS 'Pre-parsed numeric value extracted from result_value during OCR ingestion. Use this field for numeric filtering and sorting. NULL for text-only results.';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.parameter_name IS 'Original parameter name from lab report as recognized by OCR. May contain typos, variations, or non-standard naming. Use analyte_id for canonical mapping.';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.unit IS 'Unit of measurement as recognized from lab report (e.g., "нг/мл", "mmol/L"). May vary across labs. Use analyte.unit_canonical for standardized unit.';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.reference_lower IS 'Lower bound of reference range extracted from lab report. Use with reference_upper to determine normal range.';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.reference_upper IS 'Upper bound of reference range extracted from lab report. Use with reference_lower to determine normal range.';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.is_value_out_of_range IS 'Boolean flag indicating if the result is outside the reference range. Set during OCR ingestion based on lab report indicators.';
+  `,
+  `
+  COMMENT ON COLUMN lab_results.analyte_id IS 'Foreign key to analytes table. NULL if parameter not yet mapped to canonical analyte. Use for joining with canonical analyte data.';
   `,
   `
   CREATE TABLE IF NOT EXISTS pending_analytes (

@@ -38,7 +38,7 @@ function computeSnapshotId(manifest) {
 async function fetchSchemaFromDatabase() {
   const client = await pool.connect();
   try {
-    // Fetch columns
+    // Fetch columns with descriptions
     const { rows: columnRows } = await client.query(
       `
       SELECT
@@ -46,8 +46,20 @@ async function fetchSchemaFromDatabase() {
         c.table_name,
         c.column_name,
         c.data_type,
-        c.is_nullable
+        c.is_nullable,
+        d.description
       FROM information_schema.columns c
+      LEFT JOIN pg_catalog.pg_class cls
+        ON cls.relname = c.table_name
+        AND cls.relnamespace = (
+          SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema
+        )
+      LEFT JOIN pg_catalog.pg_attribute a
+        ON a.attrelid = cls.oid
+        AND a.attname = c.column_name
+      LEFT JOIN pg_catalog.pg_description d
+        ON d.objoid = a.attrelid
+        AND d.objsubid = a.attnum
       WHERE c.table_schema = ANY($1::text[])
       ORDER BY c.table_schema, c.table_name, c.ordinal_position
       `,
@@ -94,6 +106,7 @@ async function fetchSchemaFromDatabase() {
         name: row.column_name,
         type: row.data_type,
         nullable: row.is_nullable === 'YES',
+        description: row.description || null,
       });
     });
 
