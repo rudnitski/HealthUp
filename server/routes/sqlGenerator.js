@@ -100,16 +100,6 @@ const getUserIdentifier = (req) => {
   return 'anonymous';
 };
 
-// GET /api/sql-generator/config - Get feature flags
-// PRD v3.2: Frontend checks this to determine if conversational mode is enabled
-router.get('/config', (req, res) => {
-  const conversationalMode = process.env.CONVERSATIONAL_SQL_ENABLED === 'true';
-
-  res.json({
-    conversationalMode
-  });
-});
-
 // GET /api/sql-generator/jobs/:jobId - Get job status
 router.get('/jobs/:jobId', (req, res) => {
   const { jobId } = req.params;

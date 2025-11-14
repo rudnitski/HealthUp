@@ -43,7 +43,6 @@ const logger = pino({
 });
 
 // Configuration
-const CONVERSATIONAL_SQL_ENABLED = process.env.CONVERSATIONAL_SQL_ENABLED === 'true';
 const SQL_GENERATOR_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-4o-mini'; // Fixed: was 'gpt-5-mini' (invalid model)
 const MAX_CONVERSATION_ITERATIONS = 50; // Safety limit to prevent infinite loops
 
@@ -141,14 +140,6 @@ async function extractPatientId(userResponse, patients) {
  * Open SSE connection and create session
  */
 router.get('/stream', (req, res) => {
-  // Check feature flag
-  if (!CONVERSATIONAL_SQL_ENABLED) {
-    return res.status(503).json({
-      error: 'Conversational SQL is not enabled',
-      code: 'FEATURE_DISABLED'
-    });
-  }
-
   // Set SSE headers
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -196,14 +187,6 @@ router.get('/stream', (req, res) => {
  * Submit user message to session
  */
 router.post('/messages', async (req, res) => {
-  // Check feature flag
-  if (!CONVERSATIONAL_SQL_ENABLED) {
-    return res.status(503).json({
-      error: 'Conversational SQL is not enabled',
-      code: 'FEATURE_DISABLED'
-    });
-  }
-
   const { sessionId, message } = req.body;
 
   if (!sessionId || !message) {
