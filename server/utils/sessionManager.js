@@ -47,6 +47,9 @@ class SessionManager {
       createdAt: new Date(),
       lastActivity: new Date(),
       selectedPatientId: null,
+      awaitingPatientSelection: false,
+      patients: [],
+      patientCount: 0,
       messageCount: 0,
       isProcessing: false,
       clarificationCount: 0 // Track number of assistant clarifications

@@ -13,7 +13,7 @@ const { getSchemaContext } = require('../services/schemaSnapshot');
 
 const router = express.Router();
 
-const NODE_ENV = process.env.NODE_ENV || 'development');
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const logger = pino({
   transport: NODE_ENV === 'development' ? {
@@ -273,6 +273,7 @@ async function processMessage(sessionId, userMessage) {
       const patientId = await extractPatientId(userMessage, session.patients || []);
       if (patientId) {
         sessionManager.setSelectedPatient(sessionId, patientId);
+        session.awaitingPatientSelection = false;
         logger.info('[chatStream] Patient selected:', {
           session_id: sessionId,
           patient_id: patientId
@@ -312,6 +313,14 @@ async function initializeSystemPrompt(session) {
   // Store patient info in session
   session.patientCount = patientCount;
   session.patients = patients;
+  if (patientCount === 1 && patients.length === 1) {
+    sessionManager.setSelectedPatient(session.id, patients[0].id);
+    session.awaitingPatientSelection = false;
+  } else if (patientCount > 1 && patients.length > 1) {
+    session.awaitingPatientSelection = true;
+  } else {
+    session.awaitingPatientSelection = false;
+  }
 
   // Add system message
   session.messages.unshift({
