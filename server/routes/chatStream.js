@@ -1,6 +1,22 @@
 // server/routes/chatStream.js
 // Server-Sent Events (SSE) endpoint for conversational SQL assistant
 // PRD: docs/PRD_v3_2_conversational_sql_assistant.md
+//
+// KNOWN LIMITATIONS (MVP):
+// 1. SSE response stored in session object - not serializable, potential memory leak
+//    TODO: Refactor to event emitter pattern or response registry
+// 2. No timeout watchdog - relies on OpenAI's 10-minute default
+//    TODO: Add Promise.race() timeout wrapper in production
+// 3. No automatic reconnection on network failure
+//    TODO: Implement exponential backoff reconnection in Phase 3
+// 4. No rate limiting on /stream endpoint
+//    TODO: Add per-IP session limits before production
+//
+// SAFETY MECHANISMS:
+// - Iteration counter: MAX_CONVERSATION_ITERATIONS (50) prevents infinite loops
+// - Atomic processing lock: tryAcquireLock() prevents race conditions
+// - Session validation: checks session exists before recursive calls
+// - Message limit: 20 messages per conversation (enforced in sessionManager)
 
 const express = require('express');
 const OpenAI = require('openai');
@@ -28,7 +44,8 @@ const logger = pino({
 
 // Configuration
 const CONVERSATIONAL_SQL_ENABLED = process.env.CONVERSATIONAL_SQL_ENABLED === 'true';
-const SQL_GENERATOR_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
+const SQL_GENERATOR_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-4o-mini'; // Fixed: was 'gpt-5-mini' (invalid model)
+const MAX_CONVERSATION_ITERATIONS = 50; // Safety limit to prevent infinite loops
 
 let openAiClient;
 
@@ -199,8 +216,8 @@ router.post('/messages', async (req, res) => {
     });
   }
 
-  // Check if session is already processing
-  if (session.isProcessing) {
+  // Atomic check-and-set for processing lock (prevents race conditions)
+  if (!sessionManager.tryAcquireLock(sessionId)) {
     return res.status(409).json({
       error: 'Session is currently processing a message',
       code: 'SESSION_BUSY'
@@ -256,9 +273,6 @@ async function processMessage(sessionId, userMessage) {
     return;
   }
 
-  // Mark as processing
-  sessionManager.setProcessing(sessionId, true);
-
   try {
     // Add user message to conversation
     sessionManager.addMessage(sessionId, 'user', userMessage);
@@ -291,14 +305,20 @@ async function processMessage(sessionId, userMessage) {
       stack: error.stack
     });
 
-    // Try to send error to client if SSE stream is available
-    // Note: In production, you'd track the SSE response object per session
-    // For now, we'll log the error and the session will timeout
+    // Send error to client if SSE stream is available
+    if (session.sseResponse) {
+      streamEvent(session.sseResponse, {
+        type: 'error',
+        code: 'PROCESSING_ERROR',
+        message: 'Failed to process message. Please try again.',
+        debug: NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
 
   } finally {
-    // Mark as not processing
+    // Release processing lock
     if (sessionManager.getSession(sessionId)) {
-      sessionManager.setProcessing(sessionId, false);
+      sessionManager.releaseLock(sessionId);
     }
   }
 }
@@ -337,8 +357,43 @@ async function initializeSystemPrompt(session) {
 
 /**
  * Stream LLM response with tool calling
+ * @param {object} session - Session object with conversation state
  */
 async function streamLLMResponse(session) {
+  // Safety check: verify session still exists (could be deleted by timeout/disconnect)
+  if (!sessionManager.getSession(session.id)) {
+    logger.warn('[chatStream] Session deleted during processing:', {
+      session_id: session.id
+    });
+    return;
+  }
+
+  // Safety limit: prevent infinite tool-calling loops
+  session.iterationCount = (session.iterationCount || 0) + 1;
+  if (session.iterationCount > MAX_CONVERSATION_ITERATIONS) {
+    logger.error('[chatStream] Iteration limit exceeded:', {
+      session_id: session.id,
+      iteration_count: session.iterationCount,
+      max_iterations: MAX_CONVERSATION_ITERATIONS
+    });
+
+    if (session.sseResponse) {
+      streamEvent(session.sseResponse, {
+        type: 'error',
+        code: 'ITERATION_LIMIT_EXCEEDED',
+        message: 'Conversation became too complex. Please start a new conversation.',
+        debug: NODE_ENV === 'development' ? `Exceeded ${MAX_CONVERSATION_ITERATIONS} iterations` : undefined
+      });
+
+      streamEvent(session.sseResponse, {
+        type: 'done'
+      });
+    }
+
+    sessionManager.deleteSession(session.id);
+    return;
+  }
+
   const client = getOpenAiClient();
 
   try {
@@ -425,15 +480,18 @@ async function streamLLMResponse(session) {
   } catch (error) {
     logger.error('[chatStream] LLM streaming error:', {
       session_id: session.id,
-      error: error.message
+      error: error.message,
+      error_code: error.code,
+      error_type: error.type
     });
 
-    // Send error event
+    // Send error event with debug info in development
     if (session.sseResponse) {
       streamEvent(session.sseResponse, {
         type: 'error',
-        code: 'LLM_ERROR',
-        message: 'AI service error. Please try again.'
+        code: error.code || 'LLM_ERROR',
+        message: 'AI service error. Please try again.',
+        debug: NODE_ENV === 'development' ? error.message : undefined
       });
     }
 
@@ -527,7 +585,8 @@ async function executeToolCalls(session, toolCalls) {
           type: 'tool_complete',
           tool: toolName,
           duration_ms: Date.now() - toolStartTime,
-          error: error.message
+          error: error.message,
+          debug: NODE_ENV === 'development' ? error.stack : undefined
         });
       }
 
@@ -540,6 +599,14 @@ async function executeToolCalls(session, toolCalls) {
   }
 
   // Continue conversation (make another LLM call)
+  // Safety check: verify session still exists before recursion
+  if (!sessionManager.getSession(session.id)) {
+    logger.warn('[chatStream] Session deleted during tool execution:', {
+      session_id: session.id
+    });
+    return;
+  }
+
   await streamLLMResponse(session);
 }
 

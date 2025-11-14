@@ -236,6 +236,12 @@ const schemaStatements = [
     metadata JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- v3.2: Conversational analytics columns (nullable for backward compatibility)
+    -- NOTE: CREATE TABLE IF NOT EXISTS creates new tables but doesn't add columns to existing ones.
+    -- For existing installations, you may need to run manually:
+    --   ALTER TABLE sql_generation_logs ADD COLUMN IF NOT EXISTS session_id TEXT;
+    --   ALTER TABLE sql_generation_logs ADD COLUMN IF NOT EXISTS conversation_turns INTEGER DEFAULT 1;
+    --   ALTER TABLE sql_generation_logs ADD COLUMN IF NOT EXISTS clarification_count INTEGER DEFAULT 0;
+    -- PostgreSQL 9.6+ supports IF NOT EXISTS in ALTER TABLE ADD COLUMN.
     session_id TEXT,
     conversation_turns INTEGER DEFAULT 1,
     clarification_count INTEGER DEFAULT 0

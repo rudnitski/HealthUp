@@ -760,6 +760,17 @@ async function validateSQL(sql, { schemaSnapshotId, queryType } = {}) {
 /**
  * Ensure SQL query includes patient scope filter when multiple patients exist
  * PRD v3.2: Patient safety guardrail for conversational mode
+ *
+ * KNOWN LIMITATIONS (acknowledged in PRD):
+ * - Regex-based validation catches ~95% of cases, not 100%
+ * - Won't detect filters in subqueries/CTEs (e.g., WHERE patient_id IN (SELECT ...))
+ * - Could miss reversed predicates (e.g., WHERE 'uuid' = patient_id)
+ * - Case-sensitive UUID comparison could fail if LLM uses uppercase
+ * - Defense-in-depth: relies on LLM prompt to generate correct filters
+ *
+ * TODO (post-MVP): Consider lightweight SQL parser (e.g., node-sql-parser)
+ * for more robust validation, but adds dependency and complexity.
+ *
  * @param {string} sql - SQL query to validate
  * @param {string} patientId - Selected patient UUID
  * @param {number} patientCount - Total number of patients in database

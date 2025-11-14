@@ -52,7 +52,8 @@ class SessionManager {
       patientCount: 0,
       messageCount: 0,
       isProcessing: false,
-      clarificationCount: 0 // Track number of assistant clarifications
+      clarificationCount: 0, // Track number of assistant clarifications
+      iterationCount: 0 // Track tool-calling loop iterations (safety limit)
     };
 
     this.sessions.set(session.id, session);
@@ -148,6 +149,34 @@ class SessionManager {
 
     session.isProcessing = isProcessing;
     return session;
+  }
+
+  /**
+   * Atomic check-and-set for processing lock
+   * Returns true if lock acquired, false if already locked
+   */
+  tryAcquireLock(sessionId) {
+    const session = this.getSession(sessionId);
+    if (!session) {
+      return false;
+    }
+
+    if (session.isProcessing) {
+      return false; // Already locked
+    }
+
+    session.isProcessing = true;
+    return true;
+  }
+
+  /**
+   * Release processing lock
+   */
+  releaseLock(sessionId) {
+    const session = this.getSession(sessionId);
+    if (session) {
+      session.isProcessing = false;
+    }
   }
 
   /**
