@@ -757,9 +757,58 @@ async function validateSQL(sql, { schemaSnapshotId, queryType } = {}) {
   };
 }
 
+/**
+ * Ensure SQL query includes patient scope filter when multiple patients exist
+ * PRD v3.2: Patient safety guardrail for conversational mode
+ * @param {string} sql - SQL query to validate
+ * @param {string} patientId - Selected patient UUID
+ * @param {number} patientCount - Total number of patients in database
+ * @returns {{valid: boolean, violation?: {code: string, message: string}}}
+ */
+function ensurePatientScope(sql, patientId, patientCount) {
+  // Skip check if only one patient exists
+  if (patientCount <= 1) {
+    return { valid: true };
+  }
+
+  if (!patientId) {
+    return {
+      valid: false,
+      violation: {
+        code: 'PATIENT_SCOPE_REQUIRED',
+        message: 'Patient must be selected when multiple patients exist'
+      }
+    };
+  }
+
+  const lowerSql = sql.toLowerCase();
+  const lowerPatientId = patientId.toLowerCase();
+
+  // Check for patient_id = 'uuid' or patient_id IN (...)
+  // Use regex to match common patterns
+  const patientIdPattern = new RegExp(
+    `patient_id\\s*=\\s*'${lowerPatientId}'|` +
+    `patient_id\\s+IN\\s*\\([^)]*'${lowerPatientId}'[^)]*\\)`,
+    'i'
+  );
+
+  if (!patientIdPattern.test(lowerSql)) {
+    return {
+      valid: false,
+      violation: {
+        code: 'MISSING_PATIENT_FILTER',
+        message: `Query must filter by patient_id = '${patientId}'`
+      }
+    };
+  }
+
+  return { valid: true };
+}
+
 module.exports = {
   validateSQL,
   stripComments,
   enforceLimitClause,
+  ensurePatientScope,
   VALIDATION_RULE_VERSION,
 };

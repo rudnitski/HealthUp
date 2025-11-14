@@ -234,7 +234,11 @@ const schemaStatements = [
     latency_ms INT,
     error TEXT,
     metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- v3.2: Conversational analytics columns (nullable for backward compatibility)
+    session_id TEXT,
+    conversation_turns INTEGER DEFAULT 1,
+    clarification_count INTEGER DEFAULT 0
   );
   `,
   `
