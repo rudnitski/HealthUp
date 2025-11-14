@@ -645,19 +645,70 @@
 
   // Old upload button event listener removed (functionality moved to unified-upload.js)
 
-  const sqlQuestionInput = document.querySelector('#sql-question');
-  const sqlGenerateBtn = document.querySelector('#sql-generate-btn');
-  const sqlStatusEl = document.querySelector('#sql-status');
+  // PRD v3.2: Check feature flag for conversational mode
+  let conversationalSQLChat = null;
 
-  // Data results elements
-  const dataResultsSection = document.getElementById('data-results-section');
-  const dataResultsTbody = document.getElementById('data-results-tbody');
-  const rowCountMsg = document.getElementById('row-count-message');
+  (async () => {
+    try {
+      const configResponse = await fetch('/api/sql-generator/config');
+      const config = await configResponse.json();
 
-  if (
-    sqlQuestionInput
-    && sqlGenerateBtn
-  ) {
+      if (config.conversationalMode) {
+        // Initialize conversational chat UI
+        const chatContainer = document.getElementById('conversational-chat-container');
+        const legacySqlSection = document.getElementById('legacy-sql-section');
+
+        if (chatContainer && legacySqlSection) {
+          // Show chat, hide legacy SQL UI
+          chatContainer.style.display = 'block';
+          legacySqlSection.style.display = 'none';
+
+          // Initialize chat
+          if (window.ConversationalSQLChat) {
+            conversationalSQLChat = new window.ConversationalSQLChat();
+            conversationalSQLChat.init(chatContainer);
+            console.log('[app] Conversational SQL mode enabled');
+          } else {
+            console.error('[app] ConversationalSQLChat not loaded');
+          }
+        }
+
+        return; // Skip legacy SQL initialization
+      } else {
+        // Hide chat, show legacy SQL UI
+        const chatContainer = document.getElementById('conversational-chat-container');
+        const legacySqlSection = document.getElementById('legacy-sql-section');
+
+        if (chatContainer && legacySqlSection) {
+          chatContainer.style.display = 'none';
+          legacySqlSection.style.display = 'block';
+        }
+
+        console.log('[app] Legacy SQL mode (job-based)');
+      }
+    } catch (error) {
+      console.error('[app] Failed to check feature flag:', error);
+      // Default to legacy mode on error
+    }
+
+    // Continue with legacy SQL initialization
+    initializeLegacySQL();
+  })();
+
+  function initializeLegacySQL() {
+    const sqlQuestionInput = document.querySelector('#sql-question');
+    const sqlGenerateBtn = document.querySelector('#sql-generate-btn');
+    const sqlStatusEl = document.querySelector('#sql-status');
+
+    // Data results elements
+    const dataResultsSection = document.getElementById('data-results-section');
+    const dataResultsTbody = document.getElementById('data-results-tbody');
+    const rowCountMsg = document.getElementById('row-count-message');
+
+    if (
+      sqlQuestionInput
+      && sqlGenerateBtn
+    ) {
     let lastQuestion = '';
     let isGeneratingSql = false;
     let copyFeedbackTimeout = null;
@@ -1565,6 +1616,7 @@
       }
     });
   }
+  } // End of initializeLegacySQL()
 
   // Auto-load report if reportId is in URL parameters
   if (reportIdParam) {
