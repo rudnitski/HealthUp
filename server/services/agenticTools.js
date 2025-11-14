@@ -442,6 +442,10 @@ const TOOL_DEFINITIONS = [
                 description: "Name of the column to group series by (typically 'unit' for different measurement units)"
               }
             }
+          },
+          patient_id: {
+            type: "string",
+            description: "UUID of the patient this query is for. REQUIRED when multiple patients exist in database AND you've identified which patient from user's message or clarification. Use the patient ID from the pre-loaded patient list in your system prompt."
           }
         },
         required: ["sql", "explanation", "confidence"]

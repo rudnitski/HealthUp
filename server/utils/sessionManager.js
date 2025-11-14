@@ -50,9 +50,7 @@ class SessionManager {
       awaitingPatientSelection: false,
       patients: [],
       patientCount: 0,
-      messageCount: 0,
       isProcessing: false,
-      clarificationCount: 0, // Track number of assistant clarifications
       iterationCount: 0 // Track tool-calling loop iterations (safety limit)
     };
 
@@ -102,17 +100,6 @@ class SessionManager {
     }
 
     session.messages.push({ role, content });
-
-    // Increment message count for user messages
-    if (role === 'user') {
-      session.messageCount++;
-    }
-
-    // Increment clarification count for assistant messages (before final query)
-    if (role === 'assistant' && !session.finalQueryGenerated) {
-      session.clarificationCount++;
-    }
-
     session.lastActivity = new Date();
 
     return session;

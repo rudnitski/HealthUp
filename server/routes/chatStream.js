@@ -25,7 +25,7 @@ const { pool } = require('../db');
 const sessionManager = require('../utils/sessionManager');
 const agenticCore = require('../services/agenticCore');
 const { TOOL_DEFINITIONS } = require('../services/agenticTools');
-const { getSchemaContext } = require('../services/schemaSnapshot');
+const { getSchemaSnapshot } = require('../services/schemaSnapshot');
 
 const router = express.Router();
 
@@ -76,18 +76,23 @@ function streamEvent(res, data) {
 
 /**
  * Extract patient ID from user response
- * Supports: numbered selection (1, 2, 3), name matching, or direct UUID
+ * Supports: numbered selection (1, 2, 3), name matching (including in parentheses), or direct UUID
  */
 async function extractPatientId(userResponse, patients) {
   const trimmed = userResponse.trim();
 
+  // Extract text in parentheses first (e.g., "show my results (юра)" -> "юра")
+  const parenthesesMatch = trimmed.match(/\(([^)]+)\)/);
+  const textToMatch = parenthesesMatch ? parenthesesMatch[1].trim() : trimmed;
+
   // Try numbered selection first (1, 2, 3, etc.)
-  const numberMatch = trimmed.match(/^\d+$/);
+  const numberMatch = textToMatch.match(/^\d+$/);
   if (numberMatch) {
     const index = parseInt(numberMatch[0], 10) - 1; // Convert to 0-based index
     if (index >= 0 && index < patients.length) {
       logger.info('[chatStream] Matched patient by number:', {
         user_input: trimmed,
+        extracted_text: textToMatch,
         selected_index: index,
         patient_id: patients[index].id
       });
@@ -96,12 +101,13 @@ async function extractPatientId(userResponse, patients) {
   }
 
   // Try fuzzy name matching (case-insensitive)
-  const lowerResponse = trimmed.toLowerCase();
+  const lowerResponse = textToMatch.toLowerCase();
   for (const patient of patients) {
     const lowerName = (patient.full_name || '').toLowerCase();
     if (lowerName.includes(lowerResponse) || lowerResponse.includes(lowerName)) {
       logger.info('[chatStream] Matched patient by name:', {
         user_input: trimmed,
+        extracted_text: textToMatch,
         patient_name: patient.full_name,
         patient_id: patient.id
       });
@@ -299,6 +305,10 @@ async function processMessage(sessionId, userMessage) {
     await streamLLMResponse(session);
 
   } catch (error) {
+    // Full error logging for debugging
+    console.error('[chatStream] FULL ERROR DETAILS:');
+    console.error(error);
+
     logger.error('[chatStream] Error processing message:', {
       session_id: sessionId,
       error: error.message,
@@ -327,7 +337,7 @@ async function processMessage(sessionId, userMessage) {
  * Initialize system prompt with schema and patient context
  */
 async function initializeSystemPrompt(session) {
-  const schemaContext = await getSchemaContext();
+  const schemaContext = await getSchemaSnapshot();
   const { prompt, patientCount, patients } = await agenticCore.buildSystemPrompt(schemaContext, 20); // No iteration limit for conversational mode
 
   // Store patient info in session
@@ -616,6 +626,15 @@ async function executeToolCalls(session, toolCalls) {
 async function handleFinalQuery(session, params, toolCallId) {
   const startTime = Date.now();
 
+  // Extract patient_id from LLM response if provided (PRD v3.2)
+  if (params.patient_id) {
+    session.selectedPatientId = params.patient_id;
+    logger.info('[chatStream] LLM identified patient:', {
+      session_id: session.id,
+      patient_id: params.patient_id
+    });
+  }
+
   // Build session metadata for agenticCore
   const sessionMetadata = {
     userIdentifier: 'anonymous', // TODO: Add user identification
@@ -625,8 +644,6 @@ async function handleFinalQuery(session, params, toolCallId) {
     selectedPatientId: session.selectedPatientId,
     patientCount: session.patientCount || 0,
     sessionId: session.id,
-    conversationTurns: session.messageCount,
-    clarificationCount: session.clarificationCount,
     iterationLog: [] // Not applicable in conversational mode
   };
 
@@ -634,7 +651,7 @@ async function handleFinalQuery(session, params, toolCallId) {
     const result = await agenticCore.handleFinalQuery(params, sessionMetadata, startTime);
 
     if (!result.ok) {
-      // Validation failed - send error and end session
+      // Validation failed - send error but keep session for clarification
       logger.warn('[chatStream] Final query validation failed:', {
         session_id: session.id,
         error: result.error
@@ -654,12 +671,21 @@ async function handleFinalQuery(session, params, toolCallId) {
         });
       }
 
-      sessionManager.deleteSession(session.id);
+      // Keep session alive for user to fix error (PRD v3.2)
+      sessionManager.releaseLock(session.id);
       return;
     }
 
     // Success! Execute query and return results
     const { sql, query_type, plot_metadata, plot_title } = result;
+
+    logger.info('[chatStream] About to execute query:', {
+      session_id: session.id,
+      query_type,
+      has_plot_metadata: !!plot_metadata,
+      has_plot_title: !!plot_title,
+      sql_preview: sql?.substring(0, 100)
+    });
 
     // Execute query
     const queryResult = await pool.query(sql);
@@ -667,11 +693,21 @@ async function handleFinalQuery(session, params, toolCallId) {
     logger.info('[chatStream] Final query successful:', {
       session_id: session.id,
       query_type,
-      row_count: queryResult.rowCount
+      row_count: queryResult.rowCount,
+      has_rows: queryResult.rows?.length > 0,
+      first_row_keys: queryResult.rows?.[0] ? Object.keys(queryResult.rows[0]) : []
     });
 
     // Send final result event
     if (session.sseResponse) {
+      logger.info('[chatStream] Sending final_result event:', {
+        session_id: session.id,
+        query_type,
+        row_count: queryResult.rows?.length,
+        has_plot_metadata: !!plot_metadata,
+        plot_title
+      });
+
       streamEvent(session.sseResponse, {
         type: 'final_result',
         sql,
@@ -687,8 +723,9 @@ async function handleFinalQuery(session, params, toolCallId) {
       });
     }
 
-    // Delete session (conversation complete)
-    sessionManager.deleteSession(session.id);
+    // Keep session alive for follow-up questions (PRD v3.2)
+    // Session will expire via TTL (1 hour idle timeout) in sessionManager
+    sessionManager.releaseLock(session.id);
 
   } catch (error) {
     logger.error('[chatStream] Final query error:', {
@@ -709,8 +746,8 @@ async function handleFinalQuery(session, params, toolCallId) {
       });
     }
 
-    // Delete session on error
-    sessionManager.deleteSession(session.id);
+    // Keep session alive so user can retry (PRD v3.2)
+    sessionManager.releaseLock(session.id);
   }
 }
 

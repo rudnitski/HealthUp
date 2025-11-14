@@ -131,19 +131,16 @@ async function logSqlGeneration(data) {
     validationOutcome,
     schemaSnapshotId,
     metadata,
-    // v3.2: Conversational fields
+    // v3.2: Conversational session tracking
     sessionId = null,
-    conversationTurns = 1,
-    clarificationCount = 0,
   } = data;
 
   try {
-    // Insert with v3.2 conversational columns
+    // Insert with v3.2 session_id
     await pool.query(
       `INSERT INTO sql_generation_logs
-       (id, status, user_id_hash, prompt, generated_sql, metadata, created_at,
-        session_id, conversation_turns, clarification_count)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW(), $6, $7, $8)`,
+       (id, status, user_id_hash, prompt, generated_sql, metadata, created_at, session_id)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW(), $6)`,
       [
         status,
         userHash,
@@ -151,8 +148,6 @@ async function logSqlGeneration(data) {
         sql,
         JSON.stringify(metadata),
         sessionId,
-        conversationTurns,
-        clarificationCount,
       ]
     );
 
@@ -166,8 +161,6 @@ async function logSqlGeneration(data) {
       validation_outcome: validationOutcome,
       schema_snapshot_id: schemaSnapshotId,
       session_id: sessionId,
-      conversation_turns: conversationTurns,
-      clarification_count: clarificationCount,
       metadata
     }, '[agenticCore] SQL generation audit log');
   } catch (error) {
@@ -196,8 +189,6 @@ async function handleFinalQuery(
     selectedPatientId = null,
     patientCount = 0,
     sessionId = null,
-    conversationTurns = 1,
-    clarificationCount = 0,
     iterationLog = []
   } = sessionMetadata;
 
@@ -264,8 +255,6 @@ async function handleFinalQuery(
       validationOutcome: 'rejected',
       schemaSnapshotId,
       sessionId,
-      conversationTurns,
-      clarificationCount,
       metadata: {
         agentic_mode: true,
         iterations: iterationLog,
@@ -317,8 +306,6 @@ async function handleFinalQuery(
       validationOutcome: 'rejected',
       schemaSnapshotId,
       sessionId,
-      conversationTurns,
-      clarificationCount,
       metadata: {
         agentic_mode: true,
         iterations: iterationLog,
@@ -366,8 +353,6 @@ async function handleFinalQuery(
     validationOutcome: 'accepted',
     schemaSnapshotId,
     sessionId,
-    conversationTurns,
-    clarificationCount,
     metadata: {
       agentic_mode: true,
       iterations: iterationLog,
