@@ -44,7 +44,7 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 
 - **`server/services/labReportProcessor.js`**: Async job-based OCR pipeline. Returns 202 Accepted with `job_id`, client polls `/api/analyze-labs/jobs/:jobId`. Handles PDF→PNG conversion (via `pdftoppm`), calls vision providers, persists to DB, triggers auto-mapping.
 
-- **`server/services/vision/VisionProviderFactory.js`**: Selects OCR backend (`OCR_PROVIDER=openai|anthropic`). OpenAI supports native PDF via `OPENAI_USE_NATIVE_PDF=true`. Anthropic uses Claude Sonnet vision with native PDF support.
+- **`server/services/vision/VisionProviderFactory.js`**: Selects OCR backend (`OCR_PROVIDER=openai|anthropic`). Both providers use native structured outputs with the same JSON schema for guaranteed schema compliance. OpenAI supports native PDF via `OPENAI_USE_NATIVE_PDF=true`. Anthropic uses Claude Sonnet vision with native PDF support.
 
 - **`server/services/MappingApplier.js`**: Tiered analyte mapping (exact alias → fuzzy trigram → LLM suggestions). Auto-writes high-confidence matches (≥`MAPPING_AUTO_ACCEPT`), queues medium confidence to `match_reviews`, proposes new analytes to `pending_analytes`.
 
@@ -66,8 +66,13 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 - `pg_trgm` for fuzzy search (auto-created on boot; set `REQUIRE_PG_TRGM=true` to enforce)
 
 **Vision Providers:**
+- Both providers use native structured outputs for guaranteed JSON schema compliance
+- Single schema definition in `labReportProcessor.js` used by both providers
 - OpenAI (default): Requires `OPENAI_API_KEY`, `OPENAI_VISION_MODEL`
+  - Uses `responses.parse()` with structured output format
 - Anthropic (opt-in): Requires `ANTHROPIC_API_KEY`, `ANTHROPIC_VISION_MODEL`, set `OCR_PROVIDER=anthropic`
+  - Uses `output_format` parameter with beta header `structured-outputs-2025-11-13`
+  - Grammars cached for 24 hours after first compilation
 
 **Agentic SQL:**
 - Enable with `AGENTIC_SQL_ENABLED=true`
