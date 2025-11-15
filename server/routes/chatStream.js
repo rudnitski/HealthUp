@@ -16,7 +16,6 @@
 // - Iteration counter: MAX_CONVERSATION_ITERATIONS (50) prevents infinite loops
 // - Atomic processing lock: tryAcquireLock() prevents race conditions
 // - Session validation: checks session exists before recursive calls
-// - Message limit: 20 messages per conversation (enforced in sessionManager)
 
 const express = require('express');
 const OpenAI = require('openai');
@@ -211,14 +210,6 @@ router.post('/messages', async (req, res) => {
     return res.status(409).json({
       error: 'Session is currently processing a message',
       code: 'SESSION_BUSY'
-    });
-  }
-
-  // Check message limit
-  if (sessionManager.isMessageLimitReached(sessionId)) {
-    return res.status(429).json({
-      error: 'Message limit reached (20 per conversation)',
-      code: 'MESSAGE_LIMIT'
     });
   }
 
