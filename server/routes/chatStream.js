@@ -26,6 +26,7 @@ const sessionManager = require('../utils/sessionManager');
 const agenticCore = require('../services/agenticCore');
 const { TOOL_DEFINITIONS } = require('../services/agenticTools');
 const { getSchemaSnapshot } = require('../services/schemaSnapshot');
+const { buildSchemaSection } = require('../services/promptBuilder');
 
 const router = express.Router();
 
@@ -320,7 +321,10 @@ async function processMessage(sessionId, userMessage) {
  * Initialize system prompt with schema and patient context
  */
 async function initializeSystemPrompt(session) {
-  const schemaContext = await getSchemaSnapshot();
+  // Get schema snapshot and format it
+  const { manifest } = await getSchemaSnapshot();
+  const schemaContext = buildSchemaSection(manifest, ''); // Empty question = include all tables
+
   const { prompt, patientCount, patients } = await agenticCore.buildSystemPrompt(schemaContext, 20); // No iteration limit for conversational mode
 
   // Store patient info in session
