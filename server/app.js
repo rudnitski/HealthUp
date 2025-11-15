@@ -45,6 +45,7 @@ try {
 }
 
 const sqlGeneratorRouter = require('./routes/sqlGenerator');
+const chatStreamRouter = require('./routes/chatStream');
 const analyzeLabReportRouter = require('./routes/analyzeLabReport');
 const reportsRouter = require('./routes/reports');
 const executeSqlRouter = require('./routes/executeSql');
@@ -121,6 +122,7 @@ app.use('/api/analyze-labs', (req, res, next) => {
 });
 
 app.use('/api/sql-generator', sqlGeneratorRouter);
+app.use('/api/chat', chatStreamRouter); // v3.2: Conversational SQL assistant
 app.use('/api/analyze-labs', analyzeLabReportRouter);
 app.use('/api/execute-sql', executeSqlRouter);
 app.use('/api/admin', adminRouter);

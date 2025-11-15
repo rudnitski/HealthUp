@@ -234,11 +234,17 @@ const schemaStatements = [
     latency_ms INT,
     error TEXT,
     metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- v3.2: Conversational session tracking
+    session_id TEXT
   );
   `,
   `
   COMMENT ON TABLE sql_generation_logs IS 'LLM-based SQL generation audit trail';
+  `,
+  // v3.2: Add session_id to existing tables
+  `
+  ALTER TABLE sql_generation_logs ADD COLUMN IF NOT EXISTS session_id TEXT;
   `,
   // Gmail Integration Step 3: Attachment Provenance
   `
