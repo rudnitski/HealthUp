@@ -1014,54 +1014,6 @@ Tool result: {"rows": [{"t": 1704067200000, "y": 25.3, ...}, {...}], "row_count"
 You can say: "Based on the 156 measurements I just retrieved, your average..."
 ```
 
-**Task 4.4:** Add LLM Autonomy and Format Choice Guidelines (CRITICAL)
-
-```
-## IMPORTANT: Full Autonomy in Response Format
-
-You have COMPLETE CONTROL over how to respond to user questions. There are NO STRICT
-RULES about when to use plots, tables, or text - use your best judgment.
-
-**Your Response Options (you decide which to use):**
-1. **Text only** - Answer directly without querying data
-2. **Plot only** - Call show_plot without additional text
-3. **Table only** - Call show_table without additional text
-4. **Plot + Text** - Show visualization and provide analysis
-5. **Table + Text** - Show tabular data and explain findings
-6. **Multiple plots/tables** - Compare different parameters
-7. **Text → Plot → Text** - Explain, visualize, then interpret
-8. **Ask clarifying question** - When genuinely ambiguous
-
-**Decision Guidelines (SUGGESTIONS, not requirements):**
-- User asks "what is...?" → Often text is sufficient
-- User asks "show my..." → Often a plot or table is helpful
-- User asks "trend" or "over time" → Plot is usually best
-- User asks "latest value" → Table or text works well
-- User asks "what do you think?" → Text analysis based on previous data
-
-**You Decide Based On:**
-- What format best answers the question
-- What data you already have in context
-- User's apparent intent and language
-- Clarity and informativeness
-
-**DO NOT:**
-- ❌ Always require user to choose format (you can decide!)
-- ❌ Ask "plot or table?" when the answer is obvious
-- ❌ Feel obligated to show visualization for every question
-- ❌ Follow rigid rules about which format to use
-
-**DO:**
-- ✅ Use your judgment about what's most helpful
-- ✅ Combine formats when it improves understanding
-- ✅ Answer simple questions with just text
-- ✅ Ask for clarification only when genuinely ambiguous
-
-Remember: The medical disclaimer restricts giving diagnoses and medical advice,
-but does NOT restrict your choice of response format. You have full autonomy
-to decide how best to present information to the user.
-```
-
 **Acceptance Criteria for Phase 4:**
 - ✅ All generate_final_query references removed
 - ✅ Display tools documented with usage patterns
@@ -1072,9 +1024,6 @@ to decide how best to present information to the user.
 - ✅ Conversation continuity emphasized
 - ✅ Compact data format keys documented
 - ✅ Error handling guidelines integrated (from Appendix B.7)
-- ✅ **LLM AUTONOMY:** Explicit guidelines that LLM has full control over format choice
-- ✅ **LLM AUTONOMY:** Clear statement that medical disclaimer restricts content, not format
-- ✅ **LLM AUTONOMY:** Emphasis on using judgment rather than rigid rules
 
 ---
 
@@ -1633,7 +1582,6 @@ Before/after comparison of tool usage
 - [ ] Add Display Tools section (show_plot and show_table)
 - [ ] Add multi-modal response patterns
 - [ ] Add conversation continuity guidelines
-- [ ] **LLM AUTONOMY:** Add format choice autonomy section (Task 4.4)
 - [ ] Document compact data format keys
 - [ ] Add error handling recovery patterns
 - [ ] Review for clarity and completeness
@@ -1659,7 +1607,6 @@ Before/after comparison of tool usage
 - [ ] Test error scenarios (empty results, timeout, validation, execution)
 - [ ] Test long conversations (15+ turns with pruning)
 - [ ] Verify medical disclaimer appears in text responses
-- [ ] Verify LLM can choose format autonomously
 
 **Final Steps:**
 - [ ] Code review with senior engineer
