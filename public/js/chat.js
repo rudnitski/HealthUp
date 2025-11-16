@@ -109,8 +109,12 @@ class ConversationalSQLChat {
         this.isProcessing = false;
         break;
 
-      case 'final_result':
-        this.handleFinalResult(data);
+      case 'plot_result':
+        this.handlePlotResult(data);
+        break;
+
+      case 'table_result':
+        this.handleTableResult(data);
         break;
 
       case 'error':
@@ -119,6 +123,8 @@ class ConversationalSQLChat {
 
       case 'done':
         console.log('[Chat] Stream done');
+        this.enableInput();
+        this.isProcessing = false;
         break;
 
       default:
@@ -309,19 +315,20 @@ class ConversationalSQLChat {
       'fuzzy_search_parameter_names': 'Searching parameters...',
       'fuzzy_search_analyte_names': 'Searching analytes...',
       'execute_exploratory_sql': 'Querying database...',
-      'generate_final_query': 'Generating query...'
+      'show_plot': 'Generating plot...',
+      'show_table': 'Generating table...'
     };
 
     return displayNames[toolName] || toolName;
   }
 
   /**
-   * Handle final query result
+   * Handle plot result (v3.3)
    */
-  handleFinalResult(data) {
-    console.log('[Chat] Final result received:', data);
+  handlePlotResult(data) {
+    console.log('[Chat] Plot result received:', data);
 
-    const { sql, query_type, rows, plot_metadata, plot_title } = data;
+    const { plot_title, rows, replace_previous } = data;
 
     // Finalize assistant message if any
     this.finalizeAssistantMessage();
@@ -333,48 +340,58 @@ class ConversationalSQLChat {
     }
     this.activeTools.clear();
 
-    // Add success message to chat
-    const successDiv = document.createElement('div');
-    successDiv.className = 'chat-message chat-message-assistant';
-
-    const bubble = document.createElement('div');
-    bubble.className = 'chat-bubble chat-bubble-assistant chat-bubble-success';
-    bubble.textContent = '✅ Here are your results:';
-
-    successDiv.appendChild(bubble);
-    this.messagesContainer.appendChild(successDiv);
-
-    // Display results in results container
-    this.displayResults(sql, query_type, rows, plot_metadata, plot_title);
-
-    // Keep chat history for follow-up questions (PRD v3.2)
-    // Session persists on backend for multi-turn conversation
-
-    this.isProcessing = false;
-  }
-
-  /**
-   * Display query results
-   */
-  displayResults(sql, queryType, rows, plotMetadata, plotTitle) {
-    // Clear previous results
-    this.resultsContainer.innerHTML = '';
+    // Clear or append based on replace_previous
+    if (replace_previous) {
+      this.resultsContainer.innerHTML = '';
+    }
 
     // Show results container
     this.resultsContainer.style.display = 'block';
 
-    // SQL is logged to backend for debugging only (PRD v3.2)
-    // Not displayed to users
-
-    // Display results based on query type
-    if (queryType === 'plot_query') {
-      this.displayPlotResults(rows, plotMetadata, plotTitle);
-    } else {
-      this.displayTableResults(rows);
-    }
+    // Display plot
+    this.displayPlotResults(rows, null, plot_title);
 
     // Scroll to results
     this.resultsContainer.scrollIntoView({ behavior: 'smooth' });
+
+    // Continue conversation - don't end processing
+    this.enableInput();
+  }
+
+  /**
+   * Handle table result (v3.3)
+   */
+  handleTableResult(data) {
+    console.log('[Chat] Table result received:', data);
+
+    const { table_title, rows, replace_previous } = data;
+
+    // Finalize assistant message if any
+    this.finalizeAssistantMessage();
+
+    // Clear all tool indicators (cleanup)
+    const indicatorsContainer = this.messagesContainer.querySelector('.tool-indicators');
+    if (indicatorsContainer) {
+      indicatorsContainer.remove();
+    }
+    this.activeTools.clear();
+
+    // Clear or append based on replace_previous
+    if (replace_previous) {
+      this.resultsContainer.innerHTML = '';
+    }
+
+    // Show results container
+    this.resultsContainer.style.display = 'block';
+
+    // Display table
+    this.displayTableResults(rows, table_title);
+
+    // Scroll to results
+    this.resultsContainer.scrollIntoView({ behavior: 'smooth' });
+
+    // Continue conversation - don't end processing
+    this.enableInput();
   }
 
   /**
@@ -679,7 +696,7 @@ class ConversationalSQLChat {
   /**
    * Display table results
    */
-  displayTableResults(rows) {
+  displayTableResults(rows, title) {
     const tableSection = document.createElement('div');
     tableSection.className = 'result-section';
 
@@ -695,6 +712,17 @@ class ConversationalSQLChat {
 
     const table = document.createElement('table');
     table.className = 'parameters-table';
+
+    // Add title if provided
+    if (title) {
+      const caption = document.createElement('caption');
+      caption.textContent = title;
+      caption.style.captionSide = 'top';
+      caption.style.fontWeight = '600';
+      caption.style.marginBottom = '0.5rem';
+      caption.style.textAlign = 'left';
+      table.appendChild(caption);
+    }
 
     const thead = document.createElement('thead');
     thead.innerHTML = `

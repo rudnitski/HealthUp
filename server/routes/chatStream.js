@@ -26,6 +26,7 @@ const agenticCore = require('../services/agenticCore');
 const { TOOL_DEFINITIONS } = require('../services/agenticTools');
 const { getSchemaSnapshot } = require('../services/schemaSnapshot');
 const { buildSchemaSection } = require('../services/promptBuilder');
+const { validateSQL } = require('../services/sqlValidator');
 
 const router = express.Router();
 
@@ -384,6 +385,9 @@ async function streamLLMResponse(session) {
 
   const client = getOpenAiClient();
 
+  // IMPORTANT: Prune conversation before making API call
+  pruneConversationIfNeeded(session);
+
   try {
     const stream = await client.chat.completions.create({
       model: SQL_GENERATOR_MODEL,
@@ -530,13 +534,34 @@ async function executeToolCalls(session, toolCalls) {
 
     const toolStartTime = Date.now();
 
-    // Handle generate_final_query specially
-    if (toolName === 'generate_final_query') {
-      await handleFinalQuery(session, params, toolCallId);
-      return; // End conversation
+    // Handle display tools (show_plot, show_table) - don't end conversation
+    if (toolName === 'show_plot') {
+      await handleShowPlot(session, params, toolCallId);
+      // Send tool_complete event
+      if (session.sseResponse) {
+        streamEvent(session.sseResponse, {
+          type: 'tool_complete',
+          tool: toolName,
+          duration_ms: Date.now() - toolStartTime
+        });
+      }
+      continue; // Continue to next tool or LLM response
     }
 
-    // Execute other tools
+    if (toolName === 'show_table') {
+      await handleShowTable(session, params, toolCallId);
+      // Send tool_complete event
+      if (session.sseResponse) {
+        streamEvent(session.sseResponse, {
+          type: 'tool_complete',
+          tool: toolName,
+          duration_ms: Date.now() - toolStartTime
+        });
+      }
+      continue; // Continue to next tool or LLM response
+    }
+
+    // Execute other tools (fuzzy search, exploratory SQL)
     try {
       const result = await agenticCore.executeToolCall(toolName, params, {
         schemaSnapshotId: null // TODO: track schema snapshot in session
@@ -596,6 +621,208 @@ async function executeToolCalls(session, toolCalls) {
   }
 
   await streamLLMResponse(session);
+}
+
+/**
+ * Handle show_plot tool call
+ * Executes SQL, sends plot to frontend, adds compact data to conversation
+ * Does NOT end conversation
+ */
+async function handleShowPlot(session, params, toolCallId) {
+  const { sql, plot_title, replace_previous = false, reasoning } = params;
+  const startTime = Date.now();
+
+  logger.info('[chatStream] show_plot called:', {
+    session_id: session.id,
+    plot_title,
+    replace_previous,
+    reasoning
+  });
+
+  try {
+    // Step 1: Validate SQL (reuse existing validation)
+    const validation = await validateSQL(sql, { schemaSnapshotId: null });
+
+    if (!validation.valid) {
+      logger.warn('[chatStream] Plot validation failed');
+      session.messages.push({
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: JSON.stringify({
+          success: false,
+          error: 'SQL validation failed',
+          violations: validation.violations.map(v => v.message || v.code)
+        })
+      });
+      return;
+    }
+
+    // Step 2: Enforce row limit
+    const MAX_PLOT_ROWS = 200;
+    let safeSql = ensureLimit(validation.sqlWithLimit, MAX_PLOT_ROWS);
+
+    // Step 2b: SECURITY - Enforce patient scope (defense in depth)
+    if (session.selectedPatientId && session.patientCount > 1) {
+      safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
+    }
+
+    // Step 3: Execute query with 5-second timeout
+    const queryResult = await pool.query(safeSql);
+
+    // Step 4: Send FULL data to frontend
+    if (session.sseResponse) {
+      streamEvent(session.sseResponse, {
+        type: 'plot_result',
+        plot_title,
+        rows: queryResult.rows,
+        replace_previous
+      });
+    }
+
+    // Step 5: Create COMPACT data for conversation history
+    const compactRows = queryResult.rows.map(row => ({
+      t: row.t,
+      y: row.y,
+      p: row.parameter_name,
+      u: row.unit,
+      ...(row.reference_lower != null && { rl: row.reference_lower }),
+      ...(row.reference_upper != null && { ru: row.reference_upper }),
+      ...(row.is_out_of_range != null && { oor: row.is_out_of_range })
+    }));
+
+    // Step 6: Clear previous display if replacing
+    if (replace_previous) {
+      session.messages = session.messages.filter(msg => {
+        if (msg.role !== 'tool') return true;
+        try {
+          const content = JSON.parse(msg.content);
+          return content.display_type !== 'plot' && content.display_type !== 'table';
+        } catch {
+          return true;
+        }
+      });
+    }
+
+    // Step 7: Add compact result to conversation
+    session.messages.push({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: JSON.stringify({
+        success: true,
+        display_type: 'plot',
+        plot_title,
+        rows: compactRows,
+        row_count: compactRows.length
+      })
+    });
+
+  } catch (error) {
+    logger.error('[chatStream] show_plot error:', error.message);
+    session.messages.push({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: JSON.stringify({ success: false, error: error.message })
+    });
+  }
+}
+
+/**
+ * Handle show_table tool call
+ * Executes SQL, sends table to frontend, adds compact data to conversation
+ * Does NOT end conversation
+ */
+async function handleShowTable(session, params, toolCallId) {
+  const { sql, table_title, replace_previous = false, reasoning } = params;
+
+  logger.info('[chatStream] show_table called:', {
+    session_id: session.id,
+    table_title,
+    replace_previous,
+    reasoning
+  });
+
+  try {
+    // 1. Validate SQL
+    const validation = await validateSQL(sql, { schemaSnapshotId: null });
+    if (!validation.valid) {
+      session.messages.push({
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: JSON.stringify({
+          success: false,
+          error: 'SQL validation failed',
+          violations: validation.violations.map(v => v.message || v.code)
+        })
+      });
+      return;
+    }
+
+    // 2. Enforce MAX_TABLE_ROWS = 50
+    const MAX_TABLE_ROWS = 50;
+    let safeSql = ensureLimit(validation.sqlWithLimit, MAX_TABLE_ROWS);
+
+    // 2b. SECURITY - Enforce patient scope (same check as plot)
+    if (session.selectedPatientId && session.patientCount > 1) {
+      safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
+    }
+
+    // 3. Execute query
+    const queryResult = await pool.query(safeSql);
+
+    // 4. Send to frontend
+    if (session.sseResponse) {
+      streamEvent(session.sseResponse, {
+        type: 'table_result',
+        table_title,
+        rows: queryResult.rows,
+        replace_previous
+      });
+    }
+
+    // 5. Compact format (simplified for tables)
+    const compactRows = queryResult.rows.map(row => ({
+      p: row.parameter_name,
+      v: row.value,
+      u: row.unit,
+      d: row.date,
+      ri: row.reference_interval,
+      oor: row.is_out_of_range
+    }));
+
+    // 6. Clear previous if replace_previous=true
+    if (replace_previous) {
+      session.messages = session.messages.filter(msg => {
+        if (msg.role !== 'tool') return true;
+        try {
+          const content = JSON.parse(msg.content);
+          return content.display_type !== 'plot' && content.display_type !== 'table';
+        } catch {
+          return true;
+        }
+      });
+    }
+
+    // 7. Add to conversation
+    session.messages.push({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: JSON.stringify({
+        success: true,
+        display_type: 'table',
+        table_title,
+        rows: compactRows,
+        row_count: compactRows.length
+      })
+    });
+
+  } catch (error) {
+    logger.error('[chatStream] show_table error:', error.message);
+    session.messages.push({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: JSON.stringify({ success: false, error: error.message })
+    });
+  }
 }
 
 /**
@@ -727,6 +954,132 @@ async function handleFinalQuery(session, params, toolCallId) {
     // Keep session alive so user can retry (PRD v3.2)
     sessionManager.releaseLock(session.id);
   }
+}
+
+/**
+ * Enforce patient scope on SQL query (SECURITY: Defense in depth)
+ * Validates that multi-patient queries include proper patient filtering
+ * CRITICAL: Checks both PRESENCE and VALUE of patient_id to prevent cross-patient access
+ */
+function enforcePatientScope(sql, patientId) {
+  const sqlLower = sql.toLowerCase();
+
+  // Step 1: Check if patient_id is referenced in the query
+  const hasPatientIdColumn =
+    sqlLower.includes('patient_id') ||
+    sqlLower.match(/join.*patients.*on.*id\s*=/i);
+
+  if (!hasPatientIdColumn) {
+    throw new Error(
+      'SECURITY: Query must include patient_id filter for multi-patient databases. ' +
+      'Expected WHERE clause filtering by patient_id or join to patients table.'
+    );
+  }
+
+  // Step 2: CRITICAL - Validate the actual UUID value
+  // This prevents queries that reference patient_id but use wrong UUID
+  if (!sql.includes(patientId)) {
+    throw new Error(
+      `SECURITY: Query must filter by current patient: ${patientId}. ` +
+      'Found patient_id column but UUID value does not match session context.'
+    );
+  }
+
+  // Step 3: Validate no other patient UUIDs present (prevent cross-patient joins)
+  // UUID format: 8-4-4-4-12 hex digits
+  const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const foundUuids = sql.match(uuidRegex) || [];
+  const wrongUuids = foundUuids.filter(uuid => uuid.toLowerCase() !== patientId.toLowerCase());
+
+  if (wrongUuids.length > 0) {
+    throw new Error(
+      `SECURITY: Query contains unauthorized patient UUID(s): ${wrongUuids.join(', ')}. ` +
+      `Only current patient ${patientId} is allowed.`
+    );
+  }
+
+  // All validations passed
+  logger.info('[chatStream] Patient scope validated:', {
+    patient_id: patientId,
+    has_filter: true,
+    uuid_validated: true
+  });
+
+  return sql;
+}
+
+/**
+ * Ensure SQL has appropriate LIMIT clause
+ */
+function ensureLimit(sql, maxLimit) {
+  const limitMatch = sql.match(/\bLIMIT\s+(\d+)\s*;?\s*$/i);
+
+  if (limitMatch) {
+    const existingLimit = parseInt(limitMatch[1], 10);
+    if (existingLimit > maxLimit) {
+      return sql.replace(/\bLIMIT\s+\d+\s*;?\s*$/i, `LIMIT ${maxLimit}`);
+    }
+    return sql;
+  }
+
+  // No limit found - add one
+  const hasSemicolon = /;\s*$/.test(sql);
+  if (hasSemicolon) {
+    return sql.replace(/;\s*$/, ` LIMIT ${maxLimit};`);
+  }
+  return `${sql.trim()} LIMIT ${maxLimit}`;
+}
+
+/**
+ * Prune conversation history when approaching token limits
+ * Called before each LLM API call in streamLLMResponse()
+ * Strategy: Keep system prompt + last 20 messages when over threshold
+ */
+function pruneConversationIfNeeded(session) {
+  const MAX_TOKEN_THRESHOLD = 50000; // Conservative limit (OpenAI allows 128k)
+  const KEEP_RECENT_MESSAGES = 20;
+
+  // Step 1: Estimate current token count (rough heuristic: 4 chars = 1 token)
+  const totalChars = session.messages.reduce((sum, msg) => {
+    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+    return sum + content.length;
+  }, 0);
+
+  const estimatedTokens = Math.ceil(totalChars / 4);
+
+  logger.debug('[chatStream] Token estimate:', {
+    session_id: session.id,
+    total_chars: totalChars,
+    estimated_tokens: estimatedTokens,
+    message_count: session.messages.length
+  });
+
+  // Step 2: Check if pruning needed
+  if (estimatedTokens < MAX_TOKEN_THRESHOLD) {
+    return; // Below threshold, no pruning needed
+  }
+
+  logger.info('[chatStream] Pruning conversation:', {
+    session_id: session.id,
+    before_count: session.messages.length,
+    estimated_tokens: estimatedTokens
+  });
+
+  // Step 3: Separate system prompt from conversation messages
+  const systemPrompt = session.messages.find(msg => msg.role === 'system');
+  const conversationMessages = session.messages.filter(msg => msg.role !== 'system');
+
+  // Step 4: Keep only recent messages
+  const recentMessages = conversationMessages.slice(-KEEP_RECENT_MESSAGES);
+
+  // Step 5: Rebuild messages array
+  session.messages = systemPrompt ? [systemPrompt, ...recentMessages] : recentMessages;
+
+  logger.info('[chatStream] Conversation pruned:', {
+    session_id: session.id,
+    after_count: session.messages.length,
+    kept_messages: KEEP_RECENT_MESSAGES
+  });
 }
 
 module.exports = router;

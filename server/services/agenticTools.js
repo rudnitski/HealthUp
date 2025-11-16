@@ -372,83 +372,60 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
-      name: "generate_final_query",
-      description: "Generate the final SQL query to answer the user's question. Specify query_type='plot_query' if generating time-series data for visualization (e.g., when user asks about trends, changes over time, or wants a plot/график). Call this when you have enough information and are confident in your answer. The query will be validated before being returned to the user.",
+      name: "show_plot",
+      description: "Display a time-series plot of lab results in the UI. The plot will appear in the results area. You can call this multiple times - use replace_previous=true to update the current plot, or false to keep conversation context. After calling this tool, you will receive the full dataset in the tool result, allowing you to analyze and discuss the data with the user.",
       parameters: {
         type: "object",
         properties: {
           sql: {
             type: "string",
-            description: `The final SQL query to answer the user's question.
-
-            For data_query (tabular results):
-            - REQUIRED aliases: date, value, unit, reference_interval
-            - OPTIONAL: is_value_out_of_range, parameter_name
-            - Format reference_interval as readable string (e.g., '< 5.2', '30 - 100')
-            - Use COALESCE for null handling
-
-            Example:
-            SELECT
-              test_date as date,
-              value,
-              unit,
-              CASE
-                WHEN reference_lower IS NOT NULL AND reference_upper IS NOT NULL
-                  THEN reference_lower || ' - ' || reference_upper
-                WHEN reference_lower IS NOT NULL
-                  THEN '>= ' || reference_lower
-                WHEN reference_upper IS NOT NULL
-                  THEN '<= ' || reference_upper
-                ELSE NULL
-              END as reference_interval,
-              (value < reference_lower OR value > reference_upper) as is_value_out_of_range
-            FROM v_measurements
-            WHERE parameter_name ILIKE '%cholesterol%'
-            ORDER BY test_date DESC
-            LIMIT 50;`
-          },
-          explanation: {
-            type: "string",
-            description: "Brief explanation in user's language of what the query does"
-          },
-          confidence: {
-            type: "string",
-            enum: ["high", "medium", "low"],
-            description: "Your confidence level in this answer"
-          },
-          query_type: {
-            type: "string",
-            enum: ["data_query", "plot_query"],
-            description: "Type of query: 'data_query' for tables, 'plot_query' for time-series visualization. Default is 'data_query'."
+            description: "SQL query returning time-series data. MUST include columns: t (bigint timestamp in ms), y (numeric value), parameter_name (text), unit (text). SHOULD include: reference_lower, reference_upper, is_out_of_range. Will be limited to 200 rows max."
           },
           plot_title: {
             type: "string",
-            description: "REQUIRED if query_type='plot_query'. Short plot title (max 30 chars): ONLY the parameter name, NO extra words. Examples: 'Vitamin D', 'Холестерин', 'Glucose'. NOT 'Vitamin D over time' or 'Cholesterol trend'."
+            description: "Short title for the plot (max 30 chars). Use only the parameter name, no extra words. Examples: 'Vitamin D', 'Холестерин', 'Glucose'."
           },
-          plot_metadata: {
-            type: "object",
-            description: "REQUIRED if query_type='plot_query'. Specifies column mapping for plotting. Always include this when generating plot queries to avoid retry overhead.",
-            properties: {
-              x_axis: {
-                type: "string",
-                description: "Name of the time column (should be 't' for Unix timestamp in milliseconds)"
-              },
-              y_axis: {
-                type: "string",
-                description: "Name of the value column (should be 'y' for numeric values)"
-              },
-              series_by: {
-                type: "string",
-                description: "Name of the column to group series by (typically 'unit' for different measurement units)"
-              }
-            }
+          replace_previous: {
+            type: "boolean",
+            description: "If true, replace the current plot/table. If false, keep previous context. Use true when user says 'show as...', 'change to...', 'instead...'. Default: false.",
+            default: false
           },
-          patient_id: {
+          reasoning: {
             type: "string",
-            description: "UUID of the patient this query is for. REQUIRED when multiple patients exist in database AND you've identified which patient from user's message or clarification. Use the patient ID from the pre-loaded patient list in your system prompt."
+            description: "Brief explanation of why you're showing this plot (for logging)"
           }
         },
-        required: ["sql", "explanation", "confidence"]
+        required: ["sql", "plot_title"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_table",
+      description: "Display lab results as a table in the UI. The table will appear in the results area. Use for latest values, detailed comparison, or when user prefers tabular format. After calling this tool, you receive the full dataset for analysis and discussion.",
+      parameters: {
+        type: "object",
+        properties: {
+          sql: {
+            type: "string",
+            description: "SQL query returning tabular data. SHOULD include columns: parameter_name, value, unit, date, reference_interval or reference_lower/upper. Will be limited to 50 rows max."
+          },
+          table_title: {
+            type: "string",
+            description: "Descriptive title for the table. Example: 'Latest Lipid Panel', 'Vitamin D History'."
+          },
+          replace_previous: {
+            type: "boolean",
+            description: "If true, replace current table/plot. If false, keep previous context. Default: false.",
+            default: false
+          },
+          reasoning: {
+            type: "string",
+            description: "Brief explanation (for logging)"
+          }
+        },
+        required: ["sql", "table_title"]
       }
     }
   }
