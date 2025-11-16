@@ -985,6 +985,27 @@ function enforcePatientScope(sql, patientId) {
     );
   }
 
+  // Step 2b: CRITICAL - Detect negation operators that would invert the filter
+  // Attackers could use: WHERE patient_id != 'X' to get ALL OTHER patients
+  const sqlAroundPatientId = sql.toLowerCase();
+  const dangerousPatterns = [
+    /patient_id\s*(!=|<>)/i,           // patient_id != or patient_id <>
+    /patient_id\s+not\s+in/i,          // patient_id NOT IN
+    /patient_id\s+not\s*=/i,           // patient_id NOT =
+    /not\s+patient_id\s*=/i,           // NOT patient_id =
+    /patient_id\s+is\s+not/i           // patient_id IS NOT
+  ];
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(sqlAroundPatientId)) {
+      throw new Error(
+        'SECURITY: Query uses negation operator on patient_id filter. ' +
+        'Only equality filters (=, IN) are allowed to prevent cross-patient data access. ' +
+        `Detected pattern: ${pattern.source}`
+      );
+    }
+  }
+
   // Step 3: Validate no other patient UUIDs present (prevent cross-patient joins)
   // UUID format: 8-4-4-4-12 hex digits
   const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;

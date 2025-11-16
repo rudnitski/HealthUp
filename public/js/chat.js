@@ -356,6 +356,7 @@ class ConversationalSQLChat {
 
     // Continue conversation - don't end processing
     this.enableInput();
+    this.isProcessing = false; // CRITICAL: Reset processing flag to allow follow-up questions
   }
 
   /**
@@ -392,6 +393,7 @@ class ConversationalSQLChat {
 
     // Continue conversation - don't end processing
     this.enableInput();
+    this.isProcessing = false; // CRITICAL: Reset processing flag to allow follow-up questions
   }
 
   /**
