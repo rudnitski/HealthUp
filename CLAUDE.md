@@ -48,7 +48,11 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 
 - **`server/services/MappingApplier.js`**: Tiered analyte mapping (exact alias → fuzzy trigram → LLM suggestions). Auto-writes high-confidence matches (≥`MAPPING_AUTO_ACCEPT`), queues medium confidence to `match_reviews`, proposes new analytes to `pending_analytes`.
 
-- **`server/services/agenticSqlGenerator.js`**: Tool-calling loop for SQL generation when `AGENTIC_SQL_ENABLED=true`. Provides fuzzy search tools (`fuzzy_search_parameter_names`, `fuzzy_search_analyte_names`), exploratory SQL execution, and final query generation with plot metadata.
+- **`server/services/agenticCore.js`**: Tool-calling loop for SQL generation when `AGENTIC_SQL_ENABLED=true`. Provides fuzzy search tools (`fuzzy_search_parameter_names`, `fuzzy_search_analyte_names`), exploratory SQL execution, and final query generation with plot metadata. Used by both legacy single-shot endpoint (`/api/sql-generator`) and conversational chat endpoint (`/api/chat/stream`).
+
+- **`server/routes/chatStream.js`**: Server-Sent Events (SSE) endpoint for conversational SQL assistant (v3.2). Manages multi-turn dialogue with streaming responses, clarifying questions, and session-scoped conversation history until query execution.
+
+- **`server/utils/sessionManager.js`**: In-memory session store for conversational chat with 1-hour TTL, atomic locking, and automatic cleanup. Tracks conversation history, pending queries, and execution state across multiple turns.
 
 - **`server/services/gmailConnector.js`**: OAuth2 flow for Gmail API (dev-only, `GMAIL_INTEGRATION_ENABLED=true`). Persists tokens to `server/config/gmail-token.json`. Fetches email metadata with concurrency controls.
 
@@ -191,7 +195,7 @@ Three-stage pipeline for ingesting lab reports from Gmail:
 
 Static UI (`public/`) with async polling for long operations:
 
-**Main App (`index.html`, `js/app.js`, `js/unified-upload.js`):**
+**Main App (`index.html`, `js/app.js`, `js/unified-upload.js`, `js/chat.js`):**
 - **Unified upload UI (v3.0):** Single interface for manual multi-file uploads and Gmail import
   - Upload source buttons (📁 Upload Files, 📧 Import from Gmail)
   - Multi-file selection with drag & drop support
@@ -204,7 +208,13 @@ Static UI (`public/`) with async polling for long operations:
   - "View" buttons open reports in new tabs (batch results persist in original tab)
   - Automatic duplicate file detection (filename+size+lastModified)
   - Unique composite keys for Gmail attachments (messageId-attachmentId)
-- SQL generator → polls agentic iterations → copies SQL
+- **Conversational SQL Assistant (v3.2):** Streaming chat interface with SSE
+  - Real-time character-by-character response rendering via EventSource API
+  - Multi-turn dialogue: LLM asks clarifying questions (patient selection, date ranges, format preference)
+  - Session-scoped conversation history until results shown or page refresh
+  - Tool call indicators show when LLM is searching schema or executing SQL
+  - Automatic plot generation for time-series queries
+  - Legacy single-shot SQL generator still available (polls agentic iterations, copies SQL)
 - Plot renderer (`js/plotRenderer.js`) with Chart.js + zoom/datalabels
 - Parameter table view with out-of-range highlighting (red outline)
 
@@ -261,16 +271,20 @@ Feature specs live in `docs/PRD_*.md`:
 - v2.7: Multi-provider OCR
 - v2.8: Gmail Integration (Steps 1-3)
 - v3.0: Unified Upload and Ingestion (multi-file manual uploads + Gmail import on single page)
+- v3.1: Auto-execute data queries
+- v3.2: Conversational SQL assistant (streaming chat with multi-turn dialogue)
 
-Consult these when drafting new PRDs or understanding feature history.
+Consult these when drafting new PRDs or understanding feature history. Prompt templates in `prompts/` define OCR extraction schema and SQL generation instructions.
 
 ## Critical Gotchas
 
 1. **Route ordering matters**: Specific routes before parameterized routes (e.g., `/jobs/summary` before `/jobs/:jobId`)
-2. **Database locale**: MUST be UTF-8, not C locale (breaks Cyrillic, fuzzy search, agentic tools)
+2. **Database locale**: MUST be UTF-8, not C locale (breaks Cyrillic, fuzzy search, agentic tools). PostgreSQL C locale breaks case folding (`LOWER()`/`UPPER()`), `pg_trgm` fuzzy search, and agentic SQL fuzzy search tools.
 3. **Vision provider config**: Validate at startup (`VisionProviderFactory` throws on missing keys)
-4. **Async jobs**: Long operations MUST use job pattern (prevents 524 timeouts)
-5. **Gmail tokens**: Auto-refresh preserves `refresh_token`; never commit `gmail-token.json`
-6. **Plot SQL contract**: Validator enforces required aliases (`t`, `y`, `parameter_name`, `unit`)
-7. **Mapping confidence**: Auto-accept threshold must be higher than queue threshold
-8. **pg_trgm extension**: Required for fuzzy search and agentic SQL tools
+4. **Async jobs**: Long operations MUST use job pattern (prevents 524 timeouts). OCR and Gmail operations run 20-60+ seconds; Cloudflare/proxy timeouts occur at 100s.
+5. **SSE for chat streaming**: WebSocket is overkill for server→client streaming. SSE (Server-Sent Events) provides built-in reconnection, simpler HTTP GET protocol, and EventSource API in browsers for uni-directional streaming (sufficient for LLM responses).
+6. **Gmail tokens**: Auto-refresh preserves `refresh_token`; never commit `gmail-token.json`
+7. **Plot SQL contract**: Validator enforces required aliases (`t`, `y`, `parameter_name`, `unit`)
+8. **Mapping confidence**: Auto-accept threshold must be higher than queue threshold
+9. **pg_trgm extension**: Required for fuzzy search and agentic SQL tools (auto-created on boot; set `REQUIRE_PG_TRGM=true` to enforce)
+10. **Session management**: Conversational chat uses in-memory sessions with 1-hour TTL. Sessions are NOT persisted across server restarts.
