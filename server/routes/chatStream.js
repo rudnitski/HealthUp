@@ -644,14 +644,18 @@ async function handleShowPlot(session, params, toolCallId) {
     const validation = await validateSQL(sql, { schemaSnapshotId: null });
 
     if (!validation.valid) {
-      logger.warn('[chatStream] Plot validation failed');
+      logger.warn('[chatStream] Plot validation failed', {
+        sql_preview: sql.substring(0, 100),
+        violations: validation.violations
+      });
       session.messages.push({
         role: 'tool',
         tool_call_id: toolCallId,
         content: JSON.stringify({
           success: false,
           error: 'SQL validation failed',
-          violations: validation.violations.map(v => v.message || v.code)
+          violations: validation.violations.map(v => v.message || v.code),
+          attempted_sql: sql.substring(0, 200) + (sql.length > 200 ? '...' : '')
         })
       });
       return;
@@ -716,8 +720,20 @@ async function handleShowPlot(session, params, toolCallId) {
       })
     });
 
+    // Log success with execution time
+    logger.info('[chatStream] show_plot completed:', {
+      session_id: session.id,
+      plot_title,
+      row_count: compactRows.length,
+      duration_ms: Date.now() - startTime
+    });
+
   } catch (error) {
-    logger.error('[chatStream] show_plot error:', error.message);
+    logger.error('[chatStream] show_plot error:', {
+      error: error.message,
+      session_id: session.id,
+      duration_ms: Date.now() - startTime
+    });
     session.messages.push({
       role: 'tool',
       tool_call_id: toolCallId,
@@ -733,6 +749,7 @@ async function handleShowPlot(session, params, toolCallId) {
  */
 async function handleShowTable(session, params, toolCallId) {
   const { sql, table_title, replace_previous = false, reasoning } = params;
+  const startTime = Date.now();
 
   logger.info('[chatStream] show_table called:', {
     session_id: session.id,
@@ -745,13 +762,18 @@ async function handleShowTable(session, params, toolCallId) {
     // 1. Validate SQL
     const validation = await validateSQL(sql, { schemaSnapshotId: null });
     if (!validation.valid) {
+      logger.warn('[chatStream] Table validation failed', {
+        sql_preview: sql.substring(0, 100),
+        violations: validation.violations
+      });
       session.messages.push({
         role: 'tool',
         tool_call_id: toolCallId,
         content: JSON.stringify({
           success: false,
           error: 'SQL validation failed',
-          violations: validation.violations.map(v => v.message || v.code)
+          violations: validation.violations.map(v => v.message || v.code),
+          attempted_sql: sql.substring(0, 200) + (sql.length > 200 ? '...' : '')
         })
       });
       return;
@@ -815,8 +837,20 @@ async function handleShowTable(session, params, toolCallId) {
       })
     });
 
+    // Log success with execution time
+    logger.info('[chatStream] show_table completed:', {
+      session_id: session.id,
+      table_title,
+      row_count: compactRows.length,
+      duration_ms: Date.now() - startTime
+    });
+
   } catch (error) {
-    logger.error('[chatStream] show_table error:', error.message);
+    logger.error('[chatStream] show_table error:', {
+      error: error.message,
+      session_id: session.id,
+      duration_ms: Date.now() - startTime
+    });
     session.messages.push({
       role: 'tool',
       tool_call_id: toolCallId,
@@ -965,11 +999,18 @@ function enforcePatientScope(sql, patientId) {
   const sqlLower = sql.toLowerCase();
 
   // Step 1: Check if patient_id is referenced in the query
-  const hasPatientIdColumn =
-    sqlLower.includes('patient_id') ||
-    sqlLower.match(/join.*patients.*on.*id\s*=/i);
+  // SECURITY FIX: Handle case-insensitive variants, quoted identifiers, and table-qualified names
+  const patientIdPatterns = [
+    /\bpatient_id\s*=/i,           // Standard: patient_id =
+    /\b"patient_id"\s*=/i,         // Quoted: "patient_id" =
+    /\.\s*patient_id\s*=/i,        // Table-qualified: p.patient_id =
+    /\.\s*"patient_id"\s*=/i,      // Quoted + qualified: p."patient_id" =
+    /join.*patients.*on.*id\s*=/i // JOIN patients ON id =
+  ];
 
-  if (!hasPatientIdColumn) {
+  const hasPatientIdFilter = patientIdPatterns.some(pattern => pattern.test(sql));
+
+  if (!hasPatientIdFilter) {
     throw new Error(
       'SECURITY: Query must include patient_id filter for multi-patient databases. ' +
       'Expected WHERE clause filtering by patient_id or join to patients table.'
@@ -983,6 +1024,25 @@ function enforcePatientScope(sql, patientId) {
       `SECURITY: Query must filter by current patient: ${patientId}. ` +
       'Found patient_id column but UUID value does not match session context.'
     );
+  }
+
+  // Step 2a: SECURITY FIX - Detect SQL comment injection near patient_id filter
+  // Attackers could use: WHERE patient_id = 'uuid' -- */ OR '1'='1' /*
+  const sqlCommentPatterns = [
+    /patient_id.*?--/i,                    // Single-line comment after patient_id
+    /patient_id.*?\/\*/i,                  // Multi-line comment start after patient_id
+    /--.*?patient_id/i,                    // Comment before patient_id
+    /\/\*.*?patient_id.*?\*\//i            // patient_id inside multi-line comment
+  ];
+
+  for (const pattern of sqlCommentPatterns) {
+    if (pattern.test(sql)) {
+      throw new Error(
+        'SECURITY: SQL comments near patient_id filter are not allowed. ' +
+        'This could be an attempt to bypass patient data access controls. ' +
+        `Detected pattern: ${pattern.source}`
+      );
+    }
   }
 
   // Step 2b: CRITICAL - Detect negation operators that would invert the filter
