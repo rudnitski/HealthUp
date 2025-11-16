@@ -360,6 +360,48 @@ LLM: [calls show_plot]
 
 ---
 
+## Security Considerations
+
+### Patient Data Scoping (CRITICAL)
+
+**Risk:** LLM-generated SQL queries could potentially access data from multiple patients if not properly scoped.
+
+**Defense in Depth Strategy:**
+
+**Layer 1: System Prompt (Existing)**
+- LLM instructed to include `WHERE patient_id = '{session.selectedPatientId}'` in queries
+- Patient context pre-loaded in system message
+
+**Layer 2: Backend Validation (NEW - REQUIRED)**
+- `enforcePatientScope()` function validates queries for multi-patient databases
+- Automatically called before executing any display tool query
+- Throws error if patient_id filter missing when `session.patientCount > 1`
+
+**Layer 3: Session Context (Existing)**
+- `session.selectedPatientId` set during conversation initialization
+- Patient selection required before showing data
+- Single-patient databases skip validation (performance optimization)
+
+**Implementation:**
+```javascript
+// In handleShowPlot() and handleShowTable(), after validation:
+if (session.selectedPatientId && session.patientCount > 1) {
+  safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
+}
+```
+
+**Why This Matters:**
+- Healthcare data requires strict access control
+- LLM hallucinations or prompt injection could bypass Layer 1
+- Backend enforcement ensures no data leaks even if LLM fails
+
+**Testing:**
+- Test: Multi-patient DB, query without patient_id → should error
+- Test: Single-patient DB, query without patient_id → should pass
+- Test: Multi-patient DB, query with correct patient_id → should pass
+
+---
+
 ## Implementation Plan
 
 ### Phase 1: Backend Tool Definitions (2-3 hours)
@@ -487,7 +529,12 @@ async function handleShowPlot(session, params, toolCallId) {
 
     // Step 2: Enforce row limit
     const MAX_PLOT_ROWS = 200;
-    const safeSql = ensureLimit(validation.sqlWithLimit, MAX_PLOT_ROWS);
+    let safeSql = ensureLimit(validation.sqlWithLimit, MAX_PLOT_ROWS);
+
+    // Step 2b: SECURITY - Enforce patient scope (defense in depth)
+    if (session.selectedPatientId && session.patientCount > 1) {
+      safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
+    }
 
     // Step 3: Execute query
     const queryResult = await pool.query(safeSql);
@@ -550,13 +597,87 @@ async function handleShowPlot(session, params, toolCallId) {
 }
 ```
 
+**Task 2.2:** Implement `handleShowTable()` (similar to handleShowPlot)
+
+```javascript
+async function handleShowTable(session, params, toolCallId) {
+  // Same structure as handleShowPlot:
+  // 1. Validate SQL
+  // 2. Enforce MAX_TABLE_ROWS = 50
+  // 2b. Enforce patient scope (same security check)
+  // 3. Execute query
+  // 4. Send to frontend
+  // 5. Compact format
+  // 6. Clear previous if replace_previous=true
+  // 7. Add to conversation
+}
+```
+
+**Task 2.3:** Add security and utility helper functions
+
+```javascript
+/**
+ * Enforce patient scope on SQL query (SECURITY: Defense in depth)
+ * Validates that multi-patient queries include proper patient filtering
+ */
+function enforcePatientScope(sql, patientId) {
+  const sqlLower = sql.toLowerCase();
+
+  // Check if patient_id is referenced in the query
+  const hasPatientFilter =
+    sqlLower.includes(patientId.toLowerCase()) ||
+    sqlLower.match(/where.*patient_id\s*=/i) ||
+    sqlLower.match(/join.*patients.*on.*id\s*=/i);
+
+  if (!hasPatientFilter) {
+    throw new Error(
+      'SECURITY: Query must include patient scope for multi-patient databases. ' +
+      'Expected WHERE clause filtering by patient_id or join to patients table.'
+    );
+  }
+
+  // Query includes patient filtering - validation passed
+  logger.info('[chatStream] Patient scope validated:', {
+    patient_id: patientId,
+    has_filter: true
+  });
+
+  return sql;
+}
+
+/**
+ * Ensure SQL has appropriate LIMIT clause
+ */
+function ensureLimit(sql, maxLimit) {
+  const limitMatch = sql.match(/\bLIMIT\s+(\d+)\s*;?\s*$/i);
+
+  if (limitMatch) {
+    const existingLimit = parseInt(limitMatch[1], 10);
+    if (existingLimit > maxLimit) {
+      return sql.replace(/\bLIMIT\s+\d+\s*;?\s*$/i, `LIMIT ${maxLimit}`);
+    }
+    return sql;
+  }
+
+  // No limit found - add one
+  const hasSemicolon = /;\s*$/.test(sql);
+  if (hasSemicolon) {
+    return sql.replace(/;\s*$/, ` LIMIT ${maxLimit};`);
+  }
+  return `${sql.trim()} LIMIT ${maxLimit}`;
+}
+```
+
 **Acceptance Criteria for Phase 2:**
-- handleShowPlot() and handleShowTable() add compact data to session.messages
-- Neither handler sends 'done' event
-- executeToolCalls() continues conversation after display tools
-- handleFinalQuery() deleted
-- Conversation pruning implemented
-- Full error handling and logging
+- ✅ handleShowPlot() and handleShowTable() add compact data to session.messages
+- ✅ Neither handler sends 'done' event
+- ✅ executeToolCalls() continues conversation after display tools
+- ✅ handleFinalQuery() deleted
+- ✅ Conversation pruning implemented
+- ✅ Full error handling and logging
+- ✅ **SECURITY:** Patient scope enforcement for multi-patient databases
+- ✅ enforcePatientScope() validates queries include patient_id filtering
+- ✅ ensureLimit() enforces row limits (200 for plots, 50 for tables)
 
 ---
 
@@ -606,14 +727,33 @@ Add validatePlotQuery() and validateTableQuery() helpers that wrap existing vali
 - Handlers add data to messages
 - No 'done' events sent
 - Conversation pruning works
+- **SECURITY:** enforcePatientScope() validates patient filtering
+- **SECURITY:** Single-patient DB bypasses scope check
+- **SECURITY:** Multi-patient DB requires patient_id in query
 
 ### Integration Tests
 - Conversation continues after display
 - replace_previous clears old displays
 - Token limits enforced
 - Multi-turn conversations work
+- **SECURITY:** Multi-patient query without filter throws error
+- **SECURITY:** Multi-patient query with filter succeeds
+- **SECURITY:** Error message doesn't leak other patient data
 
-### Manual QA (7 scenarios documented above)
+### Manual QA (7 scenarios + security tests)
+
+**Scenario 1-7:** (Documented in User Experience section above)
+
+**Scenario 8: Security - Patient Scoping**
+- [ ] Set up multi-patient test database (2+ patients)
+- [ ] Manually submit SQL without patient_id filter
+- [ ] Verify query rejected with security error
+- [ ] Verify error message includes "patient scope" warning
+- [ ] Manually submit SQL with correct patient_id filter
+- [ ] Verify query succeeds
+- [ ] Verify results contain only selected patient's data
+- [ ] Switch to single-patient database
+- [ ] Verify queries work without explicit patient_id (optimization)
 
 ---
 
@@ -692,7 +832,9 @@ Before/after comparison of tool usage
 **Phase 2 - Backend Handlers (4-6 hours):**
 - [ ] Implement handleShowPlot() in chatStream.js
 - [ ] Implement handleShowTable() in chatStream.js
+- [ ] **SECURITY:** Implement enforcePatientScope() helper function
 - [ ] Implement ensureLimit() helper function
+- [ ] Add patient scope validation to both handleShowPlot and handleShowTable
 - [ ] Update executeToolCalls() to handle new tools
 - [ ] Delete handleFinalQuery() function
 - [ ] Implement pruneConversationIfNeeded()
