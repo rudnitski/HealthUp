@@ -3,7 +3,7 @@ const VisionProvider = require('./VisionProvider');
 
 /**
  * Anthropic Claude Vision API provider
- * Uses JSON mode for structured output (similar to OpenAI)
+ * Uses structured outputs (JSON schema) similar to OpenAI
  */
 class AnthropicProvider extends VisionProvider {
   constructor() {
@@ -41,53 +41,182 @@ class AnthropicProvider extends VisionProvider {
   }
 
   /**
-   * Generate simplified JSON structure instructions for the prompt
-   * Uses human-readable examples instead of formal JSON schema
-   * @param {object} schema - JSON schema (not directly used, kept for compatibility)
-   * @returns {string} Formatted structure instructions
+   * Validate schema for compatibility with Anthropic's structured outputs API
+   * Logs warnings for unsupported features that may cause 400 errors
+   * @param {object} schema - JSON schema to validate
+   * @param {string} path - Current path in schema (for nested validation)
+   * @returns {Array<string>} Array of warning messages
    */
-  generateSchemaInstructions(schema) {
-    return `You must respond with ONLY valid JSON that matches this exact structure:
+  validateSchemaCompatibility(schema, path = 'schema') {
+    const warnings = [];
 
-{
-  "patient_name": "string or null",
-  "patient_age": "string/number or null",
-  "patient_date_of_birth": "string or null",
-  "patient_gender": "string or null",
-  "test_date": "string or null",
-  "parameters": [
-    {
-      "parameter_name": "string or null",
-      "result": "string or null",
-      "unit": "string or null",
-      "reference_interval": {
-        "lower": "number or null",
-        "lower_operator": "string or null (e.g., '>', '>=')",
-        "upper": "number or null",
-        "upper_operator": "string or null (e.g., '<', '<=')",
-        "text": "string or null (short version, e.g., '10-20')",
-        "full_text": "string or null (complete reference text)"
-      },
-      "is_value_out_of_range": "boolean (true/false)",
-      "numeric_result": "number or null (numeric value from result field)"
-    }
-  ],
-  "missing_data": [
-    {
-      "parameter_name": "string or null",
-      "missing_fields": ["array of field name strings"]
-    }
-  ]
-}
+    const traverse = (node, currentPath) => {
+      if (!node || typeof node !== 'object') {
+        return;
+      }
 
-CRITICAL REQUIREMENTS:
-- Return ONLY the JSON object, no additional text or explanation before or after
-- The response must be valid, parseable JSON with no syntax errors
-- All fields listed above are required (use null if data is missing)
-- Ensure all nested objects and arrays follow the structure exactly
-- Pay special attention to proper comma placement in arrays and objects
-- Ensure all strings are properly quoted and escaped
-- Close all brackets and braces properly`;
+      // Check for unsupported constraints
+      const unsupportedConstraints = [
+        'minimum',
+        'maximum',
+        'exclusiveMinimum',
+        'exclusiveMaximum',
+        'multipleOf',
+        'minLength',
+        'maxLength',
+        'pattern', // regex patterns may have limited support
+      ];
+
+      for (const constraint of unsupportedConstraints) {
+        if (node[constraint] !== undefined) {
+          warnings.push(`${currentPath}: '${constraint}' constraint not directly supported (will be removed by SDK)`);
+        }
+      }
+
+      // Check for minItems with unsupported values
+      if (node.minItems !== undefined && node.minItems > 1) {
+        warnings.push(`${currentPath}: 'minItems' only supports 0 or 1 (found: ${node.minItems})`);
+      }
+
+      // Check for additionalProperties not set to false
+      if (node.type === 'object' && node.additionalProperties !== false) {
+        warnings.push(`${currentPath}: 'additionalProperties' should be set to false for objects`);
+      }
+
+      // Check for external $ref
+      if (node.$ref && node.$ref.startsWith('http')) {
+        warnings.push(`${currentPath}: External $ref not supported (${node.$ref})`);
+      }
+
+      // Check for unsupported string formats
+      const supportedFormats = [
+        'date-time',
+        'time',
+        'date',
+        'duration',
+        'email',
+        'hostname',
+        'uri',
+        'ipv4',
+        'ipv6',
+        'uuid',
+      ];
+      if (node.format && !supportedFormats.includes(node.format)) {
+        warnings.push(`${currentPath}: Unsupported string format '${node.format}'`);
+      }
+
+      // Recursively check nested objects
+      if (node.properties) {
+        Object.entries(node.properties).forEach(([key, value]) => {
+          traverse(value, `${currentPath}.properties.${key}`);
+        });
+      }
+
+      if (node.items) {
+        traverse(node.items, `${currentPath}.items`);
+      }
+
+      if (Array.isArray(node.anyOf)) {
+        node.anyOf.forEach((variant, idx) => {
+          traverse(variant, `${currentPath}.anyOf[${idx}]`);
+        });
+      }
+
+      if (Array.isArray(node.allOf)) {
+        node.allOf.forEach((variant, idx) => {
+          traverse(variant, `${currentPath}.allOf[${idx}]`);
+        });
+      }
+    };
+
+    traverse(schema, path);
+    return warnings;
+  }
+
+  /**
+   * Transform the shared schema into an Anthropic-friendly version.
+   * Anthropic enforces tight limits on conditional branches per schema, so we
+   * normalize repeated nullable variants into shared $defs and remove the
+   * repeated anyOf structures that otherwise exceed the limit.
+   * @param {object} schema - Original JSON schema
+   * @returns {object} Anthropic-compatible JSON schema
+   */
+  transformSchema(schema) {
+    // Validate schema compatibility and log warnings
+    const warnings = this.validateSchemaCompatibility(schema);
+    if (warnings.length > 0) {
+      console.warn('[AnthropicProvider] Schema compatibility warnings:', warnings);
+    }
+    const defs = {
+      NullableString: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      NullableNumber: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+      NullableStringOrNumber: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'null' }] },
+    };
+
+    const signatureRefMap = {
+      'null|string': '#/$defs/NullableString',
+      'null|number': '#/$defs/NullableNumber',
+      'null|number|string': '#/$defs/NullableStringOrNumber',
+      'number|null|string': '#/$defs/NullableStringOrNumber',
+      'null|string|number': '#/$defs/NullableStringOrNumber',
+    };
+
+    const clone = JSON.parse(JSON.stringify(schema));
+
+    const normalize = (node) => {
+      if (Array.isArray(node)) {
+        return node.map((item) => (typeof item === 'object' && item !== null ? normalize(item) : item));
+      }
+
+      if (!node || typeof node !== 'object') {
+        return node;
+      }
+
+      if (Array.isArray(node.anyOf)) {
+        const signature = node.anyOf
+          .map((variant) => (variant && typeof variant === 'object' ? variant.type : undefined))
+          .filter(Boolean)
+          .sort()
+          .join('|');
+
+        const ref = signatureRefMap[signature];
+
+        // CRITICAL: Preserve all other properties (description, default, title, etc.)
+        // Extract anyOf separately, then recursively normalize all other properties
+        const { anyOf, ...otherProps } = node;
+        const normalizedOtherProps = Object.entries(otherProps).reduce((acc, [key, value]) => {
+          acc[key] = normalize(value);
+          return acc;
+        }, {});
+
+        if (ref) {
+          // Known pattern: Replace anyOf with $ref, but preserve all other properties
+          return {
+            $ref: ref,
+            ...normalizedOtherProps,
+          };
+        }
+
+        // Unknown pattern: Preserve anyOf as-is with all other properties
+        console.warn(`[AnthropicProvider] Unknown anyOf pattern detected: ${signature}. Preserving as-is.`);
+        return {
+          anyOf: anyOf.map(normalize),
+          ...normalizedOtherProps,
+        };
+      }
+
+      return Object.entries(node).reduce((acc, [key, value]) => {
+        if (key === 'anyOf') {
+          return acc;
+        }
+        acc[key] = normalize(value);
+        return acc;
+      }, {});
+    };
+
+    const transformed = normalize(clone);
+    transformed.$defs = { ...(transformed.$defs || {}), ...defs };
+    return transformed;
   }
 
   /**
@@ -102,23 +231,21 @@ CRITICAL REQUIREMENTS:
    * @returns {Promise<object>} Structured extraction result
    */
   async analyze(imageDataUrls, systemPrompt, userPrompt, schema, options = {}) {
-    // Initialize client with beta header if using PDF input
-    const clientConfig = {
+    const betas = ['structured-outputs-2025-11-13'];
+    const client = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
-    };
+    });
 
-    // Add beta header for document support (Files API)
     if (options.pdfBuffer && options.mimetype === 'application/pdf') {
-      clientConfig.defaultHeaders = {
-        'anthropic-beta': 'pdfs-2024-09-25',
-      };
+      betas.push('pdfs-2024-09-25');
     }
 
-    const client = new Anthropic(clientConfig);
-
     // Build message content: text + documents/images
-    const content = [
-      { type: 'text', text: `${systemPrompt}\n\n${userPrompt}\n\n${this.generateSchemaInstructions(schema)}` },
+    const userContent = [
+      {
+        type: 'text',
+        text: `${userPrompt}\n\nReturn structured JSON that matches the provided schema.`,
+      },
     ];
 
     // Handle native PDF input (Anthropic supports this directly)
@@ -129,7 +256,7 @@ CRITICAL REQUIREMENTS:
       this.validateImageSize(options.pdfBuffer, 32);
 
       const pdfBase64 = options.pdfBuffer.toString('base64');
-      content.push({
+      userContent.push({
         type: 'document',
         source: {
           type: 'base64',
@@ -146,7 +273,7 @@ CRITICAL REQUIREMENTS:
         this.validateImageSize(imageBuffer, 5);
 
         const { mediaType } = this.parseDataUrl(imageUrl);
-        content.push({
+        userContent.push({
           type: 'image',
           source: {
             type: 'base64',
@@ -161,18 +288,45 @@ CRITICAL REQUIREMENTS:
       model: this.model,
       max_tokens: 16384, // Max output tokens for large lab reports (Claude Sonnet 4.5 supports up to 32K)
       temperature: 0, // Deterministic output for consistency
+      betas,
+      output_format: {
+        type: 'json_schema',
+        schema: this.transformSchema(schema),
+      },
+      system: [{ type: 'text', text: systemPrompt }],
       messages: [
         {
           role: 'user',
-          content,
+          content: userContent,
         },
       ],
     };
 
     // Wrap API call with retry logic
-    const callVision = async () => await client.messages.create(requestPayload);
+    const callVision = async () => await client.beta.messages.create(requestPayload);
 
     const response = await this.withRetry(callVision);
+
+    // Validate stop_reason before processing (structured outputs edge cases)
+    if (response.stop_reason === 'refusal') {
+      console.error('[AnthropicProvider] Request refused by Claude for safety reasons:', {
+        model: this.model,
+        response_preview: response.content[0]?.text?.substring(0, 300),
+      });
+      throw new Error('Request refused by Claude for safety reasons. The content may violate usage policies.');
+    }
+
+    if (response.stop_reason === 'max_tokens') {
+      console.error('[AnthropicProvider] Response truncated due to max_tokens limit:', {
+        model: this.model,
+        max_tokens: requestPayload.max_tokens,
+        response_preview: response.content[0]?.text?.substring(0, 300),
+      });
+      throw new Error(
+        `Response truncated due to max_tokens limit (${requestPayload.max_tokens}). ` +
+          'Increase max_tokens and retry, or simplify the input.',
+      );
+    }
 
     // Extract text response from Anthropic
     const textContent = response.content.find((block) => block.type === 'text');
@@ -180,64 +334,17 @@ CRITICAL REQUIREMENTS:
       throw new Error('Anthropic response missing text block');
     }
 
-    // Parse JSON from response
+    const jsonText = textContent.text.trim();
     let result;
-    let jsonText = textContent.text.trim();
-
-    // Remove markdown code blocks if present
-    if (jsonText.startsWith('```json')) {
-      jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (jsonText.startsWith('```')) {
-      jsonText = jsonText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-    }
-
     try {
       result = JSON.parse(jsonText);
     } catch (parseError) {
-      console.warn('[AnthropicProvider] Initial JSON parse failed, attempting repair...', {
+      console.error('[AnthropicProvider] Structured output parse failed:', {
         error: parseError.message,
-        position: parseError.message.match(/position (\d+)/)?.[1],
+        response_preview: jsonText.substring(0, 300),
+        stop_reason: response.stop_reason,
       });
-
-      // Try to extract valid JSON prefix (up to the error point)
-      // This handles cases where Anthropic's response was truncated or malformed
-      const match = parseError.message.match(/position (\d+)/);
-      if (match) {
-        const errorPos = parseInt(match[1], 10);
-
-        // Try to find the last complete object by truncating at error position
-        // and working backwards to find a valid closing point
-        let truncated = jsonText.substring(0, errorPos);
-
-        // Count unclosed brackets/braces and try to close them
-        let openBraces = (truncated.match(/{/g) || []).length - (truncated.match(/}/g) || []).length;
-        let openBrackets = (truncated.match(/\[/g) || []).length - (truncated.match(/]/g) || []).length;
-
-        // Remove any trailing incomplete content (partial string, etc.)
-        truncated = truncated.replace(/,\s*$/, '').replace(/:\s*[^,}\]]*$/, ': null');
-
-        // Close open structures
-        truncated += ']'.repeat(openBrackets) + '}'.repeat(openBraces);
-
-        try {
-          result = JSON.parse(truncated);
-          console.log('[AnthropicProvider] Successfully repaired JSON by truncating at error position');
-        } catch (repairError) {
-          console.error('[AnthropicProvider] JSON repair failed:', {
-            original_error: parseError.message,
-            repair_error: repairError.message,
-            response_length: jsonText.length,
-            response_preview: jsonText.substring(0, 300),
-          });
-          throw new Error(`Failed to parse Anthropic JSON response: ${parseError.message}`);
-        }
-      } else {
-        console.error('[AnthropicProvider] Cannot repair JSON (no position info):', {
-          error: parseError.message,
-          response_preview: jsonText.substring(0, 300),
-        });
-        throw new Error(`Failed to parse Anthropic JSON response: ${parseError.message}`);
-      }
+      throw new Error(`Failed to parse Anthropic JSON response: ${parseError.message}`);
     }
 
     // Debug logging
