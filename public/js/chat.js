@@ -436,12 +436,6 @@ class ConversationalSQLChat {
     const parameters = Object.keys(paramCounts).sort();
     if (parameters.length === 0) return null;
 
-    // If only one parameter, hide selector
-    if (parameters.length === 1) {
-      container.style.display = 'none';
-      return parameters[0];
-    }
-
     // Build radio button list
     const fragment = document.createDocumentFragment();
     parameters.forEach((param, index) => {
@@ -453,6 +447,11 @@ class ConversationalSQLChat {
       radio.name = 'chat-parameter';
       radio.value = param;
       radio.checked = index === 0; // Default: first alphabetically
+
+      // If only one parameter, disable the radio (make it look static)
+      if (parameters.length === 1) {
+        radio.disabled = true;
+      }
 
       const text = document.createTextNode(` ${param} (${paramCounts[param]})`);
 

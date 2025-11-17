@@ -39,6 +39,20 @@
   color: #666;
 }
 
+/* Medical Disclaimer */
+.chat-medical-disclaimer {
+  padding: 0.75rem 1.5rem;
+  background: #fff3cd;
+  border-bottom: 1px solid #ffc107;
+  font-size: 0.85rem;
+  color: #856404;
+  line-height: 1.5;
+}
+
+.chat-medical-disclaimer strong {
+  color: #664d03;
+}
+
 /* Messages Container */
 .chat-messages {
   flex: 1;
@@ -462,4 +476,108 @@
 .markdown-content table th {
   background: rgba(0, 0, 0, 0.05);
   font-weight: 600;
+}
+
+/* Plot Visualization */
+.chat-plot-visualization {
+  margin: 1.5rem 0;
+}
+
+.chat-plot-visualization h3 {
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.chat-plot-container {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.chat-parameter-selector-panel {
+  flex: 0 0 200px;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.chat-parameter-selector-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem 0;
+  color: #495057;
+}
+
+.chat-parameter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.parameter-selector-item {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  font-size: 0.9rem;
+}
+
+.parameter-selector-item:hover {
+  background-color: rgba(0, 123, 255, 0.1);
+}
+
+.parameter-selector-item input[type="radio"] {
+  margin-right: 0.5rem;
+  cursor: pointer;
+}
+
+.parameter-selector-item input[type="radio"]:disabled {
+  cursor: default;
+}
+
+.parameter-selector-item:has(input:disabled) {
+  cursor: default;
+}
+
+.parameter-selector-item:has(input:disabled):hover {
+  background-color: transparent;
+}
+
+.parameter-selector-item input[type="radio"]:checked {
+  accent-color: #007bff;
+}
+
+.chat-plot-canvas-wrapper {
+  flex: 1;
+  min-height: 400px;
+  max-height: 500px;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-plot-toolbar {
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+
+.chat-plot-toolbar-hint {
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
+.chat-plot-canvas-wrapper canvas {
+  flex: 1;
+  max-height: 450px !important;
+}
+
+.chat-parameter-table-container {
+  margin-top: 1rem;
 }

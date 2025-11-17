@@ -40,13 +40,6 @@ You MUST follow these rules when providing text responses:
 - "This means you're healthy" → Use: "This value is within the normal range"
 - "Take 2000 IU of Vitamin D" → Use: "Your doctor can recommend appropriate supplementation"
 
-**Disclaimer to Include (when providing analysis):**
-When analyzing lab results, include this disclaimer naturally in your response:
-
-"Note: This analysis is based on your lab data and general medical knowledge.
-Always consult your healthcare provider to interpret results in the context
-of your complete health history."
-
 **Tone Guidelines:**
 - Be informative but not alarmist
 - Use neutral, factual language

@@ -46,6 +46,8 @@ const logger = pino({
 // Configuration
 const CHAT_MODEL = process.env.CHAT_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-4o-mini'; // Conversational chat model (defaults to SQL_GENERATOR_MODEL)
 const MAX_CONVERSATION_ITERATIONS = 50; // Safety limit to prevent infinite loops
+const MAX_TOKEN_THRESHOLD = parseInt(process.env.CHAT_MAX_TOKEN_THRESHOLD, 10) || 50000; // Token limit for conversation history pruning
+const KEEP_RECENT_MESSAGES = parseInt(process.env.CHAT_KEEP_RECENT_MESSAGES, 10) || 20; // Number of messages to keep when pruning
 
 let openAiClient;
 
@@ -485,6 +487,7 @@ async function streamLLMResponse(session) {
     logger.error('[chatStream] LLM streaming error:', {
       session_id: session.id,
       error: error.message,
+      stack: error.stack,
       error_code: error.code,
       error_type: error.type
     });
@@ -518,7 +521,8 @@ async function executeToolCalls(session, toolCalls) {
       logger.error('[chatStream] Failed to parse tool arguments:', {
         session_id: session.id,
         tool_name: toolName,
-        error: error.message
+        error: error.message,
+        stack: error.stack
       });
 
       session.messages.push({
@@ -601,7 +605,8 @@ async function executeToolCalls(session, toolCalls) {
       logger.error('[chatStream] Tool execution failed:', {
         session_id: session.id,
         tool_name: toolName,
-        error: error.message
+        error: error.message,
+        stack: error.stack
       });
 
       // Send tool_complete with error
@@ -633,6 +638,66 @@ async function executeToolCalls(session, toolCalls) {
   }
 
   await streamLLMResponse(session);
+}
+
+/**
+ * Remove previous display results (plot/table) from session messages
+ * Keeps all other tool messages (fuzzy_search, etc.) to maintain conversation integrity
+ * CRITICAL: Also removes assistant messages with orphaned tool_calls to prevent OpenAI API errors
+ * @param {Object} session - Session object with messages array
+ * @returns {number} Number of messages removed
+ */
+function removeDisplayResults(session) {
+  const beforeCount = session.messages.length;
+  const beforeRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+
+  // Step 1: Find tool_call_ids of display results we want to remove
+  const removedToolCallIds = new Set();
+  session.messages.forEach(msg => {
+    if (msg.role === 'tool' && msg.tool_call_id) {
+      try {
+        const content = JSON.parse(msg.content);
+        if (content.display_type === 'plot' || content.display_type === 'table') {
+          removedToolCallIds.add(msg.tool_call_id);
+        }
+      } catch {
+        // Keep malformed messages
+      }
+    }
+  });
+
+  // Step 2: Filter out display tool messages AND assistant messages with orphaned tool_calls
+  session.messages = session.messages.filter(msg => {
+    // Remove tool messages with display_type
+    if (msg.role === 'tool') {
+      try {
+        const content = JSON.parse(msg.content);
+        if (!content.display_type) return true; // Keep non-display tools
+        return content.display_type !== 'plot' && content.display_type !== 'table';
+      } catch {
+        return true; // Keep malformed
+      }
+    }
+
+    // Remove assistant messages that have tool_calls pointing to removed tool responses
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      // If ALL tool_calls in this message are being removed, remove the entire message
+      const allToolCallsRemoved = msg.tool_calls.every(tc => removedToolCallIds.has(tc.id));
+      if (allToolCallsRemoved) {
+        return false; // Remove this assistant message
+      }
+    }
+
+    return true; // Keep all other messages
+  });
+
+  const afterRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+
+  console.log('[chatStream] BEFORE FILTER:', beforeRoles);
+  console.log('[chatStream] AFTER FILTER:', afterRoles);
+  console.log('[chatStream] REMOVED:', beforeCount - session.messages.length, 'messages');
+
+  return beforeCount - session.messages.length;
 }
 
 /**
@@ -711,32 +776,13 @@ async function handleShowPlot(session, params, toolCallId) {
     // Do NOT remove other tool responses (fuzzy_search, etc.) as this breaks conversation integrity
     if (replace_previous) {
       const beforeCount = session.messages.length;
-      const beforeRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
-
-      session.messages = session.messages.filter(msg => {
-        if (msg.role !== 'tool') return true;
-        try {
-          const content = JSON.parse(msg.content);
-          // Keep tool messages that don't have display_type (non-display tools like fuzzy_search)
-          if (!content.display_type) return true;
-          // Remove only plot/table display messages
-          return content.display_type !== 'plot' && content.display_type !== 'table';
-        } catch {
-          // Keep malformed tool messages (shouldn't happen, but safer)
-          return true;
-        }
-      });
-
-      const afterRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
-
-      console.log('[chatStream] BEFORE FILTER (plot):', beforeRoles);
-      console.log('[chatStream] AFTER FILTER (plot):', afterRoles);
-      console.log('[chatStream] REMOVED (plot):', beforeCount - session.messages.length, 'messages');
+      const removedCount = removeDisplayResults(session);
 
       logger.info('[chatStream] Replaced previous display in show_plot:', {
         session_id: session.id,
         before_count: beforeCount,
-        after_count: session.messages.length
+        after_count: session.messages.length,
+        removed_count: removedCount
       });
     }
 
@@ -764,6 +810,7 @@ async function handleShowPlot(session, params, toolCallId) {
   } catch (error) {
     logger.error('[chatStream] show_plot error:', {
       error: error.message,
+      stack: error.stack,
       session_id: session.id,
       duration_ms: Date.now() - startTime
     });
@@ -850,32 +897,13 @@ async function handleShowTable(session, params, toolCallId) {
     // Do NOT remove other tool responses (fuzzy_search, etc.) as this breaks conversation integrity
     if (replace_previous) {
       const beforeCount = session.messages.length;
-      const beforeRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
-
-      session.messages = session.messages.filter(msg => {
-        if (msg.role !== 'tool') return true;
-        try {
-          const content = JSON.parse(msg.content);
-          // Keep tool messages that don't have display_type (non-display tools like fuzzy_search)
-          if (!content.display_type) return true;
-          // Remove only plot/table display messages
-          return content.display_type !== 'plot' && content.display_type !== 'table';
-        } catch {
-          // Keep malformed tool messages (shouldn't happen, but safer)
-          return true;
-        }
-      });
-
-      const afterRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
-
-      console.log('[chatStream] BEFORE FILTER:', beforeRoles);
-      console.log('[chatStream] AFTER FILTER:', afterRoles);
-      console.log('[chatStream] REMOVED:', beforeCount - session.messages.length, 'messages');
+      const removedCount = removeDisplayResults(session);
 
       logger.info('[chatStream] Replaced previous display in show_table:', {
         session_id: session.id,
         before_count: beforeCount,
-        after_count: session.messages.length
+        after_count: session.messages.length,
+        removed_count: removedCount
       });
     }
 
@@ -903,6 +931,7 @@ async function handleShowTable(session, params, toolCallId) {
   } catch (error) {
     logger.error('[chatStream] show_table error:', {
       error: error.message,
+      stack: error.stack,
       session_id: session.id,
       duration_ms: Date.now() - startTime
     });
@@ -1024,7 +1053,8 @@ async function handleFinalQuery(session, params, toolCallId) {
   } catch (error) {
     logger.error('[chatStream] Final query error:', {
       session_id: session.id,
-      error: error.message
+      error: error.message,
+      stack: error.stack
     });
 
     // Send error event
@@ -1169,12 +1199,9 @@ function ensureLimit(sql, maxLimit) {
 /**
  * Prune conversation history when approaching token limits
  * Called before each LLM API call in streamLLMResponse()
- * Strategy: Keep system prompt + last 20 messages when over threshold
+ * Strategy: Keep system prompt + last N messages when over threshold
  */
 function pruneConversationIfNeeded(session) {
-  const MAX_TOKEN_THRESHOLD = 50000; // Conservative limit (OpenAI allows 128k)
-  const KEEP_RECENT_MESSAGES = 20;
-
   // Step 1: Estimate current token count (rough heuristic: 4 chars = 1 token)
   const totalChars = session.messages.reduce((sum, msg) => {
     const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
