@@ -9,8 +9,9 @@ class ConversationalSQLChat {
     this.isProcessing = false;
     this.currentAssistantMessage = '';
     this.activeTools = new Set(); // Track active tool executions
-    this.currentChart = null; // Track current chart instance for cleanup
+    this.charts = new Map(); // Track ALL chart instances by canvas ID
     this.parameterSelectorChangeHandler = null; // Track parameter selector listener
+    this.plotCounter = 0; // Counter for unique canvas IDs
 
     // DOM elements (will be set when UI is initialized)
     this.chatContainer = null;
@@ -234,7 +235,7 @@ class ConversationalSQLChat {
       messageDiv.className = 'chat-message chat-message-assistant';
 
       const bubble = document.createElement('div');
-      bubble.className = 'chat-bubble chat-bubble-assistant';
+      bubble.className = 'chat-bubble chat-bubble-assistant markdown-content';
 
       messageDiv.appendChild(bubble);
       this.messagesContainer.appendChild(messageDiv);
@@ -242,11 +243,24 @@ class ConversationalSQLChat {
       assistantMessageEl = bubble;
     }
 
-    // Update content with streaming cursor
-    assistantMessageEl.innerHTML = this.escapeHtml(this.currentAssistantMessage) + '<span class="streaming-cursor">|</span>';
+    // Parse markdown and sanitize HTML
+    const rawHtml = marked.parse(this.currentAssistantMessage);
+    const cleanHtml = DOMPurify.sanitize(rawHtml, {
+      ADD_TAGS: ['span'],
+      ADD_ATTR: ['class']
+    });
 
-    // Scroll to bottom
-    this.scrollToBottom();
+    // Update content with streaming cursor (add cursor as DOM element to avoid sanitization)
+    assistantMessageEl.innerHTML = cleanHtml;
+
+    // Add cursor as a separate element to avoid it being removed by sanitizer
+    const cursor = document.createElement('span');
+    cursor.className = 'streaming-cursor';
+    cursor.textContent = '|';
+    assistantMessageEl.appendChild(cursor);
+
+    // Only auto-scroll if user is near bottom (within 100px)
+    this.scrollToBottomIfNearBottom();
   }
 
   /**
@@ -256,7 +270,10 @@ class ConversationalSQLChat {
     const assistantMessageEl = this.messagesContainer.querySelector('.chat-message-assistant:last-child .chat-bubble');
 
     if (assistantMessageEl) {
-      assistantMessageEl.innerHTML = this.escapeHtml(this.currentAssistantMessage);
+      // Parse markdown and sanitize HTML
+      const rawHtml = marked.parse(this.currentAssistantMessage);
+      const cleanHtml = DOMPurify.sanitize(rawHtml);
+      assistantMessageEl.innerHTML = cleanHtml;
     }
 
     this.currentAssistantMessage = '';
@@ -342,6 +359,8 @@ class ConversationalSQLChat {
 
     // Clear or append based on replace_previous
     if (replace_previous) {
+      // CRITICAL: Properly destroy ALL charts before clearing DOM
+      this.destroyAllCharts();
       this.resultsContainer.innerHTML = '';
     }
 
@@ -474,18 +493,22 @@ class ConversationalSQLChat {
         // Filter original data (table version with out-of-range flags)
         const filteredRowsOriginal = allRowsOriginal.filter(row => row.parameter_name === selectedParameter);
 
-        // Destroy existing chart
-        if (this.currentChart && window.plotRenderer) {
-          window.plotRenderer.destroyChart(this.currentChart);
+        // Destroy existing chart for this canvas
+        const existingChart = this.charts.get(canvasId);
+        if (existingChart && window.plotRenderer) {
+          window.plotRenderer.destroyChart(existingChart);
         }
 
         // Re-render with filtered data (without out-of-range flags)
-        this.currentChart = window.plotRenderer.renderPlot(canvasId, filteredRowsForPlot, {
+        const newChart = window.plotRenderer.renderPlot(canvasId, filteredRowsForPlot, {
           title: selectedParameter || plotTitle,
           xAxisLabel: 'Date',
           yAxisLabel: 'Value',
           timeUnit: 'day'
         });
+
+        // Track the chart instance
+        this.charts.set(canvasId, newChart);
 
         // Update parameter table (with out-of-range flags for red borders)
         this.renderParameterTable(filteredRowsOriginal, selectedParameter);
@@ -614,11 +637,10 @@ class ConversationalSQLChat {
    * Display plot results
    */
   displayPlotResults(rows, plotMetadata, plotTitle) {
-    // Clear previous chart if any
-    if (this.currentChart && window.plotRenderer) {
-      window.plotRenderer.destroyChart(this.currentChart);
-      this.currentChart = null;
-    }
+    // Note: Charts are destroyed via destroyAllCharts() in handlePlotResult() before this is called
+
+    // Generate unique canvas ID to support multiple concurrent plots
+    const canvasId = `resultChart-${this.plotCounter++}`;
 
     // Create plot visualization structure with parameter selector
     const plotSection = document.createElement('div');
@@ -639,7 +661,7 @@ class ConversationalSQLChat {
           <div class="chat-plot-toolbar">
             <span class="chat-plot-toolbar-hint">Pan and zoom to explore the data.</span>
           </div>
-          <canvas id="resultChart" width="800" height="400"></canvas>
+          <canvas id="${canvasId}" width="800" height="400"></canvas>
         </div>
       </div>
 
@@ -652,7 +674,6 @@ class ConversationalSQLChat {
 
     // Get references to dynamically created elements
     const selectorContainer = plotSection.querySelector('.chat-parameter-list');
-    const canvasId = 'resultChart';
 
     // Use existing plotRenderer if available
     if (window.plotRenderer && window.plotRenderer.renderPlot) {
@@ -675,12 +696,15 @@ class ConversationalSQLChat {
       }
 
       // Render plot with filtered data (without out-of-range flags)
-      this.currentChart = window.plotRenderer.renderPlot(canvasId, filteredRows, {
+      const chart = window.plotRenderer.renderPlot(canvasId, filteredRows, {
         title: selectedParameter || plotTitle,
         xAxisLabel: 'Date',
         yAxisLabel: 'Value',
         timeUnit: 'day'
       });
+
+      // Track the chart instance
+      this.charts.set(canvasId, chart);
 
       // Attach parameter selector event listener (pass both versions)
       this.attachParameterSelectorListener(rowsForPlot, rows, selectorContainer, canvasId, plotTitle);
@@ -904,10 +928,40 @@ class ConversationalSQLChat {
   }
 
   /**
+   * Destroy all Chart.js instances
+   */
+  destroyAllCharts() {
+    if (window.plotRenderer) {
+      for (const [canvasId, chart] of this.charts.entries()) {
+        try {
+          window.plotRenderer.destroyChart(chart);
+        } catch (e) {
+          console.warn(`[Chat] Failed to destroy chart ${canvasId}:`, e);
+        }
+      }
+    }
+    this.charts.clear();
+  }
+
+  /**
    * Scroll chat to bottom
    */
   scrollToBottom() {
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  }
+
+  /**
+   * Scroll to bottom only if user is already near bottom
+   * This prevents forcing scroll during streaming when user is reading previous messages
+   */
+  scrollToBottomIfNearBottom() {
+    const container = this.messagesContainer;
+    const scrollThreshold = 100; // pixels from bottom
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < scrollThreshold;
+
+    if (isNearBottom) {
+      this.scrollToBottom();
+    }
   }
 
   /**

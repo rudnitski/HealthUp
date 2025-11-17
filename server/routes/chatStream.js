@@ -44,7 +44,7 @@ const logger = pino({
 });
 
 // Configuration
-const SQL_GENERATOR_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-4o-mini'; // Fixed: was 'gpt-5-mini' (invalid model)
+const CHAT_MODEL = process.env.CHAT_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-4o-mini'; // Conversational chat model (defaults to SQL_GENERATOR_MODEL)
 const MAX_CONVERSATION_ITERATIONS = 50; // Safety limit to prevent infinite loops
 
 let openAiClient;
@@ -390,7 +390,7 @@ async function streamLLMResponse(session) {
 
   try {
     const stream = await client.chat.completions.create({
-      model: SQL_GENERATOR_MODEL,
+      model: CHAT_MODEL,
       messages: session.messages,
       tools: TOOL_DEFINITIONS,
       tool_choice: 'auto',
@@ -452,6 +452,18 @@ async function streamLLMResponse(session) {
 
       if (toolCalls.length > 0) {
         message.tool_calls = toolCalls;
+      }
+
+      // Log assistant message content for debugging markdown
+      if (assistantMessage) {
+        logger.info('[chatStream] Assistant message:', {
+          session_id: session.id,
+          content_length: assistantMessage.length,
+          content_preview: assistantMessage.substring(0, 500),
+          has_bold: assistantMessage.includes('**'),
+          has_italic: assistantMessage.includes('_') || assistantMessage.includes('*'),
+          has_list: assistantMessage.includes('\n- ') || assistantMessage.includes('\n* ')
+        });
       }
 
       session.messages.push(message);
@@ -694,16 +706,37 @@ async function handleShowPlot(session, params, toolCallId) {
       ...(row.is_out_of_range != null && { oor: row.is_out_of_range })
     }));
 
-    // Step 6: Clear previous display if replacing
+    // Step 6: Clear previous display results if replacing
+    // CRITICAL: Only remove tool messages that have display_type (plot/table)
+    // Do NOT remove other tool responses (fuzzy_search, etc.) as this breaks conversation integrity
     if (replace_previous) {
+      const beforeCount = session.messages.length;
+      const beforeRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+
       session.messages = session.messages.filter(msg => {
         if (msg.role !== 'tool') return true;
         try {
           const content = JSON.parse(msg.content);
+          // Keep tool messages that don't have display_type (non-display tools like fuzzy_search)
+          if (!content.display_type) return true;
+          // Remove only plot/table display messages
           return content.display_type !== 'plot' && content.display_type !== 'table';
         } catch {
+          // Keep malformed tool messages (shouldn't happen, but safer)
           return true;
         }
+      });
+
+      const afterRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+
+      console.log('[chatStream] BEFORE FILTER (plot):', beforeRoles);
+      console.log('[chatStream] AFTER FILTER (plot):', afterRoles);
+      console.log('[chatStream] REMOVED (plot):', beforeCount - session.messages.length, 'messages');
+
+      logger.info('[chatStream] Replaced previous display in show_plot:', {
+        session_id: session.id,
+        before_count: beforeCount,
+        after_count: session.messages.length
       });
     }
 
@@ -755,7 +788,8 @@ async function handleShowTable(session, params, toolCallId) {
     session_id: session.id,
     table_title,
     replace_previous,
-    reasoning
+    reasoning,
+    sql_preview: sql.substring(0, 200)
   });
 
   try {
@@ -811,16 +845,37 @@ async function handleShowTable(session, params, toolCallId) {
       oor: row.is_out_of_range
     }));
 
-    // 6. Clear previous if replace_previous=true
+    // 6. Clear previous display results if replace_previous=true
+    // CRITICAL: Only remove tool messages that have display_type (plot/table)
+    // Do NOT remove other tool responses (fuzzy_search, etc.) as this breaks conversation integrity
     if (replace_previous) {
+      const beforeCount = session.messages.length;
+      const beforeRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+
       session.messages = session.messages.filter(msg => {
         if (msg.role !== 'tool') return true;
         try {
           const content = JSON.parse(msg.content);
+          // Keep tool messages that don't have display_type (non-display tools like fuzzy_search)
+          if (!content.display_type) return true;
+          // Remove only plot/table display messages
           return content.display_type !== 'plot' && content.display_type !== 'table';
         } catch {
+          // Keep malformed tool messages (shouldn't happen, but safer)
           return true;
         }
+      });
+
+      const afterRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+
+      console.log('[chatStream] BEFORE FILTER:', beforeRoles);
+      console.log('[chatStream] AFTER FILTER:', afterRoles);
+      console.log('[chatStream] REMOVED:', beforeCount - session.messages.length, 'messages');
+
+      logger.info('[chatStream] Replaced previous display in show_table:', {
+        session_id: session.id,
+        before_count: beforeCount,
+        after_count: session.messages.length
       });
     }
 
@@ -1150,8 +1205,55 @@ function pruneConversationIfNeeded(session) {
   const systemPrompt = session.messages.find(msg => msg.role === 'system');
   const conversationMessages = session.messages.filter(msg => msg.role !== 'system');
 
-  // Step 4: Keep only recent messages
-  const recentMessages = conversationMessages.slice(-KEEP_RECENT_MESSAGES);
+  // Step 4: Keep only recent messages, but ensure tool call/response pairs are preserved
+  let recentMessages = conversationMessages.slice(-KEEP_RECENT_MESSAGES);
+
+  // Step 4a: CRITICAL FIX - If first message after pruning is a tool response,
+  // we need to include the preceding assistant message with tool_calls
+  if (recentMessages.length > 0 && recentMessages[0].role === 'tool') {
+    // Find the index of this tool message in the original conversation
+    const firstToolIndex = conversationMessages.indexOf(recentMessages[0]);
+
+    // Walk backwards to find the assistant message with tool_calls
+    for (let i = firstToolIndex - 1; i >= 0; i--) {
+      const msg = conversationMessages[i];
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        // Found the assistant message - include all messages from here onwards
+        recentMessages = conversationMessages.slice(i);
+        logger.info('[chatStream] Extended pruning window to include tool_call ancestor:', {
+          session_id: session.id,
+          added_messages: i - (conversationMessages.length - KEEP_RECENT_MESSAGES)
+        });
+        break;
+      }
+      // If we hit a user message, something is wrong - stop looking
+      if (msg.role === 'user') {
+        logger.warn('[chatStream] Could not find tool_calls ancestor - conversation may be corrupted');
+        break;
+      }
+    }
+  }
+
+  // Step 4b: CRITICAL FIX - If last message is assistant with tool_calls but we pruned the responses,
+  // remove that assistant message to prevent orphaned tool_calls
+  if (recentMessages.length > 0) {
+    const lastMsg = recentMessages[recentMessages.length - 1];
+    if (lastMsg.role === 'assistant' && lastMsg.tool_calls && lastMsg.tool_calls.length > 0) {
+      // Check if ALL tool responses are present
+      const toolCallIds = lastMsg.tool_calls.map(tc => tc.id);
+      const hasAllResponses = toolCallIds.every(id =>
+        recentMessages.some(msg => msg.role === 'tool' && msg.tool_call_id === id)
+      );
+
+      if (!hasAllResponses) {
+        logger.warn('[chatStream] Removing orphaned assistant message with tool_calls:', {
+          session_id: session.id,
+          tool_call_ids: toolCallIds
+        });
+        recentMessages = recentMessages.slice(0, -1);
+      }
+    }
+  }
 
   // Step 5: Rebuild messages array
   session.messages = systemPrompt ? [systemPrompt, ...recentMessages] : recentMessages;

@@ -73,6 +73,14 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 - OpenAI (default): Requires `OPENAI_API_KEY`, `OPENAI_VISION_MODEL`
 - Anthropic (opt-in): Requires `ANTHROPIC_API_KEY`, `ANTHROPIC_VISION_MODEL`, set `OCR_PROVIDER=anthropic`
 
+**LLM Model Configuration:**
+- `CHAT_MODEL`: Conversational chat interface (PRD v3.2, defaults to `SQL_GENERATOR_MODEL`)
+- `SQL_GENERATOR_MODEL`: Agentic SQL generation and legacy endpoint (defaults to `gpt-4o-mini`)
+- `EMAIL_CLASSIFIER_MODEL`: Gmail integration email classification (defaults to `SQL_GENERATOR_MODEL`)
+- `ANALYTE_MAPPING_MODEL`: Tier C analyte name matching (defaults to `SQL_GENERATOR_MODEL`)
+- `OPENAI_VISION_MODEL`: OCR extraction from lab reports (OpenAI provider)
+- `ANTHROPIC_VISION_MODEL`: OCR extraction from lab reports (Anthropic provider)
+
 **Agentic SQL:**
 - Enable with `AGENTIC_SQL_ENABLED=true`
 - Uses tool-calling loop with fuzzy trigram search and exploratory SQL execution
