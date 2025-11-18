@@ -390,6 +390,15 @@ async function streamLLMResponse(session) {
   // IMPORTANT: Prune conversation before making API call
   pruneConversationIfNeeded(session);
 
+  // Send status: preparing to call LLM
+  if (session.sseResponse) {
+    streamEvent(session.sseResponse, {
+      type: 'status',
+      status: 'thinking',
+      message: 'Thinking...'
+    });
+  }
+
   try {
     const stream = await client.chat.completions.create({
       model: CHAT_MODEL,

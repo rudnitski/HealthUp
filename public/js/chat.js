@@ -104,6 +104,10 @@ class ConversationalSQLChat {
         this.hideToolIndicator(data.tool);
         break;
 
+      case 'status':
+        this.showStatusIndicator(data.status, data.message);
+        break;
+
       case 'message_complete':
         this.finalizeAssistantMessage();
         this.enableInput();
@@ -230,6 +234,9 @@ class ConversationalSQLChat {
     let assistantMessageEl = this.messagesContainer.querySelector('.chat-message-assistant:last-child .chat-bubble');
 
     if (!assistantMessageEl) {
+      // First text chunk - hide status indicator as LLM is now generating response
+      this.hideStatusIndicator();
+
       // Create new assistant message
       const messageDiv = document.createElement('div');
       messageDiv.className = 'chat-message chat-message-assistant';
@@ -283,6 +290,9 @@ class ConversationalSQLChat {
    * Show tool execution indicator
    */
   showToolIndicator(toolName, params) {
+    // Clear any status indicator when tool starts
+    this.hideStatusIndicator();
+
     this.activeTools.add(toolName);
 
     // Create or update tool indicators container
@@ -325,15 +335,58 @@ class ConversationalSQLChat {
   }
 
   /**
+   * Show status indicator (non-tool statuses like "Thinking...", "Validating query...")
+   * Replaces any existing status indicator with the new one
+   */
+  showStatusIndicator(statusType, message) {
+    // Remove any existing status indicator first
+    this.hideStatusIndicator();
+
+    // Create or get indicators container
+    let indicatorsContainer = this.messagesContainer.querySelector('.tool-indicators');
+
+    if (!indicatorsContainer) {
+      indicatorsContainer = document.createElement('div');
+      indicatorsContainer.className = 'tool-indicators';
+      this.messagesContainer.appendChild(indicatorsContainer);
+    }
+
+    const indicator = document.createElement('div');
+    indicator.className = 'tool-indicator status-indicator';
+    indicator.dataset.status = statusType;
+    indicator.innerHTML = `<span class="tool-spinner">🔄</span> ${message}`;
+
+    indicatorsContainer.appendChild(indicator);
+
+    this.scrollToBottom();
+  }
+
+  /**
+   * Hide status indicator
+   */
+  hideStatusIndicator() {
+    const indicator = this.messagesContainer.querySelector('.status-indicator');
+    if (indicator) {
+      indicator.remove();
+    }
+
+    // Remove container if no more indicators (tools or status)
+    const indicatorsContainer = this.messagesContainer.querySelector('.tool-indicators');
+    if (indicatorsContainer && indicatorsContainer.children.length === 0) {
+      indicatorsContainer.remove();
+    }
+  }
+
+  /**
    * Get human-readable tool name
    */
   getToolDisplayName(toolName) {
     const displayNames = {
       'fuzzy_search_parameter_names': 'Searching parameters...',
-      'fuzzy_search_analyte_names': 'Searching analytes...',
-      'execute_exploratory_sql': 'Querying database...',
-      'show_plot': 'Generating plot...',
-      'show_table': 'Generating table...'
+      'fuzzy_search_analyte_names': 'Searching lab tests...',
+      'execute_exploratory_sql': 'Exploring database...',
+      'show_plot': 'Validating and fetching data...',
+      'show_table': 'Validating and fetching data...'
     };
 
     return displayNames[toolName] || toolName;
