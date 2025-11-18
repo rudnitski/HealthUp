@@ -748,7 +748,12 @@ async function handleShowPlot(session, params, toolCallId) {
     }
 
     // Step 3: Execute query with 5-second timeout
-    const queryResult = await pool.query(safeSql);
+    const queryResult = await Promise.race([
+      pool.query(safeSql),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Query timeout after 5 seconds')), 5000)
+      )
+    ]);
 
     // Step 4: Send FULL data to frontend
     if (session.sseResponse) {
@@ -869,8 +874,13 @@ async function handleShowTable(session, params, toolCallId) {
       safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
     }
 
-    // 3. Execute query
-    const queryResult = await pool.query(safeSql);
+    // 3. Execute query with 5-second timeout
+    const queryResult = await Promise.race([
+      pool.query(safeSql),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Query timeout after 5 seconds')), 5000)
+      )
+    ]);
 
     // 4. Send to frontend
     if (session.sseResponse) {
