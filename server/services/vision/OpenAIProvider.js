@@ -106,7 +106,8 @@ class OpenAIProvider extends VisionProvider {
       }
     };
 
-    const response = await this.withRetry(callVision);
+    // Use 5 attempts for vision API (expensive operations, more tolerance for overload/rate limit errors)
+    const response = await this.withRetry(callVision, { attempts: 5, baseDelay: 1000 });
 
     // Extract structured output from response
     // OpenAI returns parsed JSON in output_parsed

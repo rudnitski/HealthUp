@@ -598,13 +598,13 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       }
     }
 
-    // Initialize vision provider
+    // Initialize vision provider (with fallback support if enabled)
     updateProgress(jobId, 25, 'Preparing analysis');
 
-    const provider = VisionProviderFactory.create(OCR_PROVIDER);
+    const provider = VisionProviderFactory.createWithFallback();
     provider.validateConfig();
 
-    console.log(`${logPrefix} Using OCR provider: ${OCR_PROVIDER.toUpperCase()}`);
+    console.log(`${logPrefix} Using OCR provider: ${OCR_PROVIDER.toUpperCase()} (fallback: ${process.env.VISION_FALLBACK_ENABLED === 'true' ? 'enabled' : 'disabled'})`);
 
     // Prepare images for analysis (provider-specific handling)
     let imageDataUrls = [];
@@ -663,12 +663,20 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
     let analysisResult;
 
     try {
+      // Pass progress callback to provider for fallback UI updates
+      const analysisOptionsWithProgress = {
+        ...analysisOptions,
+        onProgressUpdate: (percentage, message) => {
+          updateProgress(jobId, percentage, message);
+        },
+      };
+
       analysisResult = await provider.analyze(
         imageDataUrls,
         systemPrompt,
         userPrompt,
         structuredOutputFormat.schema,
-        analysisOptions
+        analysisOptionsWithProgress
       );
       updateProgress(jobId, 70, 'AI analysis completed');
     } catch (error) {

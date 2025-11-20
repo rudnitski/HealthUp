@@ -220,6 +220,49 @@ class AnthropicProvider extends VisionProvider {
   }
 
   /**
+   * Log Anthropic rate limit headers for monitoring
+   * @param {object} response - Anthropic API response object
+   */
+  logRateLimitHeaders(response) {
+    // Anthropic SDK doesn't expose response headers directly on the response object
+    // Headers are available via response_headers property if present
+    const headers = response.response_headers || {};
+
+    const rateLimitInfo = {
+      requests_remaining: headers['anthropic-ratelimit-requests-remaining'],
+      requests_reset: headers['anthropic-ratelimit-requests-reset'],
+      input_tokens_remaining: headers['anthropic-ratelimit-input-tokens-remaining'],
+      input_tokens_reset: headers['anthropic-ratelimit-input-tokens-reset'],
+      output_tokens_remaining: headers['anthropic-ratelimit-output-tokens-remaining'],
+      output_tokens_reset: headers['anthropic-ratelimit-output-tokens-reset'],
+      retry_after: headers['retry-after'],
+    };
+
+    // Only log if we have any rate limit info
+    const hasRateLimitInfo = Object.values(rateLimitInfo).some((v) => v !== undefined);
+
+    if (hasRateLimitInfo) {
+      // Filter out undefined values for cleaner logs
+      const definedValues = Object.fromEntries(
+        Object.entries(rateLimitInfo).filter(([, v]) => v !== undefined)
+      );
+
+      console.log('[AnthropicProvider] Rate limit status:', definedValues);
+
+      // Warn if approaching limits (< 20% remaining)
+      const requestsRemaining = parseInt(rateLimitInfo.requests_remaining, 10);
+      if (!isNaN(requestsRemaining) && requestsRemaining < 10) {
+        console.warn(`[AnthropicProvider] WARNING: Only ${requestsRemaining} requests remaining before rate limit`);
+      }
+
+      const inputTokensRemaining = parseInt(rateLimitInfo.input_tokens_remaining, 10);
+      if (!isNaN(inputTokensRemaining) && inputTokensRemaining < 10000) {
+        console.warn(`[AnthropicProvider] WARNING: Only ${inputTokensRemaining} input tokens remaining before rate limit`);
+      }
+    }
+  }
+
+  /**
    * Analyze images or PDFs using Anthropic Claude Vision API with JSON mode
    * @param {Array<string>} imageDataUrls - Base64 data URLs (format: data:image/png;base64,...) - optional if pdfBuffer provided
    * @param {string} systemPrompt - System instructions
@@ -303,9 +346,13 @@ class AnthropicProvider extends VisionProvider {
     };
 
     // Wrap API call with retry logic
+    // Use 5 attempts for vision API (expensive operations, more tolerance for 529 overload errors)
     const callVision = async () => await client.beta.messages.create(requestPayload);
 
-    const response = await this.withRetry(callVision);
+    const response = await this.withRetry(callVision, { attempts: 5, baseDelay: 1000 });
+
+    // Log rate limit headers for monitoring (Anthropic best practice)
+    this.logRateLimitHeaders(response);
 
     // Validate stop_reason before processing (structured outputs edge cases)
     if (response.stop_reason === 'refusal') {

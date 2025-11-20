@@ -40,13 +40,19 @@ class VisionProvider {
       } catch (error) {
         lastError = error;
 
-        if (attempt === attempts || !this.shouldRetry(error)) {
+        // Check if we should retry this error
+        const retryDecision = this.shouldRetry(error);
+        if (attempt === attempts || !retryDecision.shouldRetry) {
           break;
         }
 
-        const backoff = baseDelay * (2 ** (attempt - 1));
-        console.log(`[${this.constructor.name}] Retry attempt ${attempt}/${attempts} after ${backoff}ms. Error: ${error.message}`);
-        await new Promise((resolve) => setTimeout(resolve, backoff));
+        // Calculate delay with jitter
+        const delay = this.calculateBackoff(error, attempt, baseDelay, retryDecision);
+
+        console.log(`[${this.constructor.name}] Retry attempt ${attempt}/${attempts} after ${delay}ms. ` +
+          `Error: ${error.message} (status: ${error.status || error.response?.status || 'unknown'})`);
+
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
 
@@ -54,13 +60,62 @@ class VisionProvider {
   }
 
   /**
+   * Calculate backoff delay with exponential backoff, jitter, and retry-after support
+   * @param {Error} error - Error from API call
+   * @param {number} attempt - Current attempt number (1-based)
+   * @param {number} baseDelay - Base delay in ms
+   * @param {object} retryDecision - Decision from shouldRetry()
+   * @returns {number} Delay in milliseconds
+   */
+  calculateBackoff(error, attempt, baseDelay, retryDecision) {
+    // 1. Check for retry-after header (Anthropic best practice)
+    // RFC 7231 allows Retry-After to be either delay-seconds or HTTP-date
+    const retryAfterHeader = error.headers?.['retry-after'] ||
+                             error.response?.headers?.['retry-after'];
+
+    if (retryAfterHeader) {
+      // Try parsing as seconds (numeric format)
+      const retryAfterSeconds = parseInt(retryAfterHeader, 10);
+
+      if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
+        const retryAfterMs = retryAfterSeconds * 1000;
+        console.log(`[${this.constructor.name}] Using retry-after header: ${retryAfterSeconds}s`);
+        return retryAfterMs;
+      }
+
+      // Try parsing as HTTP-date format (e.g., "Tue, 05 Mar 2024 10:00:00 GMT")
+      const retryAfterDate = new Date(retryAfterHeader);
+      if (!isNaN(retryAfterDate.getTime())) {
+        const retryAfterMs = Math.max(0, retryAfterDate.getTime() - Date.now());
+        console.log(`[${this.constructor.name}] Using retry-after header (HTTP-date): ${retryAfterMs}ms`);
+        return retryAfterMs;
+      }
+
+      // Invalid header format - log warning and fall through to exponential backoff
+      console.warn(`[${this.constructor.name}] Invalid retry-after header format: "${retryAfterHeader}". Falling back to exponential backoff.`);
+    }
+
+    // 2. Use longer base delay for overload errors (529)
+    const effectiveBaseDelay = retryDecision.isOverload ? 3000 : baseDelay;
+
+    // 3. Exponential backoff: baseDelay * 2^(attempt-1)
+    const exponentialDelay = effectiveBaseDelay * (2 ** (attempt - 1));
+
+    // 4. Add jitter (±20%) to prevent thundering herd
+    const jitterFactor = 0.8 + (Math.random() * 0.4); // Random between 0.8 and 1.2
+    const delayWithJitter = Math.floor(exponentialDelay * jitterFactor);
+
+    return delayWithJitter;
+  }
+
+  /**
    * Determine if an error should trigger a retry
    * @param {Error} error - Error from API call
-   * @returns {boolean} True if should retry
+   * @returns {object} Retry decision with { shouldRetry, isOverload, isRateLimit }
    */
   shouldRetry(error) {
     if (!error) {
-      return false;
+      return { shouldRetry: false, isOverload: false, isRateLimit: false };
     }
 
     // OpenAI SDK: error.response.status
@@ -69,16 +124,27 @@ class VisionProvider {
     const status = error.response?.status || error.status;
 
     if (status) {
-      return status === 429 || status >= 500;
+      const is529Overload = status === 529;
+      const is429RateLimit = status === 429;
+      const is5xxError = status >= 500;
+
+      // Retry on rate limits (429), overload (529), or server errors (5xx)
+      if (is429RateLimit || is529Overload || is5xxError) {
+        return {
+          shouldRetry: true,
+          isOverload: is529Overload,
+          isRateLimit: is429RateLimit,
+        };
+      }
     }
 
     // Retry on network timeouts and connection errors
     const retryableCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND'];
     if (error.code && retryableCodes.includes(error.code)) {
-      return true;
+      return { shouldRetry: true, isOverload: false, isRateLimit: false };
     }
 
-    return false;
+    return { shouldRetry: false, isOverload: false, isRateLimit: false };
   }
 
   /**

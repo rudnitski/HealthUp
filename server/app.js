@@ -27,9 +27,11 @@ const VisionProviderFactory = require('./services/vision/VisionProviderFactory')
 // Validate OCR provider configuration on startup (non-fatal warning)
 try {
   const ocrProvider = process.env.OCR_PROVIDER || 'openai';
-  console.log(`[Startup] Validating OCR provider: ${ocrProvider}`);
+  const fallbackEnabled = process.env.VISION_FALLBACK_ENABLED === 'true';
 
-  const provider = VisionProviderFactory.create(ocrProvider);
+  console.log(`[Startup] Validating OCR provider: ${ocrProvider} (fallback: ${fallbackEnabled ? 'enabled' : 'disabled'})`);
+
+  const provider = VisionProviderFactory.createWithFallback();
   provider.validateConfig();
 
   console.log(`[Startup] ✅ OCR provider validated: ${ocrProvider}`);
