@@ -42,6 +42,30 @@ const coerceTimestamp = (value) => {
   return date;
 };
 
+/**
+ * Normalize MIME type using extension-based inference for generic types
+ * @param {string} mimetype - Original MIME type from upload
+ * @param {string} filename - Original filename
+ * @returns {string} Normalized MIME type
+ */
+function normalizeMimetype(mimetype, filename) {
+  // If generic/missing mimetype, infer from extension
+  if (!mimetype || mimetype === 'application/octet-stream' || mimetype === 'binary/octet-stream') {
+    const ext = filename?.split('.').pop()?.toLowerCase();
+    const mimetypeMap = {
+      'pdf': 'application/pdf',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'heic': 'image/heic',
+      'webp': 'image/webp',
+      'gif': 'image/gif',
+    };
+    return mimetypeMap[ext] || mimetype || 'application/octet-stream';
+  }
+  return mimetype;
+}
+
 async function upsertPatient(client, payload) {
   const {
     fullName,
@@ -153,6 +177,7 @@ const buildLabResultTuples = (reportId, parameters) => {
 async function persistLabReport({
   fileBuffer,
   filename,
+  mimetype,
   parserVersion,
   processedAt,
   coreResult,
@@ -194,6 +219,9 @@ async function persistLabReport({
       : [];
     const missingDataJson = JSON.stringify(missingDataArray);
 
+    // Normalize mimetype before storing (handles Gmail's application/octet-stream)
+    const normalizedMimetype = normalizeMimetype(mimetype, filename);
+
     const reportResult = await client.query(
       `
       INSERT INTO patient_reports (
@@ -212,17 +240,20 @@ async function persistLabReport({
         patient_date_of_birth_snapshot,
         raw_model_output,
         missing_data,
+        file_data,
+        file_mimetype,
         created_at,
         updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, NOW(), NOW()
+        $1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb,
+        $15, $16,
+        NOW(), NOW()
       )
       ON CONFLICT (patient_id, checksum)
       DO UPDATE SET
         parser_version = EXCLUDED.parser_version,
         status = EXCLUDED.status,
-        recognized_at = EXCLUDED.recognized_at,
         processed_at = EXCLUDED.processed_at,
         test_date_text = EXCLUDED.test_date_text,
         patient_name_snapshot = EXCLUDED.patient_name_snapshot,
@@ -231,7 +262,6 @@ async function persistLabReport({
         patient_date_of_birth_snapshot = EXCLUDED.patient_date_of_birth_snapshot,
         raw_model_output = EXCLUDED.raw_model_output,
         missing_data = EXCLUDED.missing_data,
-        source_filename = EXCLUDED.source_filename,
         updated_at = NOW()
       RETURNING id;
       `,
@@ -250,6 +280,8 @@ async function persistLabReport({
         patientDateOfBirth,
         safeCoreResult.raw_model_output ?? null,
         missingDataJson,
+        fileBuffer,
+        normalizedMimetype,
       ],
     );
 
