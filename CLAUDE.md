@@ -58,7 +58,20 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 
 - **`server/services/gmailAttachmentIngest.js`**: Step 3 of Gmail integration. Downloads attachments, computes SHA-256 checksums, runs OCR via `labReportProcessor`, tracks provenance in `gmail_report_provenance` table.
 
+- **`server/services/fileStorage.js`**: Filesystem-based storage for uploaded lab reports (PRD v3.4). Organizes files by patient ID with structure `{patient_id}/{report_id}.ext`. Stores relative paths in database (`patient_reports.file_path`). Configurable via `FILE_STORAGE_PATH` env variable (defaults to `./storage/lab_reports`).
+
 ### Critical Configuration
+
+**File Storage (PRD v3.4):**
+- Files stored in filesystem at path specified by `FILE_STORAGE_PATH` environment variable
+- Default location: `{project_root}/storage/lab_reports`
+- Organized structure: `{storage_base}/{patient_id}/{report_id}.ext`
+- Database stores relative file paths, not binary data
+- **Localhost**: Use default or specify local path (e.g., `./storage/lab_reports`)
+- **VPS/Production**: Set absolute path with sufficient storage (e.g., `/home/healthup/storage/lab_reports`)
+- Directory auto-created on first upload
+- Supports up to 100MB per file (configurable in `fileStorage.js`)
+
 
 **Database Locale Requirement:**
 - PostgreSQL database **MUST** use UTF-8 locale (`LC_COLLATE` and `LC_CTYPE` = `en_US.UTF-8` or similar).

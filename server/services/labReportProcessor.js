@@ -706,6 +706,7 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       persistenceResult = await persistLabReport({
         fileBuffer,
         filename: sanitizedFilename,
+        mimetype,
         parserVersion: `${OCR_PROVIDER}:${provider.model}`,
         processedAt,
         coreResult,

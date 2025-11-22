@@ -8,3 +8,6 @@ pnpm-debug.log*
 
 # Gmail OAuth token (dev-only, do not commit)
 server/config/gmail-token.json
+
+# Lab report file storage (PRD v3.4)
+storage/
