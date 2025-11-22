@@ -260,13 +260,7 @@ class SessionManager {
 // Create singleton instance
 const sessionManager = new SessionManager();
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  sessionManager.shutdown();
-});
-
-process.on('SIGINT', () => {
-  sessionManager.shutdown();
-});
+// Note: Graceful shutdown is handled by server/app.js
+// No need to register duplicate SIGTERM/SIGINT handlers here
 
 module.exports = sessionManager;

@@ -6,6 +6,14 @@ if (process.env.NODE_ENV !== 'production') {
   } catch (_) {}
 }
 
+// Increase max listeners for process event emitter
+// Multiple modules legitimately register exit/signal handlers for cleanup:
+// - db pool error handler
+// - SIGINT/SIGTERM handlers (app.js)
+// - uncaughtException/unhandledRejection handlers (app.js)
+// - various cleanup routines in loaded modules
+process.setMaxListeners(20);
+
 const express = require('express');
 const fileUpload = require('express-fileupload');
 const { healthcheck, pool } = require('./db');
@@ -54,6 +62,7 @@ const executeSqlRouter = require('./routes/executeSql');
 const adminRouter = require('./routes/admin');
 const gmailDevRouter = require('./routes/gmailDev');
 const { shutdownSchemaSnapshot } = require('./services/schemaSnapshot');
+const sessionManager = require('./utils/sessionManager');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -201,6 +210,12 @@ async function shutdown(code = 0, { skipPool = false } = {}) {
   }
 
   if (!skipPool) {
+    try {
+      sessionManager.shutdown();
+    } catch (e) {
+      console.error('[sessionManager] Shutdown error:', e);
+    }
+
     try {
       await shutdownSchemaSnapshot();
     } catch (e) {
