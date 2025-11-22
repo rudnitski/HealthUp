@@ -35,7 +35,7 @@ const schemaStatements = [
     patient_date_of_birth_snapshot TEXT,
     raw_model_output TEXT,
     missing_data JSONB,
-    file_data BYTEA,
+    file_path TEXT,
     file_mimetype TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -52,8 +52,8 @@ const schemaStatements = [
   COMMENT ON COLUMN patient_reports.recognized_at IS 'Timestamp when the lab report was processed by OCR. Use as fallback date when test_date_text is NULL.';
   `,
   `
-  COMMENT ON COLUMN patient_reports.file_data IS
-    'Original uploaded file (PDF/image) stored as binary data. NULL for reports uploaded before v3.4.';
+  COMMENT ON COLUMN patient_reports.file_path IS
+    'Relative path to original uploaded file in filesystem (e.g., patient_uuid/report_uuid.pdf). NULL for reports uploaded before v3.4.';
   `,
   `
   COMMENT ON COLUMN patient_reports.file_mimetype IS

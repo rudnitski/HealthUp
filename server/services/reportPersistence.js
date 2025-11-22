@@ -1,5 +1,6 @@
 const { randomUUID, createHash } = require('crypto');
 const { pool } = require('../db');
+const { saveFile, deleteFile } = require('./fileStorage');
 
 class PersistLabReportError extends Error {
   constructor(message, {
@@ -222,6 +223,9 @@ async function persistLabReport({
     // Normalize mimetype before storing (handles Gmail's application/octet-stream)
     const normalizedMimetype = normalizeMimetype(mimetype, filename);
 
+    // Save file to filesystem
+    const filePath = await saveFile(fileBuffer, patientId, reportId, filename);
+
     const reportResult = await client.query(
       `
       INSERT INTO patient_reports (
@@ -240,7 +244,7 @@ async function persistLabReport({
         patient_date_of_birth_snapshot,
         raw_model_output,
         missing_data,
-        file_data,
+        file_path,
         file_mimetype,
         created_at,
         updated_at
@@ -280,7 +284,7 @@ async function persistLabReport({
         patientDateOfBirth,
         safeCoreResult.raw_model_output ?? null,
         missingDataJson,
-        fileBuffer,
+        filePath,
         normalizedMimetype,
       ],
     );

@@ -1,6 +1,7 @@
 const express = require('express');
 const { getPatientReports, getReportDetail } = require('../services/reportRetrieval');
 const { pool } = require('../db');
+const { readFile } = require('../services/fileStorage');
 
 const router = express.Router();
 
@@ -67,7 +68,7 @@ router.get('/reports/:reportId/original-file', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT file_data, source_filename, file_mimetype, recognized_at
+      `SELECT file_path, source_filename, file_mimetype, recognized_at
        FROM patient_reports
        WHERE id = $1`,
       [reportId]
@@ -80,14 +81,26 @@ router.get('/reports/:reportId/original-file', async (req, res) => {
       });
     }
 
-    const { file_data, source_filename, file_mimetype, recognized_at } = result.rows[0];
+    const { file_path, source_filename, file_mimetype, recognized_at } = result.rows[0];
 
-    if (!file_data) {
+    if (!file_path) {
       return res.status(410).json({
         error: 'Original file not available',
         reason: 'report_predates_file_storage',
         report_id: reportId,
         recognized_at: recognized_at
+      });
+    }
+
+    // Read file from filesystem
+    const fileBuffer = await readFile(file_path);
+
+    if (!fileBuffer) {
+      return res.status(404).json({
+        error: 'File not found on disk',
+        reason: 'file_missing_from_storage',
+        report_id: reportId,
+        file_path: file_path
       });
     }
 
@@ -101,7 +114,7 @@ router.get('/reports/:reportId/original-file', async (req, res) => {
     res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
-    return res.send(file_data);
+    return res.send(fileBuffer);
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('[reports] File retrieval error:', error);
