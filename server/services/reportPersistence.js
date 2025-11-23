@@ -267,8 +267,10 @@ async function persistLabReport({
         patient_date_of_birth_snapshot = EXCLUDED.patient_date_of_birth_snapshot,
         raw_model_output = EXCLUDED.raw_model_output,
         missing_data = EXCLUDED.missing_data,
+        file_path = COALESCE(patient_reports.file_path, EXCLUDED.file_path),
+        file_mimetype = COALESCE(patient_reports.file_mimetype, EXCLUDED.file_mimetype),
         updated_at = NOW()
-      RETURNING id;
+      RETURNING id, (xmax = 0) AS inserted;
       `,
       [
         reportId,
@@ -291,6 +293,33 @@ async function persistLabReport({
     );
 
     persistedReportId = reportResult.rows[0].id;
+    const wasInserted = reportResult.rows[0].inserted;
+
+    // If this was an UPDATE (not INSERT) and we saved a new file, check if we need to clean it up
+    if (!wasInserted) {
+      // Fetch the actual file_path that was kept (might be old one via COALESCE)
+      const checkResult = await client.query(
+        'SELECT file_path FROM patient_reports WHERE id = $1',
+        [persistedReportId]
+      );
+      const keptFilePath = checkResult.rows[0]?.file_path;
+
+      // If the kept path is different from what we just saved, clean up the orphan
+      if (keptFilePath && keptFilePath !== filePath) {
+        try {
+          await deleteFile(filePath);
+          console.log(`[reportPersistence] Cleaned up duplicate file on conflict: ${filePath} (kept: ${keptFilePath})`);
+          // Update our reference to match what's actually in the DB
+          filePath = keptFilePath;
+        } catch (cleanupError) {
+          console.error(`[reportPersistence] Failed to clean up duplicate file ${filePath}:`, cleanupError);
+          // Continue - not critical
+        }
+      } else if (!keptFilePath && filePath) {
+        // COALESCE backfilled NULL with our new file - this is good, keep it
+        console.log(`[reportPersistence] Backfilled file_path for existing report: ${filePath}`);
+      }
+    }
 
     await client.query('DELETE FROM lab_results WHERE report_id = $1', [persistedReportId]);
 
