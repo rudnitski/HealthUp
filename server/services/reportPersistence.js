@@ -203,7 +203,8 @@ async function persistLabReport({
   const reportId = randomUUID();
   let patientId;
   let persistedReportId;
-  let filePath = null; // Track file path for cleanup on error
+  let savedFilePath = null; // NEW file we saved (may need cleanup)
+  let shouldCleanupOnError = true; // Whether to delete savedFilePath on rollback
   const parameterCount = parameters.length;
 
   try {
@@ -225,7 +226,7 @@ async function persistLabReport({
     const normalizedMimetype = normalizeMimetype(mimetype, filename);
 
     // Save file to filesystem (before DB transaction)
-    filePath = await saveFile(fileBuffer, patientId, reportId, filename);
+    savedFilePath = await saveFile(fileBuffer, patientId, reportId, filename);
 
     const reportResult = await client.query(
       `
@@ -287,7 +288,7 @@ async function persistLabReport({
         patientDateOfBirth,
         safeCoreResult.raw_model_output ?? null,
         missingDataJson,
-        filePath,
+        savedFilePath,
         normalizedMimetype,
       ],
     );
@@ -305,19 +306,23 @@ async function persistLabReport({
       const keptFilePath = checkResult.rows[0]?.file_path;
 
       // If the kept path is different from what we just saved, clean up the orphan
-      if (keptFilePath && keptFilePath !== filePath) {
+      if (keptFilePath && keptFilePath !== savedFilePath) {
+        // Database kept the OLD file, our NEW file is orphaned
         try {
-          await deleteFile(filePath);
-          console.log(`[reportPersistence] Cleaned up duplicate file on conflict: ${filePath} (kept: ${keptFilePath})`);
-          // Update our reference to match what's actually in the DB
-          filePath = keptFilePath;
+          await deleteFile(savedFilePath);
+          console.log(`[reportPersistence] Cleaned up duplicate file on conflict: ${savedFilePath} (kept: ${keptFilePath})`);
+          // Mark that we already cleaned up - don't delete again on rollback
+          shouldCleanupOnError = false;
         } catch (cleanupError) {
-          console.error(`[reportPersistence] Failed to clean up duplicate file ${filePath}:`, cleanupError);
-          // Continue - not critical
+          console.error(`[reportPersistence] Failed to clean up duplicate file ${savedFilePath}:`, cleanupError);
+          // Still mark as cleaned up to avoid trying to delete the kept file on rollback
+          shouldCleanupOnError = false;
         }
-      } else if (!keptFilePath && filePath) {
+      } else if (!keptFilePath && savedFilePath) {
         // COALESCE backfilled NULL with our new file - this is good, keep it
-        console.log(`[reportPersistence] Backfilled file_path for existing report: ${filePath}`);
+        console.log(`[reportPersistence] Backfilled file_path for existing report: ${savedFilePath}`);
+        // Keep cleanup flag true - if transaction fails, delete the backfill file
+        shouldCleanupOnError = true;
       }
     }
 
@@ -343,12 +348,13 @@ async function persistLabReport({
     await client.query('ROLLBACK');
 
     // Clean up orphaned file on disk if transaction failed
-    if (filePath) {
+    // Only delete if we haven't already cleaned it up (duplicate case)
+    if (savedFilePath && shouldCleanupOnError) {
       try {
-        await deleteFile(filePath);
-        console.log(`[reportPersistence] Cleaned up orphaned file after transaction failure: ${filePath}`);
+        await deleteFile(savedFilePath);
+        console.log(`[reportPersistence] Cleaned up orphaned file after transaction failure: ${savedFilePath}`);
       } catch (cleanupError) {
-        console.error(`[reportPersistence] Failed to clean up file ${filePath}:`, cleanupError);
+        console.error(`[reportPersistence] Failed to clean up file ${savedFilePath}:`, cleanupError);
         // Don't throw - original error is more important
       }
     }
@@ -363,7 +369,7 @@ async function persistLabReport({
         attemptedReportId: reportId,
         persistedReportId,
         parameterCount,
-        orphanedFilePath: filePath,
+        orphanedFilePath: savedFilePath,
       },
     });
   } finally {
