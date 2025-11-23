@@ -9,6 +9,46 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 
 const isUuid = (value) => UUID_REGEX.test(value);
 
+/**
+ * Sanitize filename for use in Content-Disposition header
+ * Prevents HTTP header injection, response splitting, and other attacks
+ * @param {string} filename - Original filename from user input
+ * @returns {string} Sanitized filename safe for HTTP headers
+ */
+function sanitizeFilenameForHeader(filename) {
+  if (!filename || typeof filename !== 'string') {
+    return 'lab_report';
+  }
+
+  // Remove path separators and null bytes
+  let safe = filename.replace(/[/\\:\x00]/g, '_');
+
+  // Remove or replace control characters (including CR/LF for header injection prevention)
+  safe = safe.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+
+  // Escape quotes and backslashes for proper header quoting
+  safe = safe.replace(/["\\]/g, '\\$&');
+
+  // Remove leading/trailing whitespace and dots (security)
+  safe = safe.trim().replace(/^\.+|\.+$/g, '');
+
+  // Limit length to prevent header bloat
+  if (safe.length > 200) {
+    // Try to preserve extension
+    const lastDot = safe.lastIndexOf('.');
+    if (lastDot > 0 && lastDot > safe.length - 10) {
+      const ext = safe.substring(lastDot);
+      safe = safe.substring(0, 190 - ext.length) + ext;
+    } else {
+      safe = safe.substring(0, 200);
+    }
+  }
+
+  // Fallback if sanitization removed everything
+  return safe || 'lab_report';
+}
+
+
 router.get('/patients/:patientId/reports', async (req, res) => {
   const { patientId } = req.params;
 
@@ -108,9 +148,12 @@ router.get('/reports/:reportId/original-file', async (req, res) => {
     // Fallback only for legacy NULL records
     const contentType = file_mimetype || 'application/octet-stream';
 
+    // Sanitize filename to prevent header injection attacks
+    const safeFilename = sanitizeFilenameForHeader(source_filename);
+
     // PHI protection: prevent browser caching of medical records
     res.set('Content-Type', contentType);
-    res.set('Content-Disposition', `inline; filename="${source_filename || 'lab_report'}"`);
+    res.set('Content-Disposition', `inline; filename="${safeFilename}"`);
     res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
