@@ -415,6 +415,15 @@
         viewLink.className = 'view-button';
         viewLink.textContent = 'View';
         actionCell.appendChild(viewLink);
+
+        // Add View Original File button
+        const viewOriginalLink = document.createElement('a');
+        viewOriginalLink.href = `/api/reports/${job.report_id}/original-file`;
+        viewOriginalLink.target = '_blank';
+        viewOriginalLink.className = 'view-button secondary-button';
+        viewOriginalLink.textContent = '📄 View Original';
+        viewOriginalLink.style.marginLeft = '0.5rem';
+        actionCell.appendChild(viewOriginalLink);
       } else {
         const logButton = document.createElement('button');
         logButton.type = 'button';
@@ -886,6 +895,15 @@
         viewLink.className = 'view-button';
         viewLink.textContent = 'View';
         actionCell.appendChild(viewLink);
+
+        // Add View Original File button
+        const viewOriginalLink = document.createElement('a');
+        viewOriginalLink.href = `/api/reports/${att.reportId}/original-file`;
+        viewOriginalLink.target = '_blank';
+        viewOriginalLink.className = 'view-button secondary-button';
+        viewOriginalLink.textContent = '📄 View Original';
+        viewOriginalLink.style.marginLeft = '0.5rem';
+        actionCell.appendChild(viewOriginalLink);
       } else {
         const logButton = document.createElement('button');
         logButton.type = 'button';
