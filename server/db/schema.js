@@ -45,6 +45,13 @@ const schemaStatements = [
   `
   COMMENT ON TABLE patient_reports IS 'Lab report documents parsed from PDFs';
   `,
+  // v3.4: Add file storage columns for existing tables
+  `
+  ALTER TABLE patient_reports ADD COLUMN IF NOT EXISTS file_path TEXT;
+  `,
+  `
+  ALTER TABLE patient_reports ADD COLUMN IF NOT EXISTS file_mimetype TEXT;
+  `,
   `
   COMMENT ON COLUMN patient_reports.test_date_text IS 'Test date as text extracted from lab report (e.g., "2024-03-15"). May be NULL if not found. Parse to timestamp for time-series queries.';
   `,

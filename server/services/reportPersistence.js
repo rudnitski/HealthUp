@@ -203,6 +203,7 @@ async function persistLabReport({
   const reportId = randomUUID();
   let patientId;
   let persistedReportId;
+  let filePath = null; // Track file path for cleanup on error
   const parameterCount = parameters.length;
 
   try {
@@ -223,8 +224,8 @@ async function persistLabReport({
     // Normalize mimetype before storing (handles Gmail's application/octet-stream)
     const normalizedMimetype = normalizeMimetype(mimetype, filename);
 
-    // Save file to filesystem
-    const filePath = await saveFile(fileBuffer, patientId, reportId, filename);
+    // Save file to filesystem (before DB transaction)
+    filePath = await saveFile(fileBuffer, patientId, reportId, filename);
 
     const reportResult = await client.query(
       `
@@ -311,6 +312,18 @@ async function persistLabReport({
     };
   } catch (error) {
     await client.query('ROLLBACK');
+
+    // Clean up orphaned file on disk if transaction failed
+    if (filePath) {
+      try {
+        await deleteFile(filePath);
+        console.log(`[reportPersistence] Cleaned up orphaned file after transaction failure: ${filePath}`);
+      } catch (cleanupError) {
+        console.error(`[reportPersistence] Failed to clean up file ${filePath}:`, cleanupError);
+        // Don't throw - original error is more important
+      }
+    }
+
     throw new PersistLabReportError('Failed to persist lab report', {
       cause: error,
       context: {
@@ -321,6 +334,7 @@ async function persistLabReport({
         attemptedReportId: reportId,
         persistedReportId,
         parameterCount,
+        orphanedFilePath: filePath,
       },
     });
   } finally {
