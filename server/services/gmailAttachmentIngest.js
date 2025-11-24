@@ -76,10 +76,11 @@ async function startBatchIngestion(selections) {
 
   logger.info(`[gmailAttachmentIngest] Starting batch ${batchId} with ${selections.length} attachments`);
 
-  // Ensure Gmail is authenticated (tokens loaded)
-  const authenticated = await gmailConnector.isAuthenticated();
+  // Ensure Gmail tokens are fresh (triggers auto-refresh if needed)
+  // This is critical for long-running workflows where user may return hours later
+  const authenticated = await gmailConnector.ensureFreshTokens();
   if (!authenticated) {
-    throw new Error('Gmail not authenticated');
+    throw new Error('Gmail authentication expired. Please reconnect to Gmail and try again.');
   }
 
   // Validate selections (mime type, size limits)

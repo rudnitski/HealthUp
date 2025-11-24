@@ -48,6 +48,18 @@ function sanitizeFilenameForHeader(filename) {
   return safe || 'lab_report';
 }
 
+/**
+ * Build a safe Content-Disposition header value with RFC5987 encoding
+ * Provides an ASCII fallback filename and a UTF-8 encoded filename* parameter
+ */
+function buildContentDispositionHeader(filename, disposition = 'inline') {
+  const sanitized = sanitizeFilenameForHeader(filename);
+  // ASCII-only fallback to avoid "Invalid character in header" errors
+  const asciiFallback = sanitized.replace(/[^\x20-\x7E]/g, '_') || 'lab_report';
+  const encodedUtf8 = encodeURIComponent(sanitized);
+  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodedUtf8}`;
+}
+
 
 router.get('/patients/:patientId/reports', async (req, res) => {
   const { patientId } = req.params;
@@ -149,11 +161,11 @@ router.get('/reports/:reportId/original-file', async (req, res) => {
     const contentType = file_mimetype || 'application/octet-stream';
 
     // Sanitize filename to prevent header injection attacks
-    const safeFilename = sanitizeFilenameForHeader(source_filename);
+    const contentDisposition = buildContentDispositionHeader(source_filename);
 
     // PHI protection: prevent browser caching of medical records
     res.set('Content-Type', contentType);
-    res.set('Content-Disposition', `inline; filename="${safeFilename}"`);
+    res.set('Content-Disposition', contentDisposition);
     res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');

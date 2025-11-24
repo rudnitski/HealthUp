@@ -34,7 +34,10 @@ function getOpenAiClient() {
     throw new Error('OPENAI_API_KEY is not configured');
   }
   if (!openAiClient) {
-    openAiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    openAiClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: 120000 // 2 minutes timeout to prevent infinite hangs
+    });
   }
   return openAiClient;
 }

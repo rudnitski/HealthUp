@@ -573,13 +573,36 @@
           gmailFetchProgress.hidden = true;
 
           const results = job.result?.results || [];
+          const stats = job.result?.stats || {};
+
+          // Show classification stats
+          if (stats.step1_total_fetched) {
+            const fetchedCount = stats.step1_total_fetched;
+            const classifiedCount = stats.step1_classified || fetchedCount;
+            const extraCount = stats.step1_extra || 0;
+            const missingCount = stats.step1_missing || 0;
+            const candidatesCount = stats.step1_candidates || 0;
+
+            let statsMsg = `📊 Fetched ${fetchedCount} emails from Gmail`;
+            if (extraCount > 0) {
+              statsMsg += ` → ⚠️ LLM returned ${classifiedCount} (+${extraCount} duplicates)`;
+            } else if (missingCount > 0) {
+              statsMsg += ` → ⚠️ LLM classified ${classifiedCount} (${missingCount} missing)`;
+            } else {
+              statsMsg += ` → ✅ LLM classified all ${classifiedCount}`;
+            }
+            statsMsg += ` → 🎯 ${candidatesCount} candidates found → ${results.length} emails accepted`;
+
+            showToast(statsMsg, (extraCount > 0 || missingCount > 0) ? 'warning' : 'success', 8000);
+          }
 
           if (results.length === 0) {
             showToast('No lab result emails found', 'info');
             gmailAuthStatus.hidden = false;
             gmailActionBtn.disabled = false;
           } else {
-            showAttachmentSelection(results);
+            const rejectedEmails = job.result?.rejectedEmails || [];
+            showAttachmentSelection(results, stats, rejectedEmails);
           }
         }
 
@@ -618,12 +641,86 @@
     gmailStepList.innerHTML = html;
   }
 
-  function showAttachmentSelection(results) {
+  function showAttachmentSelection(results, stats = {}, rejectedEmails = []) {
     gmailSelection.hidden = false;
 
     // Summary
     const totalAttachments = results.reduce((sum, email) => sum + email.attachments.length, 0);
-    gmailSelectionSummary.innerHTML = `<p>✅ Found ${results.length} lab result emails with ${totalAttachments} attachments</p>`;
+    let summaryHtml = `<p>✅ Found ${results.length} lab result emails with ${totalAttachments} attachments</p>`;
+
+    // Add detailed stats if available
+    if (stats.step1_total_fetched) {
+      const fetchedCount = stats.step1_total_fetched;
+      const classifiedCount = stats.step1_classified || fetchedCount;
+      const extraCount = stats.step1_extra || 0;
+      const missingCount = stats.step1_missing || 0;
+      const candidatesCount = stats.step1_candidates || 0;
+
+      summaryHtml += `<p style="font-size: 0.9em; color: #666; margin-top: 8px;">`;
+      summaryHtml += `📊 Gmail API: ${fetchedCount} emails`;
+      if (extraCount > 0) {
+        summaryHtml += ` → LLM: ${classifiedCount} <span style="color: #e67e00;">(⚠️ +${extraCount} duplicates)</span>`;
+      } else if (missingCount > 0) {
+        summaryHtml += ` → LLM: ${classifiedCount} <span style="color: #e67e00;">(⚠️ ${missingCount} missing)</span>`;
+      } else {
+        summaryHtml += ` → LLM: ${classifiedCount}`;
+      }
+      summaryHtml += ` → ${candidatesCount} candidates → ${results.length} accepted`;
+      summaryHtml += `</p>`;
+    }
+
+    // Add rejected emails section (collapsed by default)
+    if (rejectedEmails.length > 0) {
+      const rejectedId = 'rejected-emails-section-' + Date.now();
+      summaryHtml += `
+        <div style="margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+          <button
+            type="button"
+            id="${rejectedId}-toggle"
+            style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 0.9em; padding: 4px 8px; display: flex; align-items: center; gap: 6px;"
+            onclick="
+              const content = document.getElementById('${rejectedId}-content');
+              const icon = document.getElementById('${rejectedId}-icon');
+              if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.textContent = '▼';
+              } else {
+                content.style.display = 'none';
+                icon.textContent = '▶';
+              }
+            ">
+            <span id="${rejectedId}-icon">▶</span>
+            <span>Show ${rejectedEmails.length} rejected emails (Step 2)</span>
+          </button>
+          <div id="${rejectedId}-content" style="display: none; margin-top: 8px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+              <thead>
+                <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                  <th style="text-align: left; padding: 8px;">Subject</th>
+                  <th style="text-align: left; padding: 8px;">From</th>
+                  <th style="text-align: left; padding: 8px;">Date</th>
+                  <th style="text-align: center; padding: 8px;">Confidence</th>
+                  <th style="text-align: left; padding: 8px;">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rejectedEmails.map(email => `
+                  <tr style="border-bottom: 1px solid #f3f4f6;">
+                    <td style="padding: 8px;">${email.subject || '(no subject)'}</td>
+                    <td style="padding: 8px;">${email.from || '(unknown)'}</td>
+                    <td style="padding: 8px; white-space: nowrap;">${email.date || '-'}</td>
+                    <td style="padding: 8px; text-align: center;">${email.step2_confidence !== undefined ? email.step2_confidence.toFixed(2) : '-'}</td>
+                    <td style="padding: 8px; color: #6b7280;">${email.step2_reason || '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    gmailSelectionSummary.innerHTML = summaryHtml;
 
     // Render table
     attachmentSelectionTbody.innerHTML = '';
