@@ -502,8 +502,12 @@ const ensurePdfWithinPageLimit = async (buffer) => {
       throw error;
     }
 
-    const wrapped = new Error('Unable to inspect PDF.');
+    // Log the actual error for debugging
+    logger.error(`[labReportProcessor] PDF inspection failed: ${error.message}`, { stack: error.stack });
+
+    const wrapped = new Error(`Unable to inspect PDF: ${error.message}`);
     wrapped.statusCode = 422;
+    wrapped.originalError = error;
     throw wrapped;
   }
 };
