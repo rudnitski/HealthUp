@@ -6,7 +6,7 @@
  */
 
 const OpenAI = require('openai');
-const pdfParse = require('pdf-parse');
+const { PDFParse } = require('pdf-parse');
 const os = require('os');
 const fs = require('fs/promises');
 const path = require('path');
@@ -479,8 +479,10 @@ const PDFTOPPM_BIN = process.env.PDFTOPPM_PATH || 'pdftoppm';
 
 const ensurePdfWithinPageLimit = async (buffer) => {
   try {
-    const meta = await pdfParse(buffer);
-    const totalPages = Number(meta?.numpages) || 0;
+    // pdf-parse v2 uses class-based API
+    const parser = new PDFParse({ data: buffer });
+    const info = await parser.getInfo();
+    const totalPages = Number(info?.total) || 0;
 
     if (totalPages > MAX_PDF_PAGES) {
       const error = new Error(`PDF exceeds ${MAX_PDF_PAGES} page limit.`);

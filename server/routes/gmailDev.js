@@ -571,8 +571,7 @@ router.get('/jobs/summary', async (req, res) => {
 router.get('/jobs/:jobId', (req, res) => {
   const { jobId } = req.params;
 
-  logger.info(`[gmailDev] Job status requested: ${jobId}`);
-
+  // Removed noisy polling log - frontend polls every 2 seconds
   const jobStatus = getJobStatus(jobId);
 
   if (!jobStatus) {

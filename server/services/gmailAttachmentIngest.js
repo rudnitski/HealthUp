@@ -4,7 +4,7 @@
  * PRD: docs/PRD_v2_8_Gmail_Integration_Step3.md
  */
 
-const gmailConnector = require('./gmailConnector');
+const { SHARED_GMAIL_LIMITER, ...gmailConnector } = require('./gmailConnector');
 const crypto = require('crypto');
 const jobManager = require('../utils/jobManager');
 const labReportProcessor = require('./labReportProcessor');
@@ -29,10 +29,7 @@ const logger = pino({
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Configuration constants
-const GMAIL_DOWNLOAD_CONCURRENCY = Math.max(
-  1,
-  parseInt(process.env.GMAIL_DOWNLOAD_CONCURRENCY || '5', 10)
-); // Safe default: 5 req/s × 25 units = 125 units/s (limit: 250)
+// Note: Gmail API rate limiting now handled by SHARED_GMAIL_LIMITER from gmailConnector
 const RETRY_CONFIG = { maxAttempts: 3, baseDelay: 1000 }; // 1s, 2s, 4s
 const ATTACHMENT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -127,16 +124,15 @@ async function startBatchIngestion(selections) {
 }
 
 /**
- * Process attachments with concurrency limit (to avoid Gmail rate limits)
+ * Process attachments with concurrency
+ * Note: Gmail API rate limiting now handled inside downloadAttachmentWithRetry (wraps only the API call)
  */
 async function processAttachmentsWithConcurrency(selections, batchId) {
-  const pLimit = require('p-limit');
-  const limit = pLimit(GMAIL_DOWNLOAD_CONCURRENCY); // Defaults to 5 concurrent downloads
+  logger.info(`[gmailAttachmentIngest] Processing batch ${batchId} (${selections.length} attachments)`);
 
-  logger.info(`[gmailAttachmentIngest] Processing batch ${batchId} with concurrency ${GMAIL_DOWNLOAD_CONCURRENCY}`);
-
+  // No limiter wrapper here - each ingestAttachment will rate-limit only its Gmail API call
   const promises = selections.map(sel =>
-    limit(() => ingestAttachment(sel, batchId))
+    ingestAttachment(sel, batchId)
   );
 
   await Promise.allSettled(promises);
@@ -289,10 +285,13 @@ async function ingestAttachment(selection, batchId) {
  */
 async function downloadAttachmentWithRetry(gmail, messageId, attachmentId, attempt = 1) {
   try {
-    const response = await gmail.users.messages.attachments.get({
-      userId: 'me',
-      messageId,
-      id: attachmentId
+    // Wrap ONLY the Gmail API call with rate limiter (not the entire ingestion pipeline)
+    const response = await SHARED_GMAIL_LIMITER(async () => {
+      return await gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId,
+        id: attachmentId
+      });
     });
 
     // Decode base64url to buffer
@@ -361,11 +360,14 @@ async function checkIfReportWasUpdated(reportId) {
  * Fetch email metadata (sender, subject, date) from Gmail
  */
 async function fetchEmailMetadata(gmail, messageId) {
-  const response = await gmail.users.messages.get({
-    userId: 'me',
-    id: messageId,
-    format: 'metadata',
-    metadataHeaders: ['From', 'Subject', 'Date']
+  // Wrap Gmail API call with rate limiter to prevent quota exhaustion
+  const response = await SHARED_GMAIL_LIMITER(async () => {
+    return await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+      format: 'metadata',
+      metadataHeaders: ['From', 'Subject', 'Date']
+    });
   });
 
   const headers = response.data.payload.headers;
