@@ -85,7 +85,7 @@ External APIs
 ## Local Development
 
 ### Prerequisites
-- Node.js 18+ and npm
+- Node.js 20.16.0+ (or 22.3.0+) and npm
 - PostgreSQL 14+ with `pg_trgm` + `pgcrypto` extensions
 - Poppler (`pdftoppm`) for PDF rasterization
 - OpenAI API key (required for OCR and SQL generation)

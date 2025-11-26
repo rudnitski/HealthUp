@@ -27,12 +27,16 @@ const logger = pino({
 
 // Configuration
 const GMAIL_MAX_EMAILS = parseInt(process.env.GMAIL_MAX_EMAILS) || 200;
-const GMAIL_CONCURRENCY_LIMIT = parseInt(process.env.GMAIL_CONCURRENCY_LIMIT) || 20;
+const GMAIL_CONCURRENCY_LIMIT = parseInt(process.env.GMAIL_CONCURRENCY_LIMIT) || 50; // Increased from 20 to 50 for batch optimization
 const GMAIL_TOKEN_PATH = process.env.GMAIL_TOKEN_PATH || path.join(__dirname, '../config/gmail-token.json');
 const OAUTH_REDIRECT_URI = process.env.GMAIL_OAUTH_REDIRECT_URI || 'http://localhost:3000/api/dev-gmail/oauth-callback';
 
 // Log loaded configuration on module load
 logger.info(`[gmailConnector] Loaded GMAIL_MAX_EMAILS=${GMAIL_MAX_EMAILS} from ${process.env.GMAIL_MAX_EMAILS ? 'env' : 'default'}`);
+
+// Shared Gmail API rate limiter (prevents exceeding quota when multiple operations run concurrently)
+const SHARED_GMAIL_LIMITER = pLimit(GMAIL_CONCURRENCY_LIMIT);
+logger.info(`[gmailConnector] Shared Gmail API rate limiter initialized with concurrency=${GMAIL_CONCURRENCY_LIMIT}`);
 
 // OAuth state tokens (in-memory, expire after 10 minutes)
 const oauthStates = new Map();
@@ -256,6 +260,48 @@ async function isAuthenticated() {
 }
 
 /**
+ * Ensure tokens are fresh by making a lightweight API call
+ * This triggers automatic token refresh if access_token is expired
+ * @returns {Promise<boolean>} True if tokens are valid/refreshed, false if re-auth needed
+ */
+async function ensureFreshTokens() {
+  try {
+    await loadCredentials();
+
+    if (!oauth2Client || !oauth2Client.credentials) {
+      logger.warn('[gmailConnector] No credentials loaded');
+      return false;
+    }
+
+    // Check if we have a refresh_token (required for auto-refresh)
+    const { refresh_token } = oauth2Client.credentials;
+    if (!refresh_token) {
+      logger.warn('[gmailConnector] No refresh_token available - re-authentication required');
+      return false;
+    }
+
+    // Make a lightweight API call to trigger auto-refresh if access_token is expired
+    // The googleapis library will automatically refresh the token if needed
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    await gmail.users.getProfile({ userId: 'me' });
+
+    logger.info('[gmailConnector] Tokens verified/refreshed successfully');
+    return true;
+
+  } catch (error) {
+    // Handle authentication errors
+    if (error.code === 401 || error.message?.includes('invalid_grant')) {
+      logger.error('[gmailConnector] Token refresh failed - re-authentication required:', error.message);
+      return false;
+    }
+
+    // Other errors (network, etc.) should be thrown
+    logger.error('[gmailConnector] ensureFreshTokens failed:', error.message);
+    throw error;
+  }
+}
+
+/**
  * Get authenticated OAuth2 client
  * @returns {Promise<Object>} OAuth2 client with user info
  */
@@ -327,67 +373,128 @@ async function fetchEmailMetadata() {
 
     logger.info('[gmailConnector] Fetching email IDs from inbox');
 
-    // Step 1: List message IDs
-    const listResponse = await gmail.users.messages.list({
-      userId: 'me',
-      q: 'in:inbox',
-      maxResults: GMAIL_MAX_EMAILS
-    });
+    // Step 1: List message IDs with pagination support
+    let allMessages = [];
+    let pageToken = null;
+    let pageCount = 0;
+    const MAX_PAGES = Math.ceil(GMAIL_MAX_EMAILS / 500); // Safety limit to prevent infinite loops (dynamic based on GMAIL_MAX_EMAILS)
 
-    const messages = listResponse.data.messages || [];
+    do {
+      // Calculate how many emails to fetch in this batch (max 500 per Gmail API limit)
+      const remainingToFetch = GMAIL_MAX_EMAILS - allMessages.length;
+      const batchSize = Math.min(500, remainingToFetch);
 
-    if (messages.length === 0) {
+      // Removed redundant "Fetching page" log - "Page complete" log (below) is sufficient
+
+      const listResponse = await gmail.users.messages.list({
+        userId: 'me',
+        q: 'in:inbox',
+        maxResults: batchSize,
+        pageToken: pageToken || undefined
+      });
+
+      const messages = listResponse.data.messages || [];
+      allMessages.push(...messages);
+      pageToken = listResponse.data.nextPageToken;
+      pageCount++;
+
+      logger.info(`[gmailConnector] Page ${pageCount} complete: +${messages.length} emails (total: ${allMessages.length}/${GMAIL_MAX_EMAILS})`);
+
+      // Break if we've reached our target or there are no more pages
+      if (allMessages.length >= GMAIL_MAX_EMAILS || !pageToken || pageCount >= MAX_PAGES) {
+        break;
+      }
+    } while (true);
+
+    logger.info(`[gmailConnector] Pagination complete: fetched ${allMessages.length} emails in ${pageCount} page(s)`);
+
+    if (allMessages.length === 0) {
       logger.info('[gmailConnector] No emails found in inbox');
       return [];
     }
 
-    logger.info(`[gmailConnector] Found ${messages.length} emails, fetching metadata`);
+    logger.info(`[gmailConnector] Found ${allMessages.length} emails, fetching metadata`);
 
-    // Step 2: Fetch metadata in parallel (20 concurrent requests)
-    const limit = pLimit(GMAIL_CONCURRENCY_LIMIT);
+    // Step 2: Fetch metadata in batches for better progress tracking and memory efficiency
+    const BATCH_SIZE = 100; // Process 100 emails at a time
+    const emailMetadata = [];
+    const totalBatches = Math.ceil(allMessages.length / BATCH_SIZE);
+    const startTime = Date.now();
 
-    const metadataPromises = messages.map(({ id }) =>
-      limit(async () => {
-        try {
-          const response = await gmail.users.messages.get({
-            userId: 'me',
-            id,
-            format: 'metadata',
-            metadataHeaders: ['Subject', 'From', 'Date']
-          });
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      const batchStart = batchIndex * BATCH_SIZE;
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, allMessages.length);
+      const batchMessages = allMessages.slice(batchStart, batchEnd);
 
-          const headers = response.data.payload.headers || [];
+      logger.info(`[gmailConnector] Fetching metadata batch ${batchIndex + 1}/${totalBatches} (${batchMessages.length} emails, ${emailMetadata.length}/${allMessages.length} total complete)`);
 
-          // Extract headers
-          const subject = headers.find(h => h.name === 'Subject')?.value || '';
-          const from = headers.find(h => h.name === 'From')?.value || '';
-          const date = headers.find(h => h.name === 'Date')?.value || '';
+      // Fetch metadata in parallel within this batch using shared rate limiter
+      const batchPromises = batchMessages.map(({ id }) =>
+        SHARED_GMAIL_LIMITER(async () => {
+          try {
+            const response = await gmail.users.messages.get({
+              userId: 'me',
+              id,
+              format: 'metadata',
+              metadataHeaders: ['Subject', 'From', 'Date']
+            });
 
-          return {
-            id,
-            subject: decodeMimeHeader(subject),
-            from: decodeMimeHeader(from),
-            date
-          };
-        } catch (error) {
-          logger.error(`[gmailConnector] Failed to fetch metadata for message ${id}:`, error.message);
-          return {
-            id,
-            subject: '[Error fetching]',
-            from: '[Error fetching]',
-            date: ''
-          };
-        }
-      })
-    );
+            const headers = response.data.payload.headers || [];
 
-    const emailMetadata = await Promise.all(metadataPromises);
+            // Extract headers
+            const subject = headers.find(h => h.name === 'Subject')?.value || '';
+            const from = headers.find(h => h.name === 'From')?.value || '';
+            const date = headers.find(h => h.name === 'Date')?.value || '';
 
-    logger.info(`[gmailConnector] Successfully fetched metadata for ${emailMetadata.length} emails`);
+            return {
+              id,
+              subject: decodeMimeHeader(subject),
+              from: decodeMimeHeader(from),
+              date
+            };
+          } catch (error) {
+            // googleapis errors don't always have .message, capture full error details
+            const errorDetails = {
+              message: error.message,
+              code: error.code,
+              status: error.status || error.response?.status,
+              statusText: error.response?.statusText,
+              errors: error.errors || error.response?.data?.error?.errors,
+              reason: error.response?.data?.error?.message,
+            };
+            // Use console.error with stringify to ensure we see the full error structure
+            console.error(`[gmailConnector] Message ${id} error:`, JSON.stringify(errorDetails, null, 2));
+            return {
+              id,
+              subject: '[Error fetching]',
+              from: '[Error fetching]',
+              date: ''
+            };
+          }
+        })
+      );
+
+      const batchResults = await Promise.all(batchPromises);
+      emailMetadata.push(...batchResults);
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      const rate = (emailMetadata.length / (Date.now() - startTime) * 1000).toFixed(1);
+      logger.info(`[gmailConnector] Batch ${batchIndex + 1}/${totalBatches} complete: ${emailMetadata.length}/${allMessages.length} emails fetched (${elapsed}s elapsed, ${rate} emails/sec)`);
+    }
+
+    logger.info(`[gmailConnector] Successfully fetched metadata for ${emailMetadata.length} emails in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
 
     return emailMetadata;
   } catch (error) {
-    logger.error('[gmailConnector] Failed to fetch email metadata:', error.message);
+    const errorDetails = {
+      message: error.message,
+      code: error.code,
+      status: error.status || error.response?.status,
+      statusText: error.response?.statusText,
+      errors: error.errors || error.response?.data?.error?.errors,
+      reason: error.response?.data?.error?.message,
+    };
+    logger.error('[gmailConnector] Failed to fetch email metadata:', errorDetails);
     throw error;
   }
 }
@@ -533,11 +640,9 @@ async function fetchFullEmailsByIds(emailIds) {
 
     logger.info(`[gmailConnector] Fetching full content for ${emailIds.length} emails`);
 
-    // Fetch full messages in parallel
-    const limit = pLimit(GMAIL_CONCURRENCY_LIMIT);
-
+    // Fetch full messages in parallel using shared rate limiter
     const emailPromises = emailIds.map(id =>
-      limit(async () => {
+      SHARED_GMAIL_LIMITER(async () => {
         try {
           const response = await gmail.users.messages.get({
             userId: 'me',
@@ -628,8 +733,10 @@ module.exports = {
   handleOAuthCallback,
   loadCredentials,
   isAuthenticated,
+  ensureFreshTokens,
   getOAuth2Client,
   fetchEmailMetadata,
   fetchFullEmailsByIds,
-  getAuthenticatedGmailClient
+  getAuthenticatedGmailClient,
+  SHARED_GMAIL_LIMITER
 };

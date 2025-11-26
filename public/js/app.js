@@ -690,3 +690,19 @@
     })();
   }
 })();
+
+// View Original File function (global scope for onclick handler)
+function viewOriginalFile() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const reportId = urlParams.get('reportId');
+
+  if (!reportId) {
+    alert('Report ID not found');
+    return;
+  }
+
+  // Open file in new tab
+  // Server returns 410 Gone JSON if file not available (legacy reports)
+  const url = `/api/reports/${reportId}/original-file`;
+  window.open(url, '_blank');
+}

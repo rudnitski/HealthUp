@@ -286,13 +286,24 @@ router.post('/fetch', async (req, res) => {
         logger.info(`[gmailDev:${jobId}] [Step-1] Fetched ${metadataEmails.length} emails metadata`);
 
         // Classify with Step-1 LLM (subject/sender heuristics) with progress updates
-        const step1Classifications = await classifyEmails(metadataEmails, (completed, total) => {
+        const { results: step1Classifications, failedBatches: step1FailedBatches, stats: step1Stats } = await classifyEmails(metadataEmails, (completed, total) => {
           const progress = Math.floor((completed / total) * 50); // Step-1 is 0-50%
           updateJob(jobId, JobStatus.PROCESSING, {
             progress,
             progressMessage: `Step-1: Classifying batch ${completed}/${total}`
           });
         });
+
+        if (step1FailedBatches.length > 0) {
+          logger.warn(
+            `[gmailDev:${jobId}] Step-1 completed with ${step1FailedBatches.length} failed batch(es); continuing with partial results`
+          );
+
+          updateJob(jobId, JobStatus.PROCESSING, {
+            progress: 50,
+            progressMessage: `Step-1 completed with partial results (${step1FailedBatches.length} failed batch${step1FailedBatches.length > 1 ? 'es' : ''})`
+          });
+        }
 
         // Filter to candidates (is_lab_likely: true)
         const candidates = metadataEmails.filter(email => {
@@ -451,6 +462,9 @@ router.post('/fetch', async (req, res) => {
 
         const stats = {
           step1_total_fetched: metadataEmails.length,
+          step1_classified: step1Stats?.classifications_received || step1Classifications.length,
+          step1_extra: step1Stats?.extra_count || 0,
+          step1_missing: step1Stats?.missing_count || 0,
           step1_candidates: candidates.length,
           step2_fetched_full: fullEmails.length,
           step2_classified: step2Classified,
@@ -465,13 +479,27 @@ router.post('/fetch', async (req, res) => {
           (stats.step2_errors > 0 ? ` (${stats.step2_errors} classification errors)` : '')
         );
 
+        // Extract rejected emails for review
+        const rejectedEmails = step2AllResults
+          .filter(item => !item.accepted)
+          .map(email => ({
+            subject: email.subject,
+            from: email.from,
+            date: email.date,
+            step2_confidence: email.step2_confidence,
+            step2_reason: email.step2_reason,
+            step2_is_clinical: email.step2_is_clinical
+          }));
+
         setJobResult(jobId, {
           results: resultsWithDuplicates,
+          rejectedEmails,
           stats,
           threshold,
           debug: {
             step1_candidates: step1CandidatesDebug,
-            step2_all_results: step2AllResults
+            step2_all_results: step2AllResults,
+            step1_failed_batches: step1FailedBatches
           }
         });
       } catch (error) {
@@ -543,8 +571,7 @@ router.get('/jobs/summary', async (req, res) => {
 router.get('/jobs/:jobId', (req, res) => {
   const { jobId } = req.params;
 
-  logger.info(`[gmailDev] Job status requested: ${jobId}`);
-
+  // Removed noisy polling log - frontend polls every 2 seconds
   const jobStatus = getJobStatus(jobId);
 
   if (!jobStatus) {

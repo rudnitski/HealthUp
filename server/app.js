@@ -6,6 +6,14 @@ if (process.env.NODE_ENV !== 'production') {
   } catch (_) {}
 }
 
+// Increase max listeners for process event emitter
+// Multiple modules legitimately register exit/signal handlers for cleanup:
+// - db pool error handler
+// - SIGINT/SIGTERM handlers (app.js)
+// - uncaughtException/unhandledRejection handlers (app.js)
+// - various cleanup routines in loaded modules
+process.setMaxListeners(20);
+
 const express = require('express');
 const fileUpload = require('express-fileupload');
 const { healthcheck, pool } = require('./db');
@@ -54,6 +62,7 @@ const executeSqlRouter = require('./routes/executeSql');
 const adminRouter = require('./routes/admin');
 const gmailDevRouter = require('./routes/gmailDev');
 const { shutdownSchemaSnapshot } = require('./services/schemaSnapshot');
+const sessionManager = require('./utils/sessionManager');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -63,16 +72,20 @@ const publicDir = path.join(__dirname, '..', 'public');
 app.disable('x-powered-by');
 app.use(express.static(publicDir));
 
-app.use(
-  fileUpload({
-    limits: { fileSize: 10 * 1024 * 1024 },
-    abortOnLimit: false, // Changed to false so we can handle the error properly
-    useTempFiles: false,
-    preserveExtension: true,
-    safeFileNames: true,
-    debug: true, // Enable debug mode
-  }),
-);
+// Only apply file upload middleware to upload routes (avoid warnings on JSON/SSE routes)
+const uploadMiddleware = fileUpload({
+  limits: { fileSize: 10 * 1024 * 1024 },
+  abortOnLimit: false,
+  useTempFiles: false,
+  preserveExtension: true,
+  safeFileNames: true,
+  debug: true,
+});
+
+const uploadGuard = (req, res, next) => {
+  if (!req.is('multipart/form-data')) return next();
+  return uploadMiddleware(req, res, next);
+};
 
 // File upload error handler
 app.use((err, req, res, next) => {
@@ -86,7 +99,9 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Request logging middleware for analyze-labs
+// File upload + request logging for analyze-labs (only runs for multipart/form-data)
+app.use('/api/analyze-labs', uploadGuard);
+
 app.use('/api/analyze-labs', (req, res, next) => {
   const reqId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
@@ -201,6 +216,12 @@ async function shutdown(code = 0, { skipPool = false } = {}) {
   }
 
   if (!skipPool) {
+    try {
+      sessionManager.shutdown();
+    } catch (e) {
+      console.error('[sessionManager] Shutdown error:', e);
+    }
+
     try {
       await shutdownSchemaSnapshot();
     } catch (e) {

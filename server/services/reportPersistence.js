@@ -1,5 +1,6 @@
 const { randomUUID, createHash } = require('crypto');
 const { pool } = require('../db');
+const { saveFile, deleteFile } = require('./fileStorage');
 
 class PersistLabReportError extends Error {
   constructor(message, {
@@ -41,6 +42,30 @@ const coerceTimestamp = (value) => {
 
   return date;
 };
+
+/**
+ * Normalize MIME type using extension-based inference for generic types
+ * @param {string} mimetype - Original MIME type from upload
+ * @param {string} filename - Original filename
+ * @returns {string} Normalized MIME type
+ */
+function normalizeMimetype(mimetype, filename) {
+  // If generic/missing mimetype, infer from extension
+  if (!mimetype || mimetype === 'application/octet-stream' || mimetype === 'binary/octet-stream') {
+    const ext = filename?.split('.').pop()?.toLowerCase();
+    const mimetypeMap = {
+      'pdf': 'application/pdf',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'heic': 'image/heic',
+      'webp': 'image/webp',
+      'gif': 'image/gif',
+    };
+    return mimetypeMap[ext] || mimetype || 'application/octet-stream';
+  }
+  return mimetype;
+}
 
 async function upsertPatient(client, payload) {
   const {
@@ -153,6 +178,7 @@ const buildLabResultTuples = (reportId, parameters) => {
 async function persistLabReport({
   fileBuffer,
   filename,
+  mimetype,
   parserVersion,
   processedAt,
   coreResult,
@@ -177,6 +203,8 @@ async function persistLabReport({
   const reportId = randomUUID();
   let patientId;
   let persistedReportId;
+  let savedFilePath = null; // NEW file we saved (may need cleanup)
+  let shouldCleanupOnError = true; // Whether to delete savedFilePath on rollback
   const parameterCount = parameters.length;
 
   try {
@@ -193,6 +221,12 @@ async function persistLabReport({
       ? safeCoreResult.missing_data
       : [];
     const missingDataJson = JSON.stringify(missingDataArray);
+
+    // Normalize mimetype before storing (handles Gmail's application/octet-stream)
+    const normalizedMimetype = normalizeMimetype(mimetype, filename);
+
+    // Save file to filesystem (before DB transaction)
+    savedFilePath = await saveFile(fileBuffer, patientId, reportId, filename);
 
     const reportResult = await client.query(
       `
@@ -212,17 +246,20 @@ async function persistLabReport({
         patient_date_of_birth_snapshot,
         raw_model_output,
         missing_data,
+        file_path,
+        file_mimetype,
         created_at,
         updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, NOW(), NOW()
+        $1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb,
+        $15, $16,
+        NOW(), NOW()
       )
       ON CONFLICT (patient_id, checksum)
       DO UPDATE SET
         parser_version = EXCLUDED.parser_version,
         status = EXCLUDED.status,
-        recognized_at = EXCLUDED.recognized_at,
         processed_at = EXCLUDED.processed_at,
         test_date_text = EXCLUDED.test_date_text,
         patient_name_snapshot = EXCLUDED.patient_name_snapshot,
@@ -231,9 +268,10 @@ async function persistLabReport({
         patient_date_of_birth_snapshot = EXCLUDED.patient_date_of_birth_snapshot,
         raw_model_output = EXCLUDED.raw_model_output,
         missing_data = EXCLUDED.missing_data,
-        source_filename = EXCLUDED.source_filename,
+        file_path = COALESCE(patient_reports.file_path, EXCLUDED.file_path),
+        file_mimetype = COALESCE(patient_reports.file_mimetype, EXCLUDED.file_mimetype),
         updated_at = NOW()
-      RETURNING id;
+      RETURNING id, (xmax = 0) AS inserted;
       `,
       [
         reportId,
@@ -250,10 +288,43 @@ async function persistLabReport({
         patientDateOfBirth,
         safeCoreResult.raw_model_output ?? null,
         missingDataJson,
+        savedFilePath,
+        normalizedMimetype,
       ],
     );
 
     persistedReportId = reportResult.rows[0].id;
+    const wasInserted = reportResult.rows[0].inserted;
+
+    // If this was an UPDATE (not INSERT) and we saved a new file, check if we need to clean it up
+    if (!wasInserted) {
+      // Fetch the actual file_path that was kept (might be old one via COALESCE)
+      const checkResult = await client.query(
+        'SELECT file_path FROM patient_reports WHERE id = $1',
+        [persistedReportId]
+      );
+      const keptFilePath = checkResult.rows[0]?.file_path;
+
+      // If the kept path is different from what we just saved, clean up the orphan
+      if (keptFilePath && keptFilePath !== savedFilePath) {
+        // Database kept the OLD file, our NEW file is orphaned
+        try {
+          await deleteFile(savedFilePath);
+          console.log(`[reportPersistence] Cleaned up duplicate file on conflict: ${savedFilePath} (kept: ${keptFilePath})`);
+          // Mark that we already cleaned up - don't delete again on rollback
+          shouldCleanupOnError = false;
+        } catch (cleanupError) {
+          console.error(`[reportPersistence] Failed to clean up duplicate file ${savedFilePath}:`, cleanupError);
+          // Still mark as cleaned up to avoid trying to delete the kept file on rollback
+          shouldCleanupOnError = false;
+        }
+      } else if (!keptFilePath && savedFilePath) {
+        // COALESCE backfilled NULL with our new file - this is good, keep it
+        console.log(`[reportPersistence] Backfilled file_path for existing report: ${savedFilePath}`);
+        // Keep cleanup flag true - if transaction fails, delete the backfill file
+        shouldCleanupOnError = true;
+      }
+    }
 
     await client.query('DELETE FROM lab_results WHERE report_id = $1', [persistedReportId]);
 
@@ -275,6 +346,19 @@ async function persistLabReport({
     };
   } catch (error) {
     await client.query('ROLLBACK');
+
+    // Clean up orphaned file on disk if transaction failed
+    // Only delete if we haven't already cleaned it up (duplicate case)
+    if (savedFilePath && shouldCleanupOnError) {
+      try {
+        await deleteFile(savedFilePath);
+        console.log(`[reportPersistence] Cleaned up orphaned file after transaction failure: ${savedFilePath}`);
+      } catch (cleanupError) {
+        console.error(`[reportPersistence] Failed to clean up file ${savedFilePath}:`, cleanupError);
+        // Don't throw - original error is more important
+      }
+    }
+
     throw new PersistLabReportError('Failed to persist lab report', {
       cause: error,
       context: {
@@ -285,6 +369,7 @@ async function persistLabReport({
         attemptedReportId: reportId,
         persistedReportId,
         parameterCount,
+        orphanedFilePath: savedFilePath,
       },
     });
   } finally {

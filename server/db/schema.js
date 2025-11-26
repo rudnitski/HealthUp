@@ -35,6 +35,8 @@ const schemaStatements = [
     patient_date_of_birth_snapshot TEXT,
     raw_model_output TEXT,
     missing_data JSONB,
+    file_path TEXT,
+    file_mimetype TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (patient_id, checksum)
@@ -43,11 +45,26 @@ const schemaStatements = [
   `
   COMMENT ON TABLE patient_reports IS 'Lab report documents parsed from PDFs';
   `,
+  // v3.4: Add file storage columns for existing tables
+  `
+  ALTER TABLE patient_reports ADD COLUMN IF NOT EXISTS file_path TEXT;
+  `,
+  `
+  ALTER TABLE patient_reports ADD COLUMN IF NOT EXISTS file_mimetype TEXT;
+  `,
   `
   COMMENT ON COLUMN patient_reports.test_date_text IS 'Test date as text extracted from lab report (e.g., "2024-03-15"). May be NULL if not found. Parse to timestamp for time-series queries.';
   `,
   `
   COMMENT ON COLUMN patient_reports.recognized_at IS 'Timestamp when the lab report was processed by OCR. Use as fallback date when test_date_text is NULL.';
+  `,
+  `
+  COMMENT ON COLUMN patient_reports.file_path IS
+    'Relative path to original uploaded file in filesystem (e.g., patient_uuid/report_uuid.pdf). NULL for reports uploaded before v3.4.';
+  `,
+  `
+  COMMENT ON COLUMN patient_reports.file_mimetype IS
+    'MIME type of uploaded file (e.g., application/pdf, image/jpeg). Used for Content-Type header in retrieval API. NULL for legacy reports.';
   `,
   `
   CREATE TABLE IF NOT EXISTS analytes (
