@@ -1,4 +1,6 @@
-// ESM imports must come first
+// Load environment variables before other imports so downstream modules see them
+import './config/loadEnv.js';
+
 import path from 'path';
 import { getDirname } from './utils/path-helpers.js';
 import express from 'express';
@@ -17,13 +19,6 @@ import { shutdownSchemaSnapshot } from './services/schemaSnapshot.js';
 import sessionManager from './utils/sessionManager.js';
 
 const __dirname = getDirname(import.meta.url);
-
-// Load environment variables
-if (process.env.NODE_ENV !== 'production') {
-  try {
-    await import('dotenv/config');
-  } catch (_) {}
-}
 
 // Increase max listeners for process event emitter
 // Multiple modules legitimately register exit/signal handlers for cleanup:

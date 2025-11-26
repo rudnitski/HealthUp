@@ -550,7 +550,7 @@ function extractEmailBody(payload) {
  * @param {object} payload - Gmail message payload
  * @returns {array} Array of attachment metadata objects
  */
-function extractAttachmentMetadata(payload) {
+function extractAttachmentMetadata(payload, messageId, skipped = []) {
   const attachments = [];
 
   function walkParts(part) {
@@ -560,6 +560,8 @@ function extractAttachmentMetadata(payload) {
       try {
         // Validate filename (type, length, no null bytes)
         if (typeof part.filename !== 'string' || part.filename.length > 255 || part.filename.includes('\0')) {
+          const reason = 'Invalid filename (too long or contains null bytes)';
+          skipped.push({ messageId, filename: part.filename || '(unknown)', reason });
           logger.warn('[gmailConnector] Skipping attachment with invalid filename (too long or contains null bytes)');
           return; // Skip this attachment, continue with others
         }
@@ -567,6 +569,8 @@ function extractAttachmentMetadata(payload) {
         // Validate size (must be valid non-negative integer)
         const size = parseInt(part.body?.size);
         if (isNaN(size) || size < 0) {
+          const reason = `Invalid size: ${part.body?.size}`;
+          skipped.push({ messageId, filename: part.filename, reason });
           logger.warn(`[gmailConnector] Skipping attachment "${part.filename}" with invalid size: ${part.body?.size}`);
           return; // Skip this attachment, continue with others
         }
@@ -574,6 +578,8 @@ function extractAttachmentMetadata(payload) {
         // Validate attachmentId (required, non-empty string)
         const attachmentId = part.body?.attachmentId;
         if (!attachmentId || typeof attachmentId !== 'string' || attachmentId.trim().length === 0) {
+          const reason = 'Missing or invalid attachmentId';
+          skipped.push({ messageId, filename: part.filename, reason });
           logger.warn(`[gmailConnector] Skipping attachment "${part.filename}" with missing or invalid attachmentId`);
           return; // Skip this attachment, continue with others
         }
@@ -581,6 +587,8 @@ function extractAttachmentMetadata(payload) {
         // Validate mimeType (must be non-empty string if present)
         const mimeType = part.mimeType || 'application/octet-stream';
         if (typeof mimeType !== 'string' || mimeType.length === 0) {
+          const reason = 'Invalid mimeType';
+          skipped.push({ messageId, filename: part.filename, reason });
           logger.warn(`[gmailConnector] Skipping attachment "${part.filename}" with invalid mimeType`);
           return; // Skip this attachment, continue with others
         }
@@ -607,6 +615,8 @@ function extractAttachmentMetadata(payload) {
         });
       } catch (error) {
         // Catch any unexpected errors during validation
+        const reason = `Malformed attachment: ${error.message}`;
+        skipped.push({ messageId, filename: part.filename || '(unknown)', reason });
         logger.warn(`[gmailConnector] Skipping malformed attachment "${part.filename}": ${error.message}`);
         // Continue processing other attachments
       }
@@ -660,7 +670,8 @@ async function fetchFullEmailsByIds(emailIds) {
 
           // Extract body and attachments
           const body = extractEmailBody(response.data.payload);
-          const attachments = extractAttachmentMetadata(response.data.payload);
+          const skippedAttachments = [];
+          const attachments = extractAttachmentMetadata(response.data.payload, id, skippedAttachments);
 
           return {
             id,
@@ -668,7 +679,8 @@ async function fetchFullEmailsByIds(emailIds) {
             from: decodeMimeHeader(from),
             date,
             body,
-            attachments
+            attachments,
+            attachmentIssues: skippedAttachments
           };
         } catch (error) {
           // Check for Gmail API rate limit (429) - fail job immediately
@@ -685,7 +697,8 @@ async function fetchFullEmailsByIds(emailIds) {
             from: '[Error fetching]',
             date: '',
             body: '',
-            attachments: []
+            attachments: [],
+            attachmentIssues: []
           };
         }
       })

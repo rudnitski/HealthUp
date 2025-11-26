@@ -602,7 +602,9 @@
             gmailActionBtn.disabled = false;
           } else {
             const rejectedEmails = job.result?.rejectedEmails || [];
-            showAttachmentSelection(results, stats, rejectedEmails);
+            const attachmentRejectedEmails = job.result?.attachmentRejectedEmails || [];
+            const attachmentProblemEmails = job.result?.attachmentProblemEmails || [];
+            showAttachmentSelection(results, stats, rejectedEmails, attachmentRejectedEmails, attachmentProblemEmails);
           }
         }
 
@@ -641,7 +643,7 @@
     gmailStepList.innerHTML = html;
   }
 
-  function showAttachmentSelection(results, stats = {}, rejectedEmails = []) {
+  function showAttachmentSelection(results, stats = {}, rejectedEmails = [], attachmentRejectedEmails = [], attachmentProblemEmails = []) {
     gmailSelection.hidden = false;
 
     // Summary
@@ -711,6 +713,112 @@
                     <td style="padding: 8px; white-space: nowrap;">${email.date || '-'}</td>
                     <td style="padding: 8px; text-align: center;">${email.step2_confidence !== undefined ? email.step2_confidence.toFixed(2) : '-'}</td>
                     <td style="padding: 8px; color: #6b7280;">${email.step2_reason || '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // Add attachment issues section (collapsed by default)
+    if (attachmentRejectedEmails.length > 0) {
+      const attachId = 'attachment-rejected-section-' + Date.now();
+      summaryHtml += `
+        <div style="margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+          <button
+            type="button"
+            id="${attachId}-toggle"
+            style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 0.9em; padding: 4px 8px; display: flex; align-items: center; gap: 6px;"
+            onclick="
+              const content = document.getElementById('${attachId}-content');
+              const icon = document.getElementById('${attachId}-icon');
+              if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.textContent = '▼';
+              } else {
+                content.style.display = 'none';
+                icon.textContent = '▶';
+              }
+            ">
+            <span id="${attachId}-icon">▶</span>
+            <span>Show ${attachmentRejectedEmails.length} emails with attachment issues</span>
+          </button>
+          <div id="${attachId}-content" style="display: none; margin-top: 8px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+              <thead>
+                <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                  <th style="text-align: left; padding: 8px;">Subject</th>
+                  <th style="text-align: left; padding: 8px;">From</th>
+                  <th style="text-align: left; padding: 8px;">Date</th>
+                  <th style="text-align: left; padding: 8px;">Issues</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${attachmentRejectedEmails.map(email => `
+                  <tr style="border-bottom: 1px solid #f3f4f6;">
+                    <td style="padding: 8px;">${email.subject || '(no subject)'}</td>
+                    <td style="padding: 8px;">${email.from || '(unknown)'}</td>
+                    <td style="padding: 8px; white-space: nowrap;">${email.date || '-'}</td>
+                    <td style="padding: 8px; color: #6b7280;">
+                      <ul style="margin: 0; padding-left: 18px;">
+                        ${(email.issues || []).map(issue => `<li>${issue.filename || '(unknown)'} — ${issue.reason || 'Unknown reason'}</li>`).join('')}
+                      </ul>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // Add accepted emails that lost attachments (collapsed by default)
+    if (attachmentProblemEmails.length > 0) {
+      const missingId = 'attachment-missing-section-' + Date.now();
+      summaryHtml += `
+        <div style="margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+          <button
+            type="button"
+            id="${missingId}-toggle"
+            style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 0.9em; padding: 4px 8px; display: flex; align-items: center; gap: 6px;"
+            onclick="
+              const content = document.getElementById('${missingId}-content');
+              const icon = document.getElementById('${missingId}-icon');
+              if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.textContent = '▼';
+              } else {
+                content.style.display = 'none';
+                icon.textContent = '▶';
+              }
+            ">
+            <span id="${missingId}-icon">▶</span>
+            <span>Show ${attachmentProblemEmails.length} accepted emails with no usable attachments</span>
+          </button>
+          <div id="${missingId}-content" style="display: none; margin-top: 8px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+              <thead>
+                <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                  <th style="text-align: left; padding: 8px;">Subject</th>
+                  <th style="text-align: left; padding: 8px;">From</th>
+                  <th style="text-align: left; padding: 8px;">Date</th>
+                  <th style="text-align: left; padding: 8px;">Issues</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${attachmentProblemEmails.map(email => `
+                  <tr style="border-bottom: 1px solid #f3f4f6;">
+                    <td style="padding: 8px;">${email.subject || '(no subject)'}</td>
+                    <td style="padding: 8px;">${email.from || '(unknown)'}</td>
+                    <td style="padding: 8px; white-space: nowrap;">${email.date || '-'}</td>
+                    <td style="padding: 8px; color: #6b7280;">
+                      <ul style="margin: 0; padding-left: 18px;">
+                        ${(email.issues || []).map(issue => `<li>${issue.filename || '(unknown)'} — ${issue.reason || 'Unknown reason'}</li>`).join('')}
+                      </ul>
+                    </td>
                   </tr>
                 `).join('')}
               </tbody>

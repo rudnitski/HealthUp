@@ -399,7 +399,8 @@ router.post('/fetch', async (req, res) => {
             step2_is_clinical: classification?.is_clinical_results_email || false,
             step2_confidence: classification?.confidence || 0,
             step2_reason: classification?.reason || 'Unknown',
-            accepted: isAccepted
+            accepted: isAccepted,
+            attachmentIssues: email.attachmentIssues || []
           };
         });
 
@@ -491,9 +492,31 @@ router.post('/fetch', async (req, res) => {
             step2_is_clinical: email.step2_is_clinical
           }));
 
+        // Capture emails where attachments were skipped/invalid
+        const attachmentRejectedEmails = step2AllResults
+          .filter(email => (email.attachmentIssues && email.attachmentIssues.length > 0))
+          .map(email => ({
+            subject: email.subject,
+            from: email.from,
+            date: email.date,
+            issues: email.attachmentIssues
+          }));
+
+        // Capture accepted emails that ended up with zero usable attachments (either none found or all skipped)
+        const attachmentProblemEmails = resultsWithDuplicates
+          .filter(email => email.attachments.length === 0 || (email.attachmentIssues && email.attachmentIssues.length > 0))
+          .map(email => ({
+            subject: email.subject,
+            from: email.from,
+            date: email.date,
+            issues: email.attachmentIssues || [{ filename: '(none)', reason: 'No attachments detected in message' }]
+          }));
+
         setJobResult(jobId, {
           results: resultsWithDuplicates,
           rejectedEmails,
+          attachmentRejectedEmails,
+          attachmentProblemEmails,
           stats,
           threshold,
           debug: {
