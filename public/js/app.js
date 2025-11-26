@@ -680,12 +680,6 @@
           } else {
             setResultMessage('Report loaded (no parameters detected).', 'info');
           }
-
-          setRawOutput(
-            typeof persistedPayload.raw_model_output === 'string'
-              ? persistedPayload.raw_model_output
-              : '',
-          );
         } else {
           setResultMessage('Report not found.', 'error');
         }

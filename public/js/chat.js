@@ -968,7 +968,6 @@ class ConversationalSQLChat {
   enableInput() {
     this.inputTextarea.disabled = false;
     this.sendButton.disabled = false;
-    this.inputTextarea.focus();
   }
 
   /**
