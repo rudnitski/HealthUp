@@ -100,6 +100,36 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 - Falls back to single-shot mode if disabled
 - Requires `ADMIN_API_KEY` for cache busting endpoint
 
+## Module System
+
+HealthUp uses ESM (ECMAScript Modules) for all server-side code (migrated from CommonJS in v3.5).
+
+**Import Patterns:**
+```javascript
+// Named imports
+import { query } from './db/index.js';
+
+// Default imports
+import express from 'express';
+
+// Path resolution for __dirname equivalent
+import { getDirname } from './utils/path-helpers.js';
+const __dirname = getDirname(import.meta.url);
+```
+
+**Important ESM Requirements:**
+- All relative imports **MUST** include `.js` extension (e.g., `'./db/index.js'`, not `'./db'`)
+- Use `import.meta.url` instead of `__dirname`/`__filename`
+- Use `getDirname(import.meta.url)` helper for path resolution
+- JSON imports: use `fs.readFileSync()` + `JSON.parse()` for dynamic reloading
+- No `require.cache` manipulation (ESM modules are immutable by design)
+
+**Migration Context:**
+- Migrated from CommonJS to ESM in PRD v3.5 (big-bang migration, all 37 files)
+- Zero circular dependencies (verified with madge)
+- All `require()` → `import`, all `module.exports` → `export`
+- Jest 30.2.0 with experimental ESM support (`--experimental-vm-modules`)
+
 ## Route Organization
 
 Express routes must follow specific ordering for correct matching:

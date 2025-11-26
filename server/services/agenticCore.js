@@ -2,18 +2,21 @@
 // Core logic for agentic SQL generation - shared between job-based and streaming modes
 // PRD: docs/PRD_v3_2_conversational_sql_assistant.md
 
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-const pino = require('pino');
-const { pool } = require('../db');
-const { validateSQL } = require('./sqlValidator');
-const { updateMRU } = require('./schemaSnapshot');
-const {
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import pino from 'pino';
+import { pool } from '../db/index.js';
+import { validateSQL, ensurePatientScope } from './sqlValidator.js';
+import { updateMRU } from './schemaSnapshot.js';
+import {
   fuzzySearchParameterNames,
   fuzzySearchAnalyteNames,
   executeExploratorySql,
-} = require('./agenticTools');
+} from './agenticTools.js';
+import { getDirname } from '../utils/path-helpers.js';
+
+const __dirname = getDirname(import.meta.url);
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -280,9 +283,8 @@ async function handleFinalQuery(
   }
 
   // PRD v3.2: Validate patient scope when multiple patients exist
-  const sqlValidator = require('./sqlValidator');
-  const patientScope = sqlValidator.ensurePatientScope ?
-    sqlValidator.ensurePatientScope(validation.sqlWithLimit, selectedPatientId, patientCount) :
+  const patientScope = ensurePatientScope ?
+    ensurePatientScope(validation.sqlWithLimit, selectedPatientId, patientCount) :
     { valid: true }; // Fallback if method doesn't exist yet
 
   if (!patientScope.valid) {
@@ -392,7 +394,7 @@ async function handleFinalQuery(
   return response;
 }
 
-module.exports = {
+export {
   buildSystemPrompt,
   executeToolCall,
   handleFinalQuery,

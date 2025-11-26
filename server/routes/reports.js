@@ -1,7 +1,7 @@
-const express = require('express');
-const { getPatientReports, getReportDetail } = require('../services/reportRetrieval');
-const { pool } = require('../db');
-const { readFile } = require('../services/fileStorage');
+import express from 'express';
+import { getPatientReports, getReportDetail } from '../services/reportRetrieval.js';
+import { pool } from '../db/index.js';
+import { readFile } from '../services/fileStorage.js';
 
 const router = express.Router();
 
@@ -177,4 +177,4 @@ router.get('/reports/:reportId/original-file', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

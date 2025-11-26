@@ -2,8 +2,8 @@
 // scripts/backfill_analyte_mappings.js
 // PRD v2.4: Backfill script to populate analyte_id for existing lab_results rows
 
-const { pool } = require('../server/db');
-const { wetRun } = require('../server/services/MappingApplier');
+import { pool } from '../server/db/index.js';
+import { wetRun } from '../server/services/MappingApplier.js';
 
 /**
  * Main backfill function

@@ -4,12 +4,12 @@
  * PRD: docs/PRD_v2_8_Gmail_Integration_Step3.md
  */
 
-const { SHARED_GMAIL_LIMITER, ...gmailConnector } = require('./gmailConnector');
-const crypto = require('crypto');
-const jobManager = require('../utils/jobManager');
-const labReportProcessor = require('./labReportProcessor');
-const { pool } = require('../db');
-const pino = require('pino');
+import gmailConnector, { SHARED_GMAIL_LIMITER } from './gmailConnector.js';
+import crypto from 'crypto';
+import * as jobManager from '../utils/jobManager.js';
+import { processLabReport } from './labReportProcessor.js';
+import { pool } from '../db/index.js';
+import pino from 'pino';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -210,7 +210,7 @@ async function ingestAttachment(selection, batchId) {
     }
 
     // Step 5: Process via labReportProcessor
-    await labReportProcessor.processLabReport({
+    await processLabReport({
       jobId,
       fileBuffer: buffer,
       mimetype: normalizedMimeType,
@@ -470,8 +470,8 @@ function getBatchSummary(batchId) {
   };
 }
 
-module.exports = {
+export {
   startBatchIngestion,
   getBatchSummary,
-  attachmentJobs // Exported for testing/debugging
+  attachmentJobs
 };

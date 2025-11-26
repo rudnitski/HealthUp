@@ -3,12 +3,15 @@
 // Performs read-only analyte mapping with structured logging
 // v0.9.1: Adds Tier C (LLM-based mapping)
 
-const pino = require('pino');
-const { pool } = require('../db');
-const OpenAI = require('openai');
-const { detectLanguage } = require('../utils/languageDetection');
-const fs = require('fs');
-const path = require('path');
+import pino from 'pino';
+import { pool } from '../db/index.js';
+import OpenAI from 'openai';
+import { detectLanguage } from '../utils/languageDetection.js';
+import fs from 'fs';
+import path from 'path';
+import { getDirname } from '../utils/path-helpers.js';
+
+const __dirname = getDirname(import.meta.url);
 
 // Configure Pino logger
 const logger = pino({
@@ -1436,20 +1439,21 @@ async function wetRun({ reportId, patientId, parameters }) {
   return result;
 }
 
-module.exports = {
+export {
   wetRun,
-  dryRun,  // Public API - used by scripts, tests, and docs
+  dryRun,
   normalizeLabel,
-  // Export for testing
-  _internal: {
-    findExactMatch,
-    findFuzzyMatch,
-    processRow,
-    writeAnalyteId,
-    queueNewAnalyte,
-    queueForReview,
-    queueAbstainForReview,
-    detectLanguage,
-    dryRun, // Also keep in _internal for backward compatibility with tests
-  },
+};
+
+// Export for testing
+export const _internal = {
+  findExactMatch,
+  findFuzzyMatch,
+  processRow,
+  writeAnalyteId,
+  queueNewAnalyte,
+  queueForReview,
+  queueAbstainForReview,
+  detectLanguage,
+  dryRun,
 };

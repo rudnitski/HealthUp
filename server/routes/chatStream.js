@@ -17,16 +17,16 @@
 // - Atomic processing lock: tryAcquireLock() prevents race conditions
 // - Session validation: checks session exists before recursive calls
 
-const express = require('express');
-const OpenAI = require('openai');
-const pino = require('pino');
-const { pool } = require('../db');
-const sessionManager = require('../utils/sessionManager');
-const agenticCore = require('../services/agenticCore');
-const { TOOL_DEFINITIONS } = require('../services/agenticTools');
-const { getSchemaSnapshot } = require('../services/schemaSnapshot');
-const { buildSchemaSection } = require('../services/promptBuilder');
-const { validateSQL } = require('../services/sqlValidator');
+import express from 'express';
+import OpenAI from 'openai';
+import pino from 'pino';
+import { pool } from '../db/index.js';
+import sessionManager from '../utils/sessionManager.js';
+import * as agenticCore from '../services/agenticCore.js';
+import { TOOL_DEFINITIONS } from '../services/agenticTools.js';
+import { getSchemaSnapshot } from '../services/schemaSnapshot.js';
+import { buildSchemaSection } from '../services/promptBuilder.js';
+import { validateSQL } from '../services/sqlValidator.js';
 
 const router = express.Router();
 
@@ -1311,4 +1311,4 @@ function pruneConversationIfNeeded(session) {
   });
 }
 
-module.exports = router;
+export default router;

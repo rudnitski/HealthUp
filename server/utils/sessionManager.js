@@ -2,8 +2,8 @@
 // Session management for conversational SQL assistant
 // PRD: docs/PRD_v3_2_conversational_sql_assistant.md
 
-const crypto = require('crypto');
-const pino = require('pino');
+import crypto from 'crypto';
+import pino from 'pino';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -263,4 +263,4 @@ const sessionManager = new SessionManager();
 // Note: Graceful shutdown is handled by server/app.js
 // No need to register duplicate SIGTERM/SIGINT handlers here
 
-module.exports = sessionManager;
+export default sessionManager;

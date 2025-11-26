@@ -1,6 +1,6 @@
-const express = require('express');
-const { createJob, getJobStatus, createBatch, getBatchStatus } = require('../utils/jobManager');
-const { processLabReport } = require('../services/labReportProcessor');
+import express from 'express';
+import { createJob, getJobStatus, createBatch, getBatchStatus } from '../utils/jobManager.js';
+import { processLabReport } from '../services/labReportProcessor.js';
 
 const router = express.Router();
 
@@ -264,4 +264,4 @@ router.get('/batches/:batchId', (req, res) => {
   return res.status(200).json(batchStatus);
 });
 
-module.exports = router;
+export default router;

@@ -1,6 +1,8 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { getDirname } from './path-helpers.js';
 
+const __dirname = getDirname(import.meta.url);
 const PROMPT_ROOT = path.join(__dirname, '..', '..', 'prompts');
 const cache = new Map();
 
@@ -19,6 +21,6 @@ function loadPrompt(filename) {
   return content;
 }
 
-module.exports = {
+export {
   loadPrompt,
 };

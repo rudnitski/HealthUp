@@ -1,10 +1,10 @@
 // server/routes/admin.js
 // PRD v2.4: Admin API endpoints for pending analytes and ambiguous matches
 
-const express = require('express');
-const { pool } = require('../db');
-const pino = require('pino');
-const { detectLanguage } = require('../utils/languageDetection');
+import express from 'express';
+import { pool } from '../db/index.js';
+import pino from 'pino';
+import { detectLanguage } from '../utils/languageDetection.js';
 
 const router = express.Router();
 
@@ -471,7 +471,7 @@ router.post('/reset-database', async (req, res) => {
     logger.warn({ ip: req.ip }, '[admin] Database reset requested');
 
     // Import resetDatabase function
-    const { resetDatabase } = require('../db/schema');
+    const { resetDatabase } = await import('../db/schema.js');
 
     // Perform the reset
     const result = await resetDatabase();
@@ -499,4 +499,4 @@ router.post('/reset-database', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

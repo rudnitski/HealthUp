@@ -1,10 +1,10 @@
-const express = require('express');
-const { handleGeneration, SqlGeneratorError } = require('../services/sqlGenerator');
-const { bustCache, reloadSchemaAliases } = require('../services/schemaSnapshot');
-const { reloadSchemaAliases: reloadPromptAliases } = require('../services/promptBuilder');
-const { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus } = require('../utils/jobManager');
-const { validateSQL } = require('../services/sqlValidator');
-const { pool } = require('../db');
+import express from 'express';
+import { handleGeneration, SqlGeneratorError } from '../services/sqlGenerator.js';
+import { bustCache } from '../services/schemaSnapshot.js';
+import { reloadSchemaAliases } from '../services/promptBuilder.js';
+import { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus } from '../utils/jobManager.js';
+import { validateSQL } from '../services/sqlValidator.js';
+import { pool } from '../db/index.js';
 const logger = console;
 
 const router = express.Router();
@@ -296,4 +296,4 @@ router.post('/admin/cache/bust', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

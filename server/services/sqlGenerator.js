@@ -1,11 +1,11 @@
-const OpenAI = require('openai');
-const crypto = require('crypto');
-const pino = require('pino');
-const { pool } = require('../db');
-const { getSchemaSnapshot, updateMRU } = require('./schemaSnapshot');
-const { validateSQL } = require('./sqlValidator');
-const { buildSchemaSection, buildPrompt } = require('./promptBuilder');
-const { generateSqlWithAgenticLoop } = require('./agenticSqlGenerator');
+import OpenAI from 'openai';
+import crypto from 'crypto';
+import pino from 'pino';
+import { pool } from '../db/index.js';
+import { getSchemaSnapshot, updateMRU } from './schemaSnapshot.js';
+import { validateSQL } from './sqlValidator.js';
+import { buildSchemaSection, buildPrompt } from './promptBuilder.js';
+import { generateSqlWithAgenticLoop } from './agenticSqlGenerator.js';
 
 // Configuration
 const SQL_GENERATION_ENABLED = process.env.SQL_GENERATION_ENABLED !== 'false';
@@ -347,7 +347,7 @@ const handleGeneration = async (params) => {
   }
 };
 
-module.exports = {
+export {
   handleGeneration,
   SqlGeneratorError,
 };

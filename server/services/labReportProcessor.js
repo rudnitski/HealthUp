@@ -5,17 +5,21 @@
  * Extracted from analyzeLabReport route to support async job processing.
  */
 
-const OpenAI = require('openai');
-const { PDFParse } = require('pdf-parse');
-const os = require('os');
-const fs = require('fs/promises');
-const path = require('path');
-const { promisify } = require('util');
-const { execFile } = require('child_process');
-const { persistLabReport, PersistLabReportError } = require('./reportPersistence');
-const { loadPrompt } = require('../utils/promptLoader');
-const { updateJob, updateProgress, setJobResult, setJobError, JobStatus } = require('../utils/jobManager');
-const VisionProviderFactory = require('./vision/VisionProviderFactory');
+import OpenAI from 'openai';
+import { PDFParse } from 'pdf-parse';
+import os from 'os';
+import fs from 'fs/promises';
+import path from 'path';
+import { promisify } from 'util';
+import { execFile } from 'child_process';
+import { persistLabReport, PersistLabReportError } from './reportPersistence.js';
+import { loadPrompt } from '../utils/promptLoader.js';
+import { updateJob, updateProgress, setJobResult, setJobError, JobStatus } from '../utils/jobManager.js';
+import VisionProviderFactory from './vision/VisionProviderFactory.js';
+import { getDirname } from '../utils/path-helpers.js';
+import { wetRun } from './MappingApplier.js';
+
+const __dirname = getDirname(import.meta.url);
 
 const MAX_PDF_PAGES = 10;
 const ALLOWED_MIME_TYPES = new Set([
@@ -733,8 +737,6 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
     updateProgress(jobId, 90, 'Mapping analytes');
 
     try {
-      const { wetRun } = require('./MappingApplier');
-
       console.log(`${logPrefix} Starting mapping for report:`, persistenceResult.reportId);
 
       const mappingResult = await wetRun({
@@ -788,6 +790,6 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
   }
 }
 
-module.exports = {
+export {
   processLabReport,
 };

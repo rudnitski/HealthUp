@@ -1,6 +1,6 @@
-const OpenAIProvider = require('./OpenAIProvider');
-const AnthropicProvider = require('./AnthropicProvider');
-const FallbackVisionProvider = require('./FallbackVisionProvider');
+import OpenAIProvider from './OpenAIProvider.js';
+import AnthropicProvider from './AnthropicProvider.js';
+import FallbackVisionProvider from './FallbackVisionProvider.js';
 
 /**
  * Factory for creating vision provider instances
@@ -69,4 +69,4 @@ class VisionProviderFactory {
   }
 }
 
-module.exports = VisionProviderFactory;
+export default VisionProviderFactory;

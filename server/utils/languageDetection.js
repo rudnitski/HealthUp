@@ -45,6 +45,6 @@ function detectLanguage(text) {
   return scriptCounts[0].count > 0 ? scriptCounts[0].lang : 'en';
 }
 
-module.exports = {
+export {
   detectLanguage
 };

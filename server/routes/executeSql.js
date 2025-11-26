@@ -6,9 +6,9 @@
  * Used by the frontend to execute plot queries and render visualizations
  */
 
-const express = require('express');
-const { pool } = require('../db');
-const pino = require('pino');
+import express from 'express';
+import { pool } from '../db/index.js';
+import pino from 'pino';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -186,4 +186,4 @@ router.post('/', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

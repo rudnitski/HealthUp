@@ -1,6 +1,9 @@
-const fs = require('fs');
-const path = require('path');
-const { promisify } = require('util');
+import fs from 'fs';
+import path from 'path';
+import { promisify } from 'util';
+import { getDirname } from '../utils/path-helpers.js';
+
+const __dirname = getDirname(import.meta.url);
 
 const writeFile = promisify(fs.writeFile);
 const mkdir = promisify(fs.mkdir);
@@ -207,7 +210,7 @@ async function getFileStats(relativePath) {
   }
 }
 
-module.exports = {
+export {
   saveFile,
   readFile,
   deleteFile,

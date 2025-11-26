@@ -1,5 +1,9 @@
-const { pool } = require('./index');
+import { pool } from './index.js';
+import fs from 'fs';
+import path from 'path';
+import { getDirname } from '../utils/path-helpers.js';
 
+const __dirname = getDirname(import.meta.url);
 const requirePgTrgm = String(process.env.REQUIRE_PG_TRGM || '').toLowerCase() === 'true';
 
 const schemaStatements = [
@@ -495,8 +499,6 @@ async function resetDatabase() {
     await ensureSchema();
 
     // Re-seed analytes
-    const fs = require('fs');
-    const path = require('path');
     const seedPath = path.join(__dirname, 'seed_analytes.sql');
 
     if (fs.existsSync(seedPath)) {
@@ -522,4 +524,4 @@ async function resetDatabase() {
   }
 }
 
-module.exports = { ensureSchema, resetDatabase };
+export { ensureSchema, resetDatabase };

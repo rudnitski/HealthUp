@@ -1,5 +1,5 @@
-const Anthropic = require('@anthropic-ai/sdk');
-const VisionProvider = require('./VisionProvider');
+import Anthropic from '@anthropic-ai/sdk';
+import VisionProvider from './VisionProvider.js';
 
 /**
  * Anthropic Claude Vision API provider
@@ -406,4 +406,4 @@ class AnthropicProvider extends VisionProvider {
   }
 }
 
-module.exports = AnthropicProvider;
+export default AnthropicProvider;

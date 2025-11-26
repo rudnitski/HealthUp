@@ -4,20 +4,20 @@
  * PRD: docs/PRD_v2_8_Gmail_Integration_Step1.md
  */
 
-const express = require('express');
-const pino = require('pino');
-const { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus, getJob } = require('../utils/jobManager');
-const {
+import express from 'express';
+import pino from 'pino';
+import { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus, getJob } from '../utils/jobManager.js';
+import {
   getAuthUrl,
   handleOAuthCallback,
   isAuthenticated,
   getOAuth2Client,
   fetchEmailMetadata,
   fetchFullEmailsByIds
-} = require('../services/gmailConnector');
-const { classifyEmails } = require('../services/emailClassifier');
-const { classifyEmailBodies } = require('../services/bodyClassifier');
-const gmailAttachmentIngest = require('../services/gmailAttachmentIngest');
+} from '../services/gmailConnector.js';
+import { classifyEmails } from '../services/emailClassifier.js';
+import { classifyEmailBodies } from '../services/bodyClassifier.js';
+import * as gmailAttachmentIngest from '../services/gmailAttachmentIngest.js';
 
 const router = express.Router();
 
@@ -703,4 +703,4 @@ router.post('/ingest', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

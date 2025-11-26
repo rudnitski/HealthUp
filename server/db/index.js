@@ -1,5 +1,5 @@
-// server/db/index.js (CJS)
-const { Pool } = require('pg');
+// server/db/index.js (ESM)
+import { Pool } from 'pg';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -23,4 +23,4 @@ async function healthcheck() {
   return rows[0]?.ok === 1;
 }
 
-module.exports = { pool, healthcheck };
+export { pool, healthcheck };

@@ -2,8 +2,8 @@
 // Manual test script for agentic SQL generation
 // Usage: node test/manual/test_agentic_sql.js
 
-require('dotenv').config();
-const { handleGeneration } = require('../../server/services/sqlGenerator');
+import 'dotenv/config';
+import { handleGeneration } from '../../server/services/sqlGenerator.js';
 
 // Test queries covering different complexity levels
 const testQueries = [

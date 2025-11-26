@@ -1,5 +1,5 @@
-const OpenAI = require('openai');
-const VisionProvider = require('./VisionProvider');
+import OpenAI from 'openai';
+import VisionProvider from './VisionProvider.js';
 
 /**
  * OpenAI Vision API provider
@@ -129,4 +129,4 @@ class OpenAIProvider extends VisionProvider {
   }
 }
 
-module.exports = OpenAIProvider;
+export default OpenAIProvider;

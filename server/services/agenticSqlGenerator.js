@@ -2,20 +2,23 @@
 // Agentic SQL Generation - Main Orchestration Loop
 // PRD: docs/PRD_v2_0_agentic_sql_generation_mvp.md
 
-const OpenAI = require('openai');
-const crypto = require('crypto');
-const pino = require('pino');
-const fs = require('fs');
-const path = require('path');
-const { pool } = require('../db');
-const { validateSQL } = require('./sqlValidator');
-const { updateMRU } = require('./schemaSnapshot');
-const {
+import OpenAI from 'openai';
+import crypto from 'crypto';
+import pino from 'pino';
+import fs from 'fs';
+import path from 'path';
+import { pool } from '../db/index.js';
+import { validateSQL } from './sqlValidator.js';
+import { updateMRU } from './schemaSnapshot.js';
+import {
   fuzzySearchParameterNames,
   fuzzySearchAnalyteNames,
   executeExploratorySql,
   TOOL_DEFINITIONS,
-} = require('./agenticTools');
+} from './agenticTools.js';
+import { getDirname } from '../utils/path-helpers.js';
+
+const __dirname = getDirname(import.meta.url);
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -773,6 +776,6 @@ async function generateSqlWithAgenticLoop({
   return formatErrorResponse('NO_FINAL_QUERY', iterationLog, maxIterations, startTime);
 }
 
-module.exports = {
+export {
   generateSqlWithAgenticLoop,
 };

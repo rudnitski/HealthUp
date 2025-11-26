@@ -4,12 +4,15 @@
  * PRD: docs/PRD_v2_8_Gmail_Integration_Step1.md
  */
 
-const { google } = require('googleapis');
-const fs = require('fs').promises;
-const path = require('path');
-const crypto = require('crypto');
-const pino = require('pino');
-const pLimit = require('p-limit');
+import { google } from 'googleapis';
+import fs from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
+import pino from 'pino';
+import pLimit from 'p-limit';
+import { getDirname } from '../utils/path-helpers.js';
+
+const __dirname = getDirname(import.meta.url);
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -728,7 +731,20 @@ try {
   logger.warn('[gmailConnector] Failed to initialize OAuth client:', error.message);
 }
 
-module.exports = {
+export {
+  getAuthUrl,
+  handleOAuthCallback,
+  loadCredentials,
+  isAuthenticated,
+  ensureFreshTokens,
+  getOAuth2Client,
+  fetchEmailMetadata,
+  fetchFullEmailsByIds,
+  getAuthenticatedGmailClient,
+  SHARED_GMAIL_LIMITER
+};
+
+export default {
   getAuthUrl,
   handleOAuthCallback,
   loadCredentials,

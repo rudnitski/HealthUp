@@ -2,8 +2,8 @@
 // scripts/verify_mapping_setup.js
 // Quick verification script for Mapping Applier setup
 
-require('dotenv').config();
-const { pool } = require('../server/db');
+import 'dotenv/config';
+import { pool } from '../server/db/index.js';
 
 async function verifySetup() {
   console.log('🔍 Verifying Mapping Applier Setup...\n');

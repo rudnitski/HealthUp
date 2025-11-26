@@ -175,4 +175,4 @@ class VisionProvider {
   }
 }
 
-module.exports = VisionProvider;
+export default VisionProvider;

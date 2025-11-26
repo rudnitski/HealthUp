@@ -1,8 +1,27 @@
-const path = require('path');
+// ESM imports must come first
+import path from 'path';
+import { getDirname } from './utils/path-helpers.js';
+import express from 'express';
+import fileUpload from 'express-fileupload';
+import { healthcheck, pool } from './db/index.js';
+import { ensureSchema } from './db/schema.js';
+import VisionProviderFactory from './services/vision/VisionProviderFactory.js';
+import sqlGeneratorRouter from './routes/sqlGenerator.js';
+import chatStreamRouter from './routes/chatStream.js';
+import analyzeLabReportRouter from './routes/analyzeLabReport.js';
+import reportsRouter from './routes/reports.js';
+import executeSqlRouter from './routes/executeSql.js';
+import adminRouter from './routes/admin.js';
+import gmailDevRouter from './routes/gmailDev.js';
+import { shutdownSchemaSnapshot } from './services/schemaSnapshot.js';
+import sessionManager from './utils/sessionManager.js';
 
+const __dirname = getDirname(import.meta.url);
+
+// Load environment variables
 if (process.env.NODE_ENV !== 'production') {
   try {
-    require('dotenv').config();
+    await import('dotenv/config');
   } catch (_) {}
 }
 
@@ -14,12 +33,7 @@ if (process.env.NODE_ENV !== 'production') {
 // - various cleanup routines in loaded modules
 process.setMaxListeners(20);
 
-const express = require('express');
-const fileUpload = require('express-fileupload');
-const { healthcheck, pool } = require('./db');
-const { ensureSchema } = require('./db/schema');
-const VisionProviderFactory = require('./services/vision/VisionProviderFactory');
-
+// Database initialization
 (async () => {
   try {
     await ensureSchema();
@@ -53,16 +67,6 @@ try {
   console.warn('[Startup] Other features (SQL generation, admin) will continue to work.');
   // Don't exit - let the app start, OCR validation will fail at request time if keys are missing
 }
-
-const sqlGeneratorRouter = require('./routes/sqlGenerator');
-const chatStreamRouter = require('./routes/chatStream');
-const analyzeLabReportRouter = require('./routes/analyzeLabReport');
-const reportsRouter = require('./routes/reports');
-const executeSqlRouter = require('./routes/executeSql');
-const adminRouter = require('./routes/admin');
-const gmailDevRouter = require('./routes/gmailDev');
-const { shutdownSchemaSnapshot } = require('./services/schemaSnapshot');
-const sessionManager = require('./utils/sessionManager');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));

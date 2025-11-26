@@ -4,10 +4,10 @@
  * PRD: docs/PRD_v2_8_Gmail_Integration_Step1.md
  */
 
-const OpenAI = require('openai');
-const pino = require('pino');
-const pLimit = require('p-limit');
-const { loadPrompt } = require('../utils/promptLoader');
+import OpenAI from 'openai';
+import pino from 'pino';
+import pLimit from 'p-limit';
+import { loadPrompt } from '../utils/promptLoader.js';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const MAX_RETRIES = parseInt(process.env.EMAIL_CLASSIFIER_MAX_RETRIES, 10) || 3;
@@ -296,6 +296,6 @@ async function classifyEmails(emails, onProgress = null) {
   }
 }
 
-module.exports = {
+export {
   classifyEmails
 };

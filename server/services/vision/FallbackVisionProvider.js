@@ -1,4 +1,4 @@
-const VisionProvider = require('./VisionProvider');
+import VisionProvider from './VisionProvider.js';
 
 /**
  * Fallback Vision Provider
@@ -140,4 +140,4 @@ class FallbackVisionProvider extends VisionProvider {
   }
 }
 
-module.exports = FallbackVisionProvider;
+export default FallbackVisionProvider;

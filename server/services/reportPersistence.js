@@ -1,6 +1,6 @@
-const { randomUUID, createHash } = require('crypto');
-const { pool } = require('../db');
-const { saveFile, deleteFile } = require('./fileStorage');
+import { randomUUID, createHash } from 'crypto';
+import { pool } from '../db/index.js';
+import { saveFile, deleteFile } from './fileStorage.js';
 
 class PersistLabReportError extends Error {
   constructor(message, {
@@ -377,7 +377,7 @@ async function persistLabReport({
   }
 }
 
-module.exports = {
+export {
   persistLabReport,
   PersistLabReportError,
 };

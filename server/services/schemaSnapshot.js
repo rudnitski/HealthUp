@@ -1,5 +1,5 @@
-const crypto = require('crypto');
-const { pool } = require('../db');
+import crypto from 'crypto';
+import { pool } from '../db/index.js';
 
 // Configuration
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -315,7 +315,7 @@ warmupCache().catch((err) => console.error('[schemaSnapshot] Warmup error:', err
 // Set up LISTEN for cache invalidation (non-blocking)
 setupCacheInvalidationListener().catch((err) => console.error('[schemaSnapshot] LISTEN setup error:', err));
 
-module.exports = {
+export {
   getSchemaSnapshot,
   bustCache,
   updateMRU,

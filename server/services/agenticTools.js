@@ -2,9 +2,9 @@
 // Agentic SQL Generation - Tool Implementations
 // PRD: docs/PRD_v2_0_agentic_sql_generation_mvp.md
 
-const { pool } = require('../db');
-const { validateSQL } = require('./sqlValidator');
-const pino = require('pino');
+import { pool } from '../db/index.js';
+import { validateSQL } from './sqlValidator.js';
+import pino from 'pino';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -431,7 +431,7 @@ const TOOL_DEFINITIONS = [
   }
 ];
 
-module.exports = {
+export {
   fuzzySearchParameterNames,
   fuzzySearchAnalyteNames,
   executeExploratorySql,

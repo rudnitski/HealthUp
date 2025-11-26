@@ -1,4 +1,4 @@
-const { pool } = require('../db');
+import { pool } from '../db/index.js';
 
 // Configuration
 const MAX_JOINS = Number(process.env.SQLGEN_MAX_JOINS) || 5;
@@ -816,7 +816,7 @@ function ensurePatientScope(sql, patientId, patientCount) {
   return { valid: true };
 }
 
-module.exports = {
+export {
   validateSQL,
   stripComments,
   enforceLimitClause,

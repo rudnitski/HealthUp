@@ -1,4 +1,4 @@
-const { pool } = require('../db');
+import { pool } from '../db/index.js';
 
 const toIsoString = (value) => {
   if (!value) {
@@ -263,7 +263,7 @@ async function getReportDetail(reportId) {
   }
 }
 
-module.exports = {
+export {
   getPatientReports,
   getReportDetail,
 };

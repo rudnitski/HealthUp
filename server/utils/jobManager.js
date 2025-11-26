@@ -285,7 +285,7 @@ function getBatch(batchId) {
   return batches.get(batchId) || null;
 }
 
-module.exports = {
+export {
   JobStatus,
   createJob,
   updateJob,

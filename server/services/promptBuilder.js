@@ -1,7 +1,10 @@
-const { encoding_for_model } = require('tiktoken');
-const fs = require('fs');
-const path = require('path');
-const { getMRUScore } = require('./schemaSnapshot');
+import { encoding_for_model } from 'tiktoken';
+import fs from 'fs';
+import path from 'path';
+import { getDirname } from '../utils/path-helpers.js';
+import { getMRUScore } from './schemaSnapshot.js';
+
+const __dirname = getDirname(import.meta.url);
 
 // Configuration
 const SCHEMA_TOKEN_BUDGET = 6000;
@@ -42,7 +45,7 @@ try {
 function reloadSchemaAliases() {
   try {
     const aliasPath = path.join(__dirname, '../../config/schema_aliases.json');
-    delete require.cache[require.resolve(aliasPath)];
+    // No cache to clear - file is re-read from disk every time
     schemaAliases = JSON.parse(fs.readFileSync(aliasPath, 'utf8'));
     console.info('[promptBuilder] Schema aliases reloaded');
   } catch (error) {
@@ -355,7 +358,7 @@ IMPORTANT: Do NOT filter by specific patient ID. Generate queries that work for 
   };
 }
 
-module.exports = {
+export {
   buildSchemaSection,
   buildPrompt,
   extractEntities,
