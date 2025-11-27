@@ -339,3 +339,4 @@ Consult these when drafting new PRDs or understanding feature history. Prompt te
 8. **Mapping confidence**: Auto-accept threshold must be higher than queue threshold
 9. **pg_trgm extension**: Required for fuzzy search and agentic SQL tools (auto-created on boot; set `REQUIRE_PG_TRGM=true` to enforce)
 10. **Session management**: Conversational chat uses in-memory sessions with 1-hour TTL. Sessions are NOT persisted across server restarts.
+- when changing PRD after peer review dont keep in PRD history or comments of the peer review, PRD must contain only data for development the feature, not the history of PRD improvement
