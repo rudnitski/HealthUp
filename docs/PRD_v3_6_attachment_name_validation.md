@@ -1,7 +1,8 @@
-# PRD v3.6: Attachment Name Validation (Gmail Step 2.5)
+# PRD v3.6: Attachment Name Validation (Enhanced Step 2)
 
 **Status:** Ready for Implementation
 **Created:** 2025-11-27
+**Updated:** 2025-12-02 (Merged Step 2.5 into Step 2)
 **Author:** Claude (with user collaboration)
 **Target Release:** v3.6
 **Dependencies:** PRD v2.8 (Gmail Integration Step 2), PRD v3.0 (Unified Upload)
@@ -39,10 +40,15 @@ Attachments shown to user:
 ### Goals
 
 1. **Filter out non-lab-report attachments** before showing the selection table to users
-2. **LLM-based validation**: Use attachment filename + size to determine if it's likely a lab report
+2. **LLM-based validation**: Use email context + attachment metadata to determine if each attachment is likely a lab report
 3. **Maintain transparency**: Show rejected attachments in a collapsible debug section
 4. **Minimal false positives**: Prefer showing questionable attachments rather than hiding real lab reports
 5. **Consistent with existing patterns**: Follow the same debug disclosure pattern as "Show rejected emails"
+
+**Important Scope Clarification:**
+- This feature targets **attachment-level filtering** within emails that pass Step 2 classification
+- If Step 2 rejects an entire email, ALL its attachments are implicitly rejected (already shown in "Show rejected emails" section)
+- The new debug section shows only attachments filtered from **accepted emails** (e.g., email accepted, but logo.jpg filtered out)
 
 ### Non-Goals (Out of Scope)
 
@@ -53,347 +59,420 @@ Attachments shown to user:
 
 ---
 
-## Current State Analysis
+## Solution Design
 
-### Existing Filtering (Step 2 → Attachment Selection)
+### Why Merge into Step 2 (Not Separate Step 2.5)
 
-**Location:** `server/routes/gmailDev.js:392-405`
+**Step 2 already has superior context for attachment validation:**
+- Full email body (often describes attachments: "here's your lab report and our logo")
+- Subject line (additional context clues)
+- Sender information (helps identify branding vs medical content)
+- All attachment metadata (filename, size, mimeType, isInline)
 
-After Step 2 body classification completes, attachments are passed through to the selection UI with **NO filtering**:
+**Benefits of merged approach:**
+- ✅ One less API call (faster + cheaper)
+- ✅ Better accuracy (more context = better decisions)
+- ✅ Simpler architecture (fewer pipeline stages)
+- ✅ Less code to maintain
+- ✅ LLM can cross-reference body content with attachment names
 
-```javascript
-attachments: email.attachments.map(a => ({
-  filename: a.filename,
-  mimeType: a.mimeType,
-  size: a.size,
-  attachmentId: a.attachmentId,
-  isInline: a.isInline
-}))
-```
-
-**Current behavior before selection UI:**
-- ❌ No MIME type filtering
-- ❌ No inline check
-- ❌ No size validation
-- ❌ No filename validation
-
-**All attachments** from Step 2 body fetch appear in the selection table. The only filtering that exists happens **later at Step 3 ingestion** (`server/routes/gmailDev.js:636-709`):
-- ✅ MIME type validation (`isValidAttachment()` checks extension/MIME)
-- ✅ Size limit check (15MB default)
-- ❌ Still no inline check
-- ❌ Still no filename validation
-
-**Problem:** Users see ALL attachments (including logos, inline images, potentially huge files) in the selection table. They can check boxes, but ingestion may reject them with validation errors at Step 3.
-
-### Existing Debug Sections
-
-**Location:** `public/index.html` + `public/js/unified-upload.js:660-830`
-
-The Gmail results UI already has two collapsible debug sections:
-
-1. **"Show 10 rejected emails (Step 2)"** (line 660-700)
-   - Displays emails that failed body classification
-   - Shows subject, from, date, confidence, reason
-
-2. **"Show 3 accepted emails with no usable attachments"** (line 705-750)
-   - Displays emails that passed classification but had zero valid attachments
-   - Shows attachment issues (e.g., "All attachments inline", "No attachments detected")
-
-**Pattern to follow:**
-```html
-<details style="margin-top: 20px;">
-  <summary style="cursor: pointer; font-weight: 600;">
-    ▶ Show N rejected items (Reason)
-  </summary>
-  <div style="margin-top: 10px; padding: 15px; background: #f9f9f9; ...">
-    <!-- Table or list of rejected items -->
-  </div>
-</details>
-```
+**Original PRD had separate Step 2.5 (attachment name validation), but this was redundant. The merged design is superior.**
 
 ---
 
-## Proposed Solution
+## Current State Analysis
 
-### Design Principles
+### Existing Step 2 Implementation
 
-1. **LLM-based validation**: Filename + size are strong signals (logo.jpg, results_2022.pdf)
-2. **Insert between Step 2 and duplicate detection**: Natural point in the pipeline
-3. **Conservative filtering**: When uncertain, show the attachment (avoid false negatives)
-4. **Full transparency**: Log all rejections in a collapsible debug section
-5. **Minimal API cost**: Batch validation, reuse existing OpenAI client
+**Location:** `server/services/bodyClassifier.js`
 
-### High-Level Flow
+Current behavior:
+- Receives emails with full body content + attachment metadata
+- Formats attachments as summary string: `"PDF (results.pdf, 0.24MB), JPEG (logo.jpg, 0.01MB)"`
+- LLM classifies email-level: `is_clinical_results_email`, confidence, reason
+- Returns **no per-attachment classification**
 
+**Current response schema:**
+```json
+{
+  "classifications": [
+    {
+      "id": "email123",
+      "is_clinical_results_email": true,
+      "confidence": 0.95,
+      "reason": "Email body indicates lab results"
+    }
+  ]
+}
 ```
-Step 1 (Metadata Classification)
-  ↓
-Step 2 (Body Classification)
-  ↓
-[NEW] Step 2.5 (Attachment Name Validation) ← Insert here
-  ↓
-Duplicate Detection (existing)
-  ↓
-Show Attachment Selection Table
-  ↓
-Step 3 (Download & Ingest)
-```
 
-**Insertion point:** `server/routes/gmailDev.js:405` (after `step2AllResults` is built, before duplicate detection at line 410)
+**Problem:** All attachments from accepted emails are shown in selection table. No attachment-level filtering.
+
+### Existing Debug Sections
+
+**Location:** `public/js/unified-upload.js` - Inside `showAttachmentSelection()` function
+
+The Gmail results UI already has three collapsible debug sections using custom button toggles:
+
+1. **"Show N rejected emails (Step 2)"**
+   - Displays emails that failed body classification
+   - Shows subject, from, date, confidence, reason
+
+2. **"Show N emails with attachment issues"**
+   - Displays emails that had attachment validation problems
+   - Shows attachment-specific issues (inline, invalid MIME types, etc.)
+
+3. **"Show N accepted emails with no usable attachments"**
+   - Displays emails that passed classification but ended up with zero valid attachments
+   - Shows reasons why attachments were not usable
+
+**Pattern to follow:**
+```javascript
+const sectionId = 'rejected-attachments-section-' + Date.now();
+summaryHtml += `
+  <div style="margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+    <button
+      type="button"
+      id="${sectionId}-toggle"
+      style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 0.9em; padding: 4px 8px; display: flex; align-items: center; gap: 6px;"
+      onclick="
+        const content = document.getElementById('${sectionId}-content');
+        const icon = document.getElementById('${sectionId}-icon');
+        if (content.style.display === 'none') {
+          content.style.display = 'block';
+          icon.textContent = '▼';
+        } else {
+          content.style.display = 'none';
+          icon.textContent = '▶';
+        }
+      ">
+      <span id="${sectionId}-icon">▶</span>
+      <span>Show N items (Description)</span>
+    </button>
+    <div id="${sectionId}-content" style="display: none; margin-top: 8px;">
+      <!-- Table content here -->
+    </div>
+  </div>
+`;
+```
 
 ---
 
 ## Technical Design
 
-### A. LLM Prompt
+### A. Enhanced Step 2 Prompt
 
-**File:** `prompts/gmail_attachment_validator.txt`
+**File:** `prompts/gmail_body_classifier.txt` (update existing file)
+
+**Add to existing prompt after line 39 ("Return format:..."):**
 
 ```
-You are an attachment classifier for a healthcare application. Your task is to analyze attachment metadata (filename, file size) and determine if each attachment is likely a lab test results document.
+ATTACHMENT CLASSIFICATION (NEW):
 
-CRITICAL REQUIREMENTS:
-1. For each attachment in the input array, you MUST return a validation object with the EXACT 'id' value from that attachment.
-2. DO NOT modify, truncate, generate, or omit any ID values. Copy them verbatim from the input.
-3. If you cannot classify an attachment with confidence, return is_likely_lab_report: true with low confidence (0.4-0.5) to avoid false negatives (better to show a questionable attachment than hide a real lab report).
+In addition to classifying the email, you must also classify EACH attachment to determine if it's likely a lab report.
 
-Classification guidelines:
-- is_likely_lab_report: true if filename suggests medical lab results (e.g., "results.pdf", "bloodwork_2022.pdf", "lab_report.pdf", "анализы.pdf")
-- confidence: 0.0-1.0 score (0.8+ for clear indicators, 0.5-0.7 for moderate, <0.5 for weak)
-- reason: Brief explanation (10-20 words) of why this attachment is/isn't likely a lab report
+For each attachment in the email, analyze:
+1. **Filename pattern**: Does it suggest medical content or branding/decoration?
+2. **File size context**: Large files more likely to be documents, small files more likely to be logos
+3. **Email body context**: Does the email body mention this specific attachment or describe it?
+4. **MIME type**: PDFs are usually documents; images could be scans OR logos
 
 LIKELY LAB REPORTS (is_likely_lab_report: true):
 - PDFs with medical keywords: "lab", "results", "test", "blood", "urine", "pathology", "анализы", "результаты"
 - PDFs with dates in filename: "results_2022_11_30.pdf", "lab_report_2024.pdf"
 - Large images that could be scanned documents: "scan001.jpg" (1.2MB), "IMG_20220515.jpg" (850KB)
 - Generic medical filenames: "report.pdf", "document.pdf", "file.pdf" (conservative - might be lab reports)
-- Ambiguous cases: When uncertain, default to is_likely_lab_report: true with low confidence
+- Attachments explicitly mentioned in email body as "results" or "lab report"
+- Ambiguous cases: When uncertain, default to is_likely_lab_report: true with low confidence (0.4-0.5)
 
 UNLIKELY LAB REPORTS (is_likely_lab_report: false):
 - Logos and branding: "logo.jpg", "logo.png", "header.png", "banner.jpg", "company_logo.png"
 - Signatures: "signature.png", "sig.jpg", "подпись.png", "doctor_signature.jpg"
 - Decorative images: "footer.png", "icon.png", "spacer.gif", "divider.png"
-- ONLY reject images if filename CLEARLY indicates branding/decoration AND file is small (context matters)
-- Non-medical generic images: "image001.jpg" with small size AND no medical context
+- Small images with generic names: "image001.jpg" (15KB)
+- Email body describes attachment as "logo" or "signature"
+- ONLY reject images if filename CLEARLY indicates branding/decoration AND file is small
 
 Important:
-- Classify ALL provided attachments (no omissions).
-- Be conservative: if uncertain (e.g., "document.pdf", "file.pdf"), mark as likely lab report with moderate confidence (0.5-0.6).
-- PDFs are almost always documents - only reject if filename clearly indicates non-medical (e.g., "logo.pdf", "brochure.pdf").
-- Large images could be scanned lab reports - use filename as primary signal, size as supporting context.
-- When in doubt, prefer false positives (showing non-lab attachment) over false negatives (hiding real lab report).
+- **CRITICAL**: For emails with NO attachments in the input, you MUST return an empty attachments array: `"attachments": []`
+- Classify ALL attachments in the email (no omissions)
+- Be conservative: if uncertain (e.g., "document.pdf", "file.pdf"), mark as likely lab report with moderate confidence (0.5-0.6)
+- PDFs are almost always documents - only reject if filename clearly indicates non-medical (e.g., "logo.pdf", "brochure.pdf")
+- Large images could be scanned lab reports - use filename as primary signal, size as supporting context
+- When in doubt, prefer false positives (showing non-lab attachment) over false negatives (hiding real lab report)
+- Use email body context: if body says "attached is your lab report and our logo", you can confidently classify which is which
 
-Return format: JSON object with a "validations" array containing {id, is_likely_lab_report, confidence, reason} for EVERY attachment.
+**Priority Hierarchy:**
+1. **Never hide real lab reports** (0 false negatives is MANDATORY)
+2. **Minimize showing non-lab files** (low false positives is ASPIRATIONAL)
+
+**Confidence Score Usage:**
+- The `confidence` field (0.0-1.0) is for **logging and debugging only**
+- Filtering decisions use the **boolean `is_likely_lab_report` field exclusively**
+- No confidence threshold is applied - we trust the LLM's boolean decision
+- Rationale: The prompt already instructs conservative behavior for uncertain cases
+- Future enhancement: Could add confidence-based overrides if needed (e.g., force-accept if confidence < 0.4)
+```
+
+**Updated return format specification:**
+
+```
+Return format: JSON object with a "classifications" array containing email classifications AND per-attachment classifications.
 
 Example output structure:
 {
-  "validations": [
-    {"id": "att_abc123", "is_likely_lab_report": true, "confidence": 0.95, "reason": "Filename 'results_2022.pdf' clearly indicates lab results"},
-    {"id": "att_def456", "is_likely_lab_report": false, "confidence": 0.85, "reason": "Filename 'logo.jpg' and small size (12KB) indicate branding image"}
+  "classifications": [
+    {
+      "id": "abc123",
+      "is_clinical_results_email": true,
+      "confidence": 0.95,
+      "reason": "Body states 'Your lab results are ready' with attachments",
+      "attachments": [
+        {
+          "attachmentId": "att_001",
+          "is_likely_lab_report": true,
+          "confidence": 0.95,
+          "reason": "PDF named 'results_2022_11_30.pdf' explicitly mentioned in body"
+        },
+        {
+          "attachmentId": "att_002",
+          "is_likely_lab_report": false,
+          "confidence": 0.90,
+          "reason": "Small JPEG named 'logo.jpg' (12KB), typical branding file"
+        }
+      ]
+    },
+    {
+      "id": "def456",
+      "is_clinical_results_email": true,
+      "confidence": 0.75,
+      "reason": "Body mentions lab results but no attachments",
+      "attachments": []
+    }
   ]
 }
 ```
 
 ### B. Backend Implementation
 
-**Location:** `server/routes/gmailDev.js:405` (insert new Step 2.5)
+**Location:** `server/services/bodyClassifier.js`
 
-**New function:**
+**Changes required:**
+
+1. **Update `CLASSIFICATION_SCHEMA`:**
+
+**Location:** `server/services/bodyClassifier.js` - Update the existing `CLASSIFICATION_SCHEMA` constant (around line 93-113)
+
+```javascript
+const CLASSIFICATION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    classifications: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          is_clinical_results_email: { type: 'boolean' },
+          confidence: { type: 'number' },
+          reason: { type: 'string' },
+          attachments: {  // NEW - Optional for defensive fallback handling
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                attachmentId: { type: 'string' },
+                is_likely_lab_report: { type: 'boolean' },
+                confidence: { type: 'number' },
+                reason: { type: 'string' }
+              },
+              required: ['attachmentId', 'is_likely_lab_report', 'confidence', 'reason']
+            }
+          }
+        },
+        required: ['id', 'is_clinical_results_email', 'confidence', 'reason']
+        // NOTE: 'attachments' is NOT required - allows fallback if LLM omits it
+      }
+    }
+  },
+  required: ['classifications']
+};
+```
+
+**Key change**: Removed `'attachments'` from the `required` array to allow defensive fallback handling when LLM omits the field.
+
+2. **Update `formatAttachmentsSummary()` to include attachmentId:**
+
+**Location:** `server/services/bodyClassifier.js` - Find the `formatAttachmentsSummary()` function (search for "Format attachments")
+
 ```javascript
 /**
- * Validate attachment names using LLM (Step 2.5)
- * Filters out logos, signatures, and other non-lab-report files
+ * Format attachments for LLM input (detailed list with IDs)
  */
-async function validateAttachmentNames(emails) {
-  const attachmentsToValidate = [];
+function formatAttachmentsForLLM(attachments) {
+  if (!attachments || attachments.length === 0) return [];
 
-  // Collect all attachments with unique IDs
-  emails.forEach(email => {
-    email.attachments.forEach(att => {
-      attachmentsToValidate.push({
-        id: `${email.id}_${att.attachmentId}`,  // Composite key
-        filename: att.filename,
-        size: att.size,
-        mimeType: att.mimeType
-      });
-    });
-  });
-
-  if (attachmentsToValidate.length === 0) {
-    // No attachments to validate - return emails unchanged with empty rejectedAttachments
-    logger.info(`[gmailDev] [Step-2.5] No attachments to validate, returning emails unchanged`);
-    return emails.map(email => ({
-      ...email,
-      rejectedAttachments: []
-    }));
-  }
-
-  logger.info(`[gmailDev] [Step-2.5] Validating ${attachmentsToValidate.length} attachment names`);
-
-  // Call LLM with batch validation
-  let validations;
-  let validationStatus = 'success';
-
-  try {
-    validations = await validateAttachmentsWithLLM(attachmentsToValidate);
-  } catch (error) {
-    logger.error('[gmailDev] [Step-2.5] Validation failed, accepting all attachments as fallback', error);
-    validationStatus = 'failed_fallback';
-
-    // Fallback: treat all attachments as valid (conservative approach)
+  return attachments.map(a => {
+    const sizeMB = (a.size / 1024 / 1024).toFixed(2);
+    const inlineFlag = a.isInline ? '[inline]' : '';
     return {
-      emails: emails.map(email => ({
-        ...email,
-        rejectedAttachments: []
-      })),
-      validationStatus
+      attachmentId: a.attachmentId,
+      filename: a.filename,
+      mimeType: a.mimeType,
+      size_mb: sizeMB,
+      is_inline: a.isInline
     };
-  }
+  });
+}
+```
 
-  // Map validations back to email structure
-  const emailsWithValidation = emails.map(email => {
+3. **Update `classifyBatch()` to pass structured attachments:**
+
+**Location:** `server/services/bodyClassifier.js` - Inside the `classifyBatch()` function, find where `formattedBatch` is created
+
+```javascript
+const formattedBatch = emailBatch.map(email => ({
+  id: email.id,
+  subject: email.subject,
+  from: email.from,
+  date: email.date,
+  body_excerpt: email.body.substring(0, 8000),
+  attachments: formatAttachmentsForLLM(email.attachments) // Structured, not summary string
+}));
+```
+
+4. **Update `classifyEmailBodies()` to process attachment classifications:**
+
+The function should continue to return an array (maintaining backward compatibility), but each classification object should be enriched with attachment filtering data.
+
+**Location:** `server/services/bodyClassifier.js` - Inside the `classifyEmailBodies()` function, just before the final `return` statement
+
+```javascript
+export async function classifyEmailBodies(emails, onProgress) {
+  // ... existing code processes batches and creates allClassifications array ...
+
+  // Before returning, enrich classifications with attachment filtering
+  // Create email lookup map for fast access
+  const emailsMap = new Map(emails.map(e => [e.id, e]));
+
+  const enrichedClassifications = allClassifications.map(classification => {
+    const email = emailsMap.get(classification.id);
+
+    if (!email || !email.attachments || email.attachments.length === 0) {
+      // No email found or no attachments - return classification as-is
+      return classification;
+    }
+
+    // Check if LLM returned attachment classifications
+    if (!classification.attachments || !Array.isArray(classification.attachments)) {
+      // LLM didn't return attachment classifications - accept all attachments (fallback)
+      logger.warn(`[bodyClassifier] No attachment classifications for email ${email.id}, accepting all attachments`);
+      return {
+        ...classification,
+        email: {
+          ...email,
+          rejectedAttachments: []
+        }
+      };
+    }
+
+    // Map attachment classifications back to attachment objects
     const validAttachments = [];
     const rejectedAttachments = [];
 
     email.attachments.forEach(att => {
-      const compositeId = `${email.id}_${att.attachmentId}`;
-      const validation = validations.find(v => v.id === compositeId);
+      const attClassification = classification.attachments.find(
+        a => a.attachmentId === att.attachmentId
+      );
 
-      if (!validation) {
-        logger.warn(`[gmailDev] [Step-2.5] No validation found for ${compositeId}, defaulting to accept`);
+      if (!attClassification) {
+        // No classification for this attachment - default to accept (conservative)
+        logger.warn(`[bodyClassifier] No classification for attachment ${att.attachmentId}, defaulting to accept`);
         validAttachments.push(att);
         return;
       }
 
-      // Accept if is_likely_lab_report === true
-      if (validation.is_likely_lab_report === true) {
+      if (attClassification.is_likely_lab_report === true) {
         validAttachments.push(att);
       } else {
         rejectedAttachments.push({
           ...att,
-          rejection_reason: validation.reason,
-          rejection_confidence: validation.confidence
+          rejection_reason: attClassification.reason,
+          rejection_confidence: attClassification.confidence
         });
       }
     });
 
     return {
-      ...email,
-      attachments: validAttachments,
-      rejectedAttachments: rejectedAttachments
+      ...classification,
+      email: {
+        ...email,
+        attachments: validAttachments,
+        rejectedAttachments: rejectedAttachments
+      }
     };
   });
 
-  const totalRejected = emailsWithValidation.reduce((sum, e) => sum + (e.rejectedAttachments?.length || 0), 0);
-  logger.info(`[gmailDev] [Step-2.5] Validation complete: ${totalRejected} attachments rejected`);
-
-  return {
-    emails: emailsWithValidation,
-    validationStatus
-  };
-}
-
-/**
- * Call OpenAI to validate attachment names
- */
-async function validateAttachmentsWithLLM(attachments) {
-  const systemPrompt = loadPrompt('gmail_attachment_validator.txt');
-  const client = getOpenAiClient(); // Reuse existing client
-
-  const BATCH_SIZE = 50; // Validate 50 attachments per batch
-  const batches = [];
-  for (let i = 0; i < attachments.length; i += BATCH_SIZE) {
-    batches.push(attachments.slice(i, i + BATCH_SIZE));
-  }
-
-  const allValidations = [];
-
-  for (const batch of batches) {
-    const response = await client.responses.parse({
-      model: process.env.EMAIL_CLASSIFIER_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-4o-mini',
-      input: [
-        { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
-        { role: 'user', content: [{ type: 'input_text', text: JSON.stringify(batch) }] }
-      ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'attachment_validation',
-          strict: true,
-          schema: {
-            type: 'object',
-            properties: {
-              validations: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    id: { type: 'string' },
-                    is_likely_lab_report: { type: 'boolean' },
-                    confidence: { type: 'number' },
-                    reason: { type: 'string' }
-                  },
-                  required: ['id', 'is_likely_lab_report', 'confidence', 'reason']
-                }
-              }
-            },
-            required: ['validations']
-          }
-        }
-      }
-    });
-
-    allValidations.push(...response.output_parsed.validations);
-  }
-
-  return allValidations;
+  return enrichedClassifications; // Still returns array, maintaining backward compatibility
 }
 ```
 
-**Integration into existing flow (gmailDev.js:405-450):**
+**Important**: The function continues to return an array (not `{ results, failedBatches }`), maintaining backward compatibility with existing route code.
+
+**Location:** `server/routes/gmailDev.js`
+
+**Changes required:** Find the section where `step2AllResults` is created (search for "step2AllResults = fullEmails.map")
 
 ```javascript
-// Existing code creates step2AllResults (line 377-405)
+// Existing code creates step2AllResults
 const step2AllResults = fullEmails.map(email => {
   const classification = step2Classifications.find(c => c.id === email.id);
-  // ... existing mapping logic ...
+
+  if (!classification) {
+    return {
+      ...email,
+      accepted: false,
+      confidence: 0,
+      reason: 'No classification received',
+      attachments: [],
+      rejectedAttachments: []
+    };
+  }
+
+  const accepted = classification.is_clinical_results_email === true
+    && classification.confidence >= threshold;
+
+  return {
+    id: email.id,
+    subject: email.subject,
+    from: email.from,
+    date: email.date,
+    accepted: accepted,
+    confidence: classification.confidence,
+    reason: classification.reason,
+    attachments: classification.email?.attachments || [],  // Already filtered by Step 2
+    rejectedAttachments: classification.email?.rejectedAttachments || []  // NEW
+  };
 });
 
-// Extract only accepted emails FIRST (existing logic, moved up)
+// Continue with duplicate detection (existing logic)
 const acceptedEmails = step2AllResults.filter(item => item.accepted);
-
-// [NEW] Step 2.5: Validate attachment names (only on accepted emails to save tokens)
-const { emails: resultsWithValidatedAttachments, validationStatus } = await validateAttachmentNames(acceptedEmails);
-
-// Continue with validated results
-const results = resultsWithValidatedAttachments;
-
-// Detect duplicates (existing logic continues at line 410)
 const attachmentMap = new Map();
 // ... rest of duplicate detection ...
 ```
 
 ### C. Response Schema Updates
 
-**Add to job result object:**
+**Location:** `server/routes/gmailDev.js` - Find where `setJobResult()` is called at the end of the Step 2 flow (search for "setJobResult")
 
 ```javascript
-setJobResult(jobId, {
-  results: resultsWithDuplicates,
-  rejectedEmails,
-  attachmentRejectedEmails,
-  attachmentProblemEmails,
-  rejectedAttachments,  // [NEW]
-  attachmentValidationStatus: validationStatus,  // [NEW] - 'success' or 'failed_fallback'
-  stats,
-  threshold,
-  debug: { ... }
-});
-```
-
-**New field: `rejectedAttachments`**
-
-```javascript
+// Collect rejected attachments for debug section
+// NOTE: This only includes attachments rejected from ACCEPTED emails (attachment-level filtering).
+// Attachments from rejected emails are already covered by the "Show rejected emails" section.
+// IMPORTANT: Always returns an array (empty if no rejections) - never null/undefined
 const rejectedAttachments = resultsWithDuplicates
   .filter(email => email.rejectedAttachments && email.rejectedAttachments.length > 0)
   .map(email => ({
@@ -407,80 +486,131 @@ const rejectedAttachments = resultsWithDuplicates
       confidence: att.rejection_confidence
     }))
   }));
+// rejectedAttachments is now [] if filter found nothing (guaranteed array)
+
+setJobResult(jobId, {
+  results: resultsWithDuplicates,
+  rejectedEmails,
+  attachmentRejectedEmails,
+  attachmentProblemEmails,
+  rejectedAttachments,  // NEW - ALWAYS present (empty array if no rejections)
+  stats,
+  threshold,
+  debug: { ... }
+});
+```
+
+**Response Contract (API Guarantee):**
+```javascript
+// rejectedAttachments is ALWAYS an array (never null/undefined)
+// Empty array [] when:
+// - No emails had rejected attachments
+// - All emails had zero attachments
+// - All attachments were accepted
+rejectedAttachments: Array<{
+  subject: string,
+  from: string,
+  date: string,
+  rejected: Array<{
+    filename: string,
+    size: number,
+    reason: string,
+    confidence: number
+  }>
+}>
+
+// Default value if not populated: []
 ```
 
 ### D. Frontend UI Updates
 
-**Location:** `public/js/unified-upload.js` - Inside `renderGmailResults(result)` function, around line 700-830
+**Location:** `public/js/unified-upload.js`
 
-**Context:** This code goes in the Gmail results summary rendering section, where the full job `result` object is available and where the existing two debug sections ("Show rejected emails" and "Show accepted emails with no usable attachments") are already rendered.
+**Step 1: Update `showAttachmentSelection()` function signature:**
 
-**Add third collapsible section (after existing debug sections):**
+**Location:** `public/js/unified-upload.js` - Find the `showAttachmentSelection()` function definition (search for "function showAttachmentSelection")
 
 ```javascript
-// Inside renderGmailResults(result) function
-// After the existing two <details> sections for rejected emails and attachment problems
+// Add rejectedAttachments parameter
+function showAttachmentSelection(
+  results,
+  stats = {},
+  rejectedEmails = [],
+  attachmentRejectedEmails = [],
+  attachmentProblemEmails = [],
+  rejectedAttachments = []  // NEW parameter
+) {
+```
 
-function renderGmailResults(result) {
-  // ... existing summary HTML rendering ...
+**Step 2: Add fourth collapsible section:**
 
-  // Existing debug sections render here (lines ~660-750)
+**Location:** Inside `showAttachmentSelection()` function, immediately after the three existing debug sections and before the line `gmailSelectionSummary.innerHTML = summaryHtml` (search for "gmailSelectionSummary.innerHTML")
 
-  // [NEW] Show validation fallback warning (if Step 2.5 failed)
-  if (result.attachmentValidationStatus === 'failed_fallback') {
+```javascript
+// Inside showAttachmentSelection() function
+// After the existing three debug sections (rejected emails, attachment issues, no usable attachments)
+// Before gmailSelectionSummary.innerHTML assignment
+
+  // [NEW] Show rejected attachments (Step 2: Attachment-level filtering)
+  // This section shows attachments filtered from ACCEPTED emails only
+  // (Attachments from rejected emails are already covered in first debug section)
+  if (rejectedAttachments && rejectedAttachments.length > 0) {
+    const totalRejected = rejectedAttachments.reduce((sum, e) => sum + e.rejected.length, 0);
+    const rejectedAttId = 'rejected-attachments-section-' + Date.now();
+
     summaryHtml += `
-      <div style="margin-top: 15px; padding: 12px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
-        <strong>⚠️ Attachment Filtering Unavailable</strong>
-        <p style="margin: 5px 0 0; color: #856404; font-size: 0.9em;">
-          Automatic filtering of logos/signatures failed. All attachments are shown below.
-          Please manually review the selection to avoid processing non-lab-report files.
-        </p>
-      </div>
-    `;
-  }
-
-  // [NEW] Show rejected attachments (Step 2.5)
-  if (result.rejectedAttachments && result.rejectedAttachments.length > 0) {
-    const totalRejected = result.rejectedAttachments.reduce((sum, e) => sum + e.rejected.length, 0);
-
-    summaryHtml += `
-      <details style="margin-top: 20px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px;">
-        <summary style="cursor: pointer; font-weight: 600; color: #666;">
-          ▶ Show ${totalRejected} rejected attachment${totalRejected > 1 ? 's' : ''} (Step 2.5: Non-lab-report files filtered)
-        </summary>
-        <div style="margin-top: 10px; padding: 15px; background: #f9f9f9; border-radius: 4px; font-size: 0.9em;">
-          <p style="margin-bottom: 10px; color: #666;">
-            These attachments were filtered out because their filenames suggest they are not lab reports
-            (e.g., logos, signatures, decorative images). If you believe an attachment was incorrectly filtered,
-            please report this as a bug.
+      <div style="margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+        <button
+          type="button"
+          id="${rejectedAttId}-toggle"
+          style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 0.9em; padding: 4px 8px; display: flex; align-items: center; gap: 6px;"
+          onclick="
+            const content = document.getElementById('${rejectedAttId}-content');
+            const icon = document.getElementById('${rejectedAttId}-icon');
+            if (content.style.display === 'none') {
+              content.style.display = 'block';
+              icon.textContent = '▼';
+            } else {
+              content.style.display = 'none';
+              icon.textContent = '▶';
+            }
+          ">
+          <span id="${rejectedAttId}-icon">▶</span>
+          <span>Show ${totalRejected} rejected attachment${totalRejected > 1 ? 's' : ''} (Step 2: Non-lab-report files filtered)</span>
+        </button>
+        <div id="${rejectedAttId}-content" style="display: none; margin-top: 8px;">
+          <p style="margin-bottom: 10px; color: #6b7280; font-size: 0.9em;">
+            These attachments were filtered out during email body classification because their filenames and context
+            suggest they are not lab reports (e.g., logos, signatures, decorative images).
+            If you believe an attachment was incorrectly filtered, please report this as a bug.
           </p>
-          <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
             <thead>
-              <tr style="background: #f0f0f0;">
-                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Email</th>
-                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Rejected Attachment</th>
-                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Size</th>
-                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Reason</th>
+              <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                <th style="text-align: left; padding: 8px;">Email</th>
+                <th style="text-align: left; padding: 8px;">Rejected Attachment</th>
+                <th style="text-align: left; padding: 8px;">Size</th>
+                <th style="text-align: left; padding: 8px;">Reason</th>
               </tr>
             </thead>
             <tbody>
     `;
 
-    result.rejectedAttachments.forEach(email => {
+    rejectedAttachments.forEach(email => {
       email.rejected.forEach(att => {
         summaryHtml += `
-          <tr>
-            <td style="padding: 8px; border: 1px solid #ddd; font-size: 0.85em;">
-              <strong>From:</strong> ${email.from}<br>
-              <strong>Subject:</strong> ${email.subject}
+          <tr style="border-bottom: 1px solid #f3f4f6;">
+            <td style="padding: 8px;">
+              <strong>From:</strong> ${email.from || '(unknown)'}<br>
+              <strong>Subject:</strong> ${email.subject || '(no subject)'}
             </td>
-            <td style="padding: 8px; border: 1px solid #ddd;">
+            <td style="padding: 8px;">
               <code>${att.filename}</code>
             </td>
-            <td style="padding: 8px; border: 1px solid #ddd;">
+            <td style="padding: 8px; white-space: nowrap;">
               ${formatFileSize(att.size)}
             </td>
-            <td style="padding: 8px; border: 1px solid #ddd; color: #e67e00;">
+            <td style="padding: 8px; color: #6b7280;">
               ${att.reason}
             </td>
           </tr>
@@ -492,57 +622,82 @@ function renderGmailResults(result) {
             </tbody>
           </table>
         </div>
-      </details>
+      </div>
     `;
   }
 
-  // ... rest of renderGmailResults function ...
+  // Next line: gmailSelectionSummary.innerHTML = summaryHtml;
+  // ... rest of function ...
 }
 ```
 
-**Note:** The exact line numbers may shift depending on other code changes. The key is to place this section:
-1. Inside the `renderGmailResults(result)` function (where `result` object is in scope)
-2. After the existing two debug sections (rejected emails, attachment problems)
-3. Before the attachment selection table rendering
+**Step 3: Update the function call site:**
+
+**Location:** `public/js/unified-upload.js` - Find where `showAttachmentSelection()` is called (search for "showAttachmentSelection(")
+
+```javascript
+// Update the showAttachmentSelection() call to pass rejectedAttachments
+showAttachmentSelection(
+  results,
+  stats,
+  rejectedEmails,
+  attachmentRejectedEmails,
+  attachmentProblemEmails,
+  result.rejectedAttachments || []  // NEW argument
+);
+```
 
 ---
 
 ## Implementation Checklist
 
-### Phase 1: LLM Infrastructure
+### Phase 1: Prompt Enhancement
 
-- [ ] Create prompt file `prompts/gmail_attachment_validator.txt`
-- [ ] Add `validateAttachmentsWithLLM()` function in `server/routes/gmailDev.js`
-- [ ] Add `validateAttachmentNames()` orchestrator function
-- [ ] Unit test: Validate LLM returns correct schema for sample attachments
-- [ ] Unit test: Validate batch processing (50 attachments per batch)
+- [ ] Update `prompts/gmail_body_classifier.txt` with attachment classification instructions
+- [ ] Add examples of likely/unlikely lab report attachments
+- [ ] Add guidance on using email body context for classification
 
-### Phase 2: Backend Integration
+### Phase 2: Backend Schema Updates
 
-- [ ] Insert Step 2.5 call in `POST /api/dev-gmail/fetch` route (line 405)
-- [ ] Update `step2AllResults` structure to include `rejectedAttachments`
-- [ ] Add `rejectedAttachments` to job result response
+- [ ] Update `CLASSIFICATION_SCHEMA` in `bodyClassifier.js` to include `attachments` array (make it optional, not required)
+- [ ] Update `formatAttachmentsForLLM()` to return structured attachment objects (not summary string)
+- [ ] Update `classifyBatch()` to pass structured attachments to LLM
+- [ ] Update `classifyEmailBodies()` to process attachment classifications and split into valid/rejected
+- [ ] Test: Email with zero attachments (verify LLM returns empty `attachments: []`)
+- [ ] Test: LLM omits `attachments` field entirely (verify fallback accepts all attachments)
+- [ ] Test: LLM returns partial attachment classifications (some but not all attachments classified)
+- [ ] Test: Schema validation with both valid and malformed responses
+
+### Phase 3: Route Integration
+
+- [ ] Update `gmailDev.js` Step 2 result mapping to include `rejectedAttachments`
+- [ ] Add `rejectedAttachments` collection logic before `setJobResult()`
+- [ ] Add `rejectedAttachments` to job result response (ensure always returns array, never null/undefined)
+- [ ] Test: Verify `rejectedAttachments` is empty array [] when no rejections
 - [ ] Test: Verify attachment filtering with real emails (logo.jpg, results.pdf)
 - [ ] Test: Verify existing duplicate detection still works
 
-### Phase 3: Frontend UI
+### Phase 4: Frontend UI
 
-- [ ] Add third collapsible debug section in `unified-upload.js:830`
-- [ ] Render rejected attachments table
+- [ ] Update `showAttachmentSelection()` function signature to accept `rejectedAttachments` parameter
+- [ ] Add fourth collapsible debug section in `unified-upload.js` (after existing three sections)
+- [ ] Update function call site to pass `rejectedAttachments` data from job result
 - [ ] Test: Verify UI shows rejected attachments with reasons
 - [ ] Test: Verify attachment selection table only shows valid attachments
+- [ ] Test: Verify button toggle mechanism works correctly
 
-### Phase 4: Logging & Observability
+### Phase 5: Logging & Observability
 
-- [ ] Add structured logging for Step 2.5 (start, progress, completion)
-- [ ] Log rejection counts and reasons
-- [ ] Update CLAUDE.md with Step 2.5 documentation
+- [ ] Add structured logging for attachment filtering (counts, rejection reasons)
+- [ ] Log warning if LLM returns no attachment classifications (fallback to accept all)
+- [ ] Update CLAUDE.md with enhanced Step 2 documentation
 
-### Phase 5: Testing & Validation
+### Phase 6: Testing & Validation
 
-- [ ] Manual test: Upload email with logo.jpg + results.pdf (verify logo filtered)
-- [ ] Manual test: Upload email with signature.png + bloodwork.pdf (verify signature filtered)
-- [ ] Manual test: Upload email with generic "document.pdf" (verify NOT filtered - conservative)
+- [ ] Manual test: Email with logo.jpg + results.pdf (verify logo filtered)
+- [ ] Manual test: Email with signature.png + bloodwork.pdf (verify signature filtered)
+- [ ] Manual test: Email with generic "document.pdf" (verify NOT filtered - conservative)
+- [ ] Manual test: Email body mentions "attached is your report and our logo" (verify context used)
 - [ ] Manual test: Verify collapsible section shows correct rejection reasons
 - [ ] Regression test: Verify existing Step 1, Step 2, Step 3 flows still work
 
@@ -558,25 +713,15 @@ function renderGmailResults(result) {
 - Measure: % of attachments in selection table that are non-lab-reports
 - Target: <1% (only ambiguous cases like "document.pdf" should remain)
 
-**Quality Metrics:**
-- False negatives: 0 (no real lab reports rejected)
-- False positives: <2% (acceptable to show ambiguous attachments)
+**Quality Metrics (Priority Hierarchy):**
+1. **False negatives: 0** (MANDATORY - never hide real lab reports)
+2. **False positives: <2%** (ASPIRATIONAL - minimize showing non-lab files)
 
----
-
-## Open Questions
-
-1. **Should we add a manual override?** (Allow user to "force include" rejected attachments)
-   - **Decision:** No (out of scope) - If false negatives occur, user can report as bug
-
-2. **Should we validate during Step 3 ingestion?** (Double-check before download)
-   - **Decision:** No - Step 2.5 is sufficient, no need to re-validate
-
-3. **Should we log rejections to database?** (Track which attachments are commonly rejected)
-   - **Decision:** No (keep ephemeral) - Use structured logs for debugging
-
-4. **Should we allow size-based heuristics as fallback?** (If LLM fails, reject < 50KB)
-   - **Decision:** No - Conservative default is to show attachment if LLM validation fails
+**Important:** These metrics reflect a strict priority hierarchy:
+- **Priority 1** is non-negotiable: hiding a real lab report is catastrophic user impact
+- **Priority 2** is an optimization goal: showing a logo is minor annoyance
+- When in conflict, always choose false positive over false negative
+- The prompt enforces Priority 1; the <2% target for Priority 2 is an aspirational optimization, not a hard requirement
 
 ---
 
@@ -586,8 +731,8 @@ function renderGmailResults(result) {
 |------|--------|------------|
 | LLM rejects real lab report (false negative) | High (user loses data) | Conservative prompt ("if uncertain, mark as likely"), log all rejections for review |
 | LLM accepts logo/signature (false positive) | Low (user manually skips) | Acceptable trade-off, prioritize avoiding false negatives |
-| LLM API failure/timeout | Medium (all attachments rejected) | Fallback: If validation fails, accept all attachments (log error) |
-| Increased API costs | Low (1 extra call per fetch) | Batch validation (50 attachments/call), use cheap model (gpt-4o-mini) |
+| LLM doesn't return attachment classifications | Medium (all attachments shown) | Fallback: If `attachments` array missing, accept all attachments (log warning) |
+| Increased Step 2 latency | Low (minimal token increase) | Structured attachment objects add ~50 tokens per email, negligible impact |
 | UI clutter with debug section | Low (only for power users) | Collapsible by default, clear labeling |
 
 ---
@@ -598,3 +743,9 @@ function renderGmailResults(result) {
 - **User feedback loop:** "Was this attachment correctly classified?" → Improve prompt
 - **Attachment type classification:** Categorize as blood_test, mri_report, logo, etc.
 - **Persistent rejection logs:** Store rejections in database for analytics
+
+---
+
+## Change Log
+
+**2025-12-02:** Merged separate Step 2.5 (attachment name validation) into enhanced Step 2. Rationale: Step 2 already has superior context (email body, subject, sender) for better attachment classification. One less API call, better accuracy, simpler architecture.
