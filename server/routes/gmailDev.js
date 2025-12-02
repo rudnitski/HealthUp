@@ -2,10 +2,12 @@
  * Gmail Dev Routes
  * Developer-only endpoints for Gmail integration testing
  * PRD: docs/PRD_v2_8_Gmail_Integration_Step1.md
+ * PRD v3.7: Streaming Gmail Classification Pipeline (parallel Gmail fetch + LLM classification)
  */
 
 import express from 'express';
 import pino from 'pino';
+import pLimit from 'p-limit';
 import { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus, getJob } from '../utils/jobManager.js';
 import {
   getAuthUrl,
@@ -34,6 +36,122 @@ const logger = pino({
     },
   } : undefined,
 });
+
+/**
+ * StreamingClassifier - Incremental email classification with concurrency control
+ *
+ * Accepts email batches incrementally and aggregates classification results progressively.
+ * Enables parallel Gmail fetch + LLM classification by starting classification as soon as
+ * first Gmail batch arrives (instead of waiting for all batches).
+ *
+ * CONCURRENCY CONTROL:
+ * - Limits concurrent classifyEmails() invocations to prevent API rate limit violations
+ * - Each classifyEmails() call internally uses pLimit(3) for LLM batch concurrency
+ * - With maxConcurrentBatches=3, max concurrent LLM requests = 3 × 3 = 9
+ *
+ * PROGRESS TRACKING:
+ * - Aggregates progress across all concurrent classifyEmails() invocations
+ * - Tracks total emails sent vs total classifications received
+ * - Reports global 0-100% progress to upstream callback
+ *
+ * ERROR HANDLING:
+ * - classifyEmails() already has 3-attempt retry logic with exponential backoff
+ * - _classifyBatch() catch block only triggers if all retries exhausted
+ * - Failed batches are aggregated and returned in finalize() for upstream handling
+ *
+ * PRD: docs/PRD_v3_7_streaming_gmail_classification.md
+ */
+class StreamingClassifier {
+  constructor(onProgress = null, maxConcurrentBatches = 3) {
+    this.allEmails = [];
+    this.allClassifications = [];
+    this.failedBatches = [];
+    this.onProgress = onProgress;
+    this.activeClassifications = [];
+    this.totalBatchesReceived = 0;
+    this.totalEmailsSent = 0;
+    this.totalClassificationsReceived = 0;
+    this.expectedTotalEmails = null; // Set via setExpectedTotal()
+
+    // Limit concurrent classifyEmails() invocations
+    this.limiter = pLimit(maxConcurrentBatches);
+  }
+
+  /**
+   * Set the expected total number of emails (for accurate progress reporting)
+   * Should be called once when the total inbox size is known
+   */
+  setExpectedTotal(total) {
+    this.expectedTotalEmails = total;
+  }
+
+  /**
+   * Feed a batch of emails for classification
+   * Returns immediately (non-blocking) to allow parallel Gmail fetch + LLM classification
+   */
+  async feedBatch(emails) {
+    this.allEmails.push(...emails);
+    this.totalBatchesReceived++;
+    this.totalEmailsSent += emails.length;
+
+    // Queue classification with concurrency limit (non-blocking)
+    // pLimit() will queue internally when limit is reached, without blocking this call
+    const classificationPromise = this.limiter(() => this._classifyBatch(emails));
+    this.activeClassifications.push(classificationPromise);
+
+    // DO NOT await - return immediately to allow Gmail fetch to continue
+  }
+
+  /**
+   * Wait for all pending classifications to complete
+   */
+  async finalize() {
+    // Wait for all active classifications to finish
+    await Promise.all(this.activeClassifications);
+
+    return {
+      results: this.allClassifications,
+      failedBatches: this.failedBatches,
+      stats: {
+        classifications_received: this.allClassifications.length,
+        extra_count: this.allClassifications.length - this.allEmails.length,
+        missing_count: Math.max(0, this.allEmails.length - this.allClassifications.length)
+      }
+    };
+  }
+
+  async _classifyBatch(emails) {
+    try {
+      // classifyEmails() already handles retries (3 attempts with exponential backoff)
+      // This catch block only triggers if all retries fail
+      // NOTE: We pass null instead of this.onProgress because we aggregate progress manually below
+      const { results, failedBatches } = await classifyEmails(emails, null);
+
+      this.allClassifications.push(...results);
+      this.failedBatches.push(...failedBatches);
+
+      // Update aggregate progress
+      this.totalClassificationsReceived += results.length;
+      if (this.onProgress) {
+        // Use expectedTotalEmails if set, otherwise fall back to totalEmailsSent (for backward compat)
+        const denominator = this.expectedTotalEmails ?? this.totalEmailsSent;
+        const globalProgress = Math.min(
+          Math.floor((this.totalClassificationsReceived / denominator) * 100),
+          100
+        );
+        this.onProgress(this.totalClassificationsReceived, denominator, globalProgress);
+      }
+    } catch (error) {
+      // All retries exhausted, log and track as failed batch
+      logger.error('[StreamingClassifier] Batch classification failed after all retries', error);
+      this.failedBatches.push({
+        __failed: true,
+        error: error.message,
+        emailCount: emails.length
+      });
+    }
+  }
+}
 
 /**
  * Feature flag guard middleware
@@ -259,11 +377,36 @@ router.post('/fetch', async (req, res) => {
       try {
         updateJob(jobId, JobStatus.PROCESSING);
 
-        // ===== STEP 1: Metadata Classification =====
-        logger.info(`[gmailDev:${jobId}] [Step-1] Starting metadata classification`);
+        // ===== STEP 1: Metadata Classification (STREAMING) =====
+        logger.info(`[gmailDev:${jobId}] [Step-1] Starting streaming metadata classification`);
 
-        // Fetch metadata only (subject, sender, date)
-        const metadataEmails = await fetchEmailMetadata();
+        // Create streaming classifier with aggregate progress tracking
+        const classifier = new StreamingClassifier((completed, total, globalProgress) => {
+          // globalProgress is already computed as 0-100% by StreamingClassifier
+          // Map to 0-50% for Step-1 portion of overall job progress
+          const step1Progress = Math.floor(globalProgress * 0.5); // 0-100% → 0-50%
+          updateJob(jobId, JobStatus.PROCESSING, {
+            progress: step1Progress,
+            progressMessage: `Step-1: Classified ${completed}/${total} emails`
+          });
+        });
+
+        // Fetch metadata with streaming callback
+        const metadataEmails = await fetchEmailMetadata(async (batchEmails, batchInfo) => {
+          // Set expected total on first batch (for accurate progress denominator)
+          if (batchInfo.batchIndex === 1 && batchInfo.totalEmails) {
+            classifier.setExpectedTotal(batchInfo.totalEmails);
+          }
+
+          // Feed batch to classifier (non-blocking - returns immediately)
+          // This allows Gmail fetch and LLM classification to run in parallel
+          classifier.feedBatch(batchEmails);
+
+          logger.info(
+            `[gmailDev:${jobId}] [Step-1] Queued batch ${batchInfo.batchIndex}/${batchInfo.totalBatches} ` +
+            `(${batchEmails.length} emails) for classification`
+          );
+        });
 
         if (metadataEmails.length === 0) {
           logger.info(`[gmailDev:${jobId}] No emails found, completing with empty results`);
@@ -284,15 +427,26 @@ router.post('/fetch', async (req, res) => {
         }
 
         logger.info(`[gmailDev:${jobId}] [Step-1] Fetched ${metadataEmails.length} emails metadata`);
+        logger.info(`[gmailDev:${jobId}] [Step-1] Waiting for classification to complete...`);
 
-        // Classify with Step-1 LLM (subject/sender heuristics) with progress updates
-        const { results: step1Classifications, failedBatches: step1FailedBatches, stats: step1Stats } = await classifyEmails(metadataEmails, (completed, total) => {
-          const progress = Math.floor((completed / total) * 50); // Step-1 is 0-50%
-          updateJob(jobId, JobStatus.PROCESSING, {
-            progress,
-            progressMessage: `Step-1: Classifying batch ${completed}/${total}`
-          });
-        });
+        // Wait for all classifications to finish
+        const { results: step1Classifications, failedBatches: step1FailedBatches, stats: step1Stats } =
+          await classifier.finalize();
+
+        logger.info(
+          `[gmailDev:${jobId}] [Step-1] Streaming classification complete: ${step1Classifications.length} results ` +
+          `(batches processed: ${classifier.totalBatchesReceived}, ` +
+          `extra: ${step1Stats.extra_count}, missing: ${step1Stats.missing_count})`
+        );
+
+        // Check if ALL classification work failed (OpenAI API unavailable, etc.)
+        // We compare classifications received vs emails sent (not batch counts, since they measure different granularities)
+        if (step1FailedBatches.length > 0 && step1Classifications.length === 0 && metadataEmails.length > 0) {
+          const errorMessage = `All classification attempts failed (${step1FailedBatches.length} failed sub-batches). OpenAI API may be unavailable. Check logs for details.`;
+          logger.error(`[gmailDev:${jobId}] ${errorMessage}`);
+          setJobError(jobId, errorMessage);
+          return;
+        }
 
         if (step1FailedBatches.length > 0) {
           logger.warn(

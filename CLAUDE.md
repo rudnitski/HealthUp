@@ -221,6 +221,30 @@ Three-stage pipeline for ingesting lab reports from Gmail:
 - Auto-refresh listener preserves `refresh_token` across refreshes
 - Feature gated by `GMAIL_INTEGRATION_ENABLED=true` AND `NODE_ENV !== 'production'`
 
+**Streaming Classification Pipeline (v3.7):**
+- Gmail metadata fetch and LLM classification run **in parallel** (not sequentially)
+- `fetchEmailMetadata()` accepts optional `onBatchReady` callback that fires after each 100-email batch
+- `StreamingClassifier` class queues classification immediately as batches arrive (non-blocking)
+- Concurrency control: Max 3 concurrent `classifyEmails()` invocations (9 concurrent LLM requests)
+- Performance: ~25-30% faster for large email counts (e.g., 3500 emails: 450s → 320s estimated)
+- Backward compatible: Old code calling `fetchEmailMetadata()` without callback works unchanged
+
+**How Streaming Works:**
+```
+Gmail API (batches of 100) → Immediately feed to LLM Classifier (non-blocking)
+                           ↓
+Gmail continues fetching while LLM processes earlier batches (PARALLEL)
+                           ↓
+Total time = max(Gmail fetch time, LLM classification time) + overhead
+```
+
+**Implementation Details:**
+- `StreamingClassifier` uses `pLimit(3)` to cap concurrent classifications
+- Progress tracking aggregates across all concurrent batches (0-100% global progress)
+- Error handling preserved: 3-attempt retry with exponential backoff per batch
+- Results aggregated via `finalize()` which awaits all pending classifications
+- **Terminal state protection**: `updateJob()` and `updateProgress()` guard against overwriting FAILED/COMPLETED states. This prevents race conditions where background classification callbacks fire after job errors are set. Verified by `test/manual/test_job_terminal_state_guard.js`.
+
 ## Schema Management
 
 **Declarative schema via `server/db/schema.js`:**
@@ -305,6 +329,7 @@ SQL validator enforces these aliases for `plot_query` responses. Missing aliases
 **Automated:**
 - `npm test` (Jest unit tests)
 - `node test/manual/test_agentic_sql.js` (agentic SQL regression)
+- `node test/manual/test_job_terminal_state_guard.js` (job manager race condition guards)
 
 **Manual QA Checklists:**
 - Lab report upload: progress timeline, duplicate detection, mapping outcomes
@@ -327,6 +352,7 @@ Feature specs live in `docs/PRD_*.md`:
 - v3.0: Unified Upload and Ingestion (multi-file manual uploads + Gmail import on single page)
 - v3.1: Auto-execute data queries
 - v3.2: Conversational SQL assistant (streaming chat with multi-turn dialogue)
+- v3.7: Streaming Gmail Classification Pipeline (parallel Gmail fetch + LLM classification)
 
 Consult these when drafting new PRDs or understanding feature history. Prompt templates in `prompts/` define OCR extraction schema and SQL generation instructions.
 
@@ -346,4 +372,5 @@ Consult these when drafting new PRDs or understanding feature history. Prompt te
 12. **OpenAI model names**: User has access to latest OpenAI models including `gpt-5-mini` and potentially others beyond Claude's knowledge cutoff. NEVER assume a model doesn't exist or change model names in .env without explicit user approval. When encountering unfamiliar model names, trust the user's configuration and investigate the actual API error instead of assuming the model is invalid.
 13. **Pino logger limitations**: The project uses Pino for structured logging. Pino may not display complex nested objects passed as second parameter to logger methods (e.g., `logger.info('message', {complexObject})`). For debugging payloads or detailed object inspection, use `console.log()` with `JSON.stringify(obj, null, 2)` instead of Pino logger methods. Pino is designed for production performance, not development debugging of complex data structures.
 14. **Background process environment pollution**: When running multiple background processes (e.g., via Claude Code bash sessions), environment variables can persist in old processes and cause unexpected behavior. Old `npm run dev` processes running in background will keep their environment variables (like `GMAIL_MAX_EMAILS=5000`) even after .env is changed. Solution: Use `npm run dev:clean` which kills existing servers on port 3000 before starting. Alternatively, manually kill all node processes with `lsof -ti:3000 | xargs kill -9` before restarting.
-- when changing PRD after peer review dont keep in PRD history or comments of the peer review, PRD must contain only data for development the feature, not the history of PRD improvement
+15. **Job manager terminal state protection**: `updateJob()` and `updateProgress()` in `jobManager.js` guard against overwriting FAILED/COMPLETED states with non-terminal states (PENDING/PROCESSING). This prevents race conditions where background tasks (e.g., StreamingClassifier callbacks) update job status after the job has already failed. Critical for async operations with concurrent background tasks. Verified by `test/manual/test_job_terminal_state_guard.js`.
+16. **PRD maintenance**: When updating PRDs after peer review, do not keep review history or comments in the PRD document. PRDs must contain only data for development of the feature, not the history of PRD improvement or review discussions.

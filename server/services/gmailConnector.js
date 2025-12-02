@@ -364,7 +364,7 @@ function decodeMimeHeader(value) {
  * Fetch email metadata from Gmail
  * @returns {Promise<Array>} Array of email metadata objects
  */
-async function fetchEmailMetadata() {
+async function fetchEmailMetadata(onBatchReady = null) {
   const authenticated = await isAuthenticated();
 
   if (!authenticated) {
@@ -478,6 +478,17 @@ async function fetchEmailMetadata() {
       );
 
       const batchResults = await Promise.all(batchPromises);
+
+      // [STREAMING] Feed batch to callback IMMEDIATELY (don't wait for all batches)
+      if (onBatchReady) {
+        await onBatchReady(batchResults, {
+          batchIndex: batchIndex + 1,
+          totalBatches,
+          completedEmails: emailMetadata.length + batchResults.length,
+          totalEmails: allMessages.length
+        });
+      }
+
       emailMetadata.push(...batchResults);
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

@@ -77,6 +77,17 @@ function updateJob(jobId, status, updates = {}) {
     return false;
   }
 
+  // Guard: Don't allow non-terminal states to overwrite terminal states
+  // This prevents race conditions where background tasks update FAILED/COMPLETED jobs
+  if ((job.status === JobStatus.FAILED || job.status === JobStatus.COMPLETED) &&
+      (status !== JobStatus.FAILED && status !== JobStatus.COMPLETED)) {
+    console.warn(
+      `[JobManager] Ignoring status update ${status} for job ${jobId} - ` +
+      `job is already in terminal state: ${job.status}`
+    );
+    return false;
+  }
+
   const updatedJob = {
     ...job,
     status,
@@ -107,6 +118,15 @@ function updateJob(jobId, status, updates = {}) {
 function updateProgress(jobId, progress, message = null) {
   const job = jobs.get(jobId);
   if (!job) return false;
+
+  // Guard: Don't update progress on terminal jobs (race condition protection)
+  if (job.status === JobStatus.FAILED || job.status === JobStatus.COMPLETED) {
+    console.warn(
+      `[JobManager] Ignoring progress update for job ${jobId} - ` +
+      `job is in terminal state: ${job.status}`
+    );
+    return false;
+  }
 
   jobs.set(jobId, {
     ...job,
