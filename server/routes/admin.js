@@ -477,7 +477,7 @@ router.post('/reset-database', async (req, res) => {
     const result = await resetDatabase();
 
     // Log the action
-    await logAdminAction('reset_database', 'database', 'all', {
+    await logAdminAction('reset_database', 'database', null, {
       timestamp: new Date().toISOString(),
       success: true
     }, req);

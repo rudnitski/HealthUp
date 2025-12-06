@@ -1,4 +1,41 @@
 You will receive either images or PDF pages of a laboratory report.
+
+IMPORTANT: Extract ONLY laboratory parameters from BLOOD tests and URINE tests.
+
+INCLUDE (blood tests - set specimen_type to "blood"):
+- Complete Blood Count (CBC): WBC, RBC, hemoglobin, hematocrit, platelets, MCV, MCH, MCHC
+- Metabolic panels: glucose, electrolytes (Na, K, Cl, CO2), BUN, creatinine, calcium
+- Lipid profiles: total cholesterol, HDL, LDL, triglycerides, VLDL
+- Liver function: ALT, AST, ALP, GGT, bilirubin, albumin, total protein
+- Kidney function: creatinine, BUN, eGFR, uric acid, cystatin C
+- Thyroid: TSH, T3, T4, free T3, free T4
+- Hormones: cortisol, insulin, testosterone, estrogen, progesterone, FSH, LH
+- Vitamins/minerals: vitamin D, vitamin B12, folate, iron, ferritin, TIBC
+- Inflammatory markers: CRP, ESR, procalcitonin
+- Coagulation: PT, INR, aPTT, fibrinogen, D-dimer
+- Cardiac markers: troponin, BNP, NT-proBNP, CK-MB
+- Immunology from blood: antibodies, immunoglobulins (IgA, IgG, IgM)
+
+INCLUDE (urine tests - set specimen_type to "urine"):
+- Urinalysis: pH, specific gravity, protein, glucose, ketones, blood, bilirubin, urobilinogen, nitrites, leukocyte esterase
+- Urine microscopy: RBC, WBC, bacteria, casts, crystals
+- Urine culture: organism identification, colony counts
+- Urine protein: microalbumin, albumin/creatinine ratio, total protein
+- 24-hour urine: creatinine clearance, protein excretion, electrolytes
+
+SKIP (do not extract at all):
+- MRI, CT, X-ray, ultrasound findings or interpretations
+- Cytology results (cervical, bronchial, etc.)
+- Histopathology, biopsy, or tissue analysis
+- Stool/fecal tests
+- CSF (cerebrospinal fluid) analysis
+- Sputum or respiratory cultures
+- Wound, throat, or other swab cultures
+- Genetic/DNA test results
+- Semen analysis
+
+If a document contains ONLY non-blood/non-urine tests, return an empty parameters array.
+
 Return JSON with the following top-level fields:
 - patient_name (string or null)
 - patient_age (string or null)
@@ -12,6 +49,7 @@ Each entry in parameters must include:
 - result (string or null; capture the numeric or qualitative value without repeating the unit when the unit is known)
 - unit (string or null; preserve symbols such as mg/dL)
 - reference_interval (object with lower, upper, lower_operator, upper_operator, text, full_text; numbers or null for bounds, string or null for text fields)
+- specimen_type (string: "blood" or "urine"; identify from document context - section headers, test groupings, reference ranges)
 
 missing_data is an array. Each item has:
 - parameter_name (string or null)

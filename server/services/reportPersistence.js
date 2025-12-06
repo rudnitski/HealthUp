@@ -128,7 +128,7 @@ const buildLabResultTuples = (reportId, parameters) => {
 
   parameters.forEach((parameter, index) => {
     const rowId = randomUUID();
-    const baseIndex = index * 14;
+    const baseIndex = index * 15;
 
     values.push(
       rowId,
@@ -145,9 +145,10 @@ const buildLabResultTuples = (reportId, parameters) => {
       parameter.reference_interval?.full_text ?? null,
       parameter.is_value_out_of_range ?? null,
       parameter.numeric_result ?? null,
+      parameter.specimen_type ?? null,
     );
 
-    const placeholders = Array.from({ length: 14 }, (_unused, offset) => `$${baseIndex + offset + 1}`);
+    const placeholders = Array.from({ length: 15 }, (_unused, offset) => `$${baseIndex + offset + 1}`);
     valuePlaceholders.push(`(${placeholders.join(', ')})`);
   });
 
@@ -167,7 +168,8 @@ const buildLabResultTuples = (reportId, parameters) => {
         reference_text,
         reference_full_text,
         is_value_out_of_range,
-        numeric_result
+        numeric_result,
+        specimen_type
       )
       VALUES ${valuePlaceholders.join(', ')}
     `,

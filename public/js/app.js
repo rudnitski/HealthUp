@@ -361,7 +361,19 @@
     addSectionTitle('Parameters');
 
     if (!parameters.length) {
-      addRow('Entries', 'No parameters detected', { isMissing: true, isSubRow: true });
+      // PRD v3.8: Handle zero-result reports (non-blood/non-urine tests)
+      const noResultsRow = document.createElement('div');
+      noResultsRow.className = 'result-details__row result-details__row--empty-state';
+      noResultsRow.innerHTML = `
+        <div style="text-align: center; padding: 1.5rem; color: #666;">
+          <p style="margin-bottom: 0.75rem; font-size: 1.1em;">No blood or urine test results found in this document.</p>
+          <p style="margin-bottom: 1rem; color: #888; font-size: 0.9em;">This document may contain imaging, cytology, or other non-blood/urine tests.</p>
+          <button type="button" onclick="viewOriginalFile()" class="secondary-button" style="cursor: pointer;">
+            📄 View Original File
+          </button>
+        </div>
+      `;
+      fragment.append(noResultsRow);
     } else {
       const tableWrapper = document.createElement('div');
       tableWrapper.className = 'parameters-table-wrapper';
@@ -676,9 +688,9 @@
           const total = parametersForMessage.length;
 
           if (total > 0) {
-            setResultMessage(`Loaded report with ${total} parameter${total === 1 ? '' : 's'}.`, 'success');
+            setResultMessage(`Loaded report with ${total} blood/urine test result${total === 1 ? '' : 's'}.`, 'success');
           } else {
-            setResultMessage('Report loaded (no parameters detected).', 'info');
+            setResultMessage('No blood or urine test results found in this document.', 'info');
           }
         } else {
           setResultMessage('Report not found.', 'error');

@@ -393,8 +393,15 @@
       const row = document.createElement('tr');
       row.dataset.reportId = job.report_id || '';
 
-      const statusClass = job.status === 'completed' ? 'status-completed' : 'status-failed';
-      const statusLabel = job.status === 'completed' ? '✅ Done' : '❌ Error';
+      let statusClass, statusLabel;
+      if (job.status === 'completed') {
+        statusClass = 'status-completed';
+        const paramCount = job.parameters?.length ?? 0;
+        statusLabel = `✅ ${paramCount} results`;
+      } else {
+        statusClass = 'status-failed';
+        statusLabel = '❌ Error';
+      }
 
       const filenameCell = document.createElement('td');
       filenameCell.textContent = job.filename || '';
@@ -1139,10 +1146,12 @@
       let statusClass, statusLabel;
       if (att.status === 'completed') {
         statusClass = 'status-completed';
-        statusLabel = '✅ Done';
+        const paramCount = att.parameters?.length ?? 0;
+        statusLabel = `✅ ${paramCount} results`;
       } else if (att.status === 'updated') {
         statusClass = 'status-updated';
-        statusLabel = '🔄 Updated';
+        const paramCount = att.parameters?.length ?? 0;
+        statusLabel = `🔄 Updated (${paramCount} results)`;
       } else if (att.status === 'duplicate') {
         statusClass = 'status-duplicate';
         statusLabel = '🔄 Duplicate';

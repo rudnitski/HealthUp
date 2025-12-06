@@ -130,12 +130,20 @@ const schemaStatements = [
     reference_full_text TEXT,
     is_value_out_of_range BOOLEAN,
     numeric_result NUMERIC,
+    specimen_type TEXT,
     analyte_id INT REFERENCES analytes(analyte_id),
     mapping_confidence REAL,
     mapped_at TIMESTAMPTZ,
     mapping_source TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  `,
+  // v3.8: Add specimen_type column for blood/urine filtering
+  `
+  ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS specimen_type TEXT;
+  `,
+  `
+  COMMENT ON COLUMN lab_results.specimen_type IS 'Specimen type: blood or urine. Used to distinguish overlapping analytes (e.g., creatinine in blood vs urine).';
   `,
   `
   COMMENT ON TABLE lab_results IS 'Individual test results extracted from lab reports';
@@ -377,7 +385,8 @@ const schemaStatements = [
     lr.reference_upper,
     lr.reference_lower_operator,
     lr.reference_upper_operator,
-    lr.is_value_out_of_range
+    lr.is_value_out_of_range,
+    lr.specimen_type
   FROM lab_results lr
   JOIN patient_reports pr ON pr.id = lr.report_id
   LEFT JOIN analytes a ON a.analyte_id = lr.analyte_id;

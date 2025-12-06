@@ -217,6 +217,7 @@ async function getReportDetail(reportId) {
         reference_full_text,
         is_value_out_of_range,
         numeric_result,
+        specimen_type,
         created_at
       FROM lab_results
       WHERE report_id = $1
@@ -256,6 +257,7 @@ async function getReportDetail(reportId) {
         },
         is_value_out_of_range: row.is_value_out_of_range,
         numeric_result: toNumber(row.numeric_result),
+        specimen_type: row.specimen_type,
       })),
     };
   } finally {

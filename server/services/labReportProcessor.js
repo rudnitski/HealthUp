@@ -73,6 +73,7 @@ const structuredOutputFormat = {
             },
             is_value_out_of_range: { type: 'boolean' },
             numeric_result: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+            specimen_type: { anyOf: [{ type: 'string' }, { type: 'null' }] },
           },
           required: [
             'parameter_name',
@@ -81,6 +82,7 @@ const structuredOutputFormat = {
             'reference_interval',
             'is_value_out_of_range',
             'numeric_result',
+            'specimen_type',
           ],
         },
       },
@@ -185,6 +187,16 @@ const toFiniteNumber = (value) => {
   }
 
   return null;
+};
+
+const VALID_SPECIMEN_TYPES = new Set(['blood', 'urine']);
+
+const sanitizeSpecimenType = (value) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.toLowerCase().trim();
+  return VALID_SPECIMEN_TYPES.has(normalized) ? normalized : null;
 };
 
 const sanitizeReferenceInterval = (value) => {
@@ -309,6 +321,7 @@ const sanitizeParameterEntry = (entry) => {
     reference_interval: referenceInterval,
     is_value_out_of_range: !isWithinRange,
     numeric_result: numericResult,
+    specimen_type: sanitizeSpecimenType(entry.specimen_type),
   };
 };
 

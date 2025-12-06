@@ -263,6 +263,7 @@ async function ingestAttachment(selection, batchId) {
       updateStatus(trackingId, 'completed', 100, 'Successfully ingested');
     }
     tracking.reportId = job.result.report_id;
+    tracking.parameters = job.result.parameters || [];
     tracking.completedAt = Date.now();
 
   } catch (error) {
@@ -461,6 +462,7 @@ function getBatchSummary(batchId) {
       progressMessage: a.progressMessage,
       jobId: a.jobId,
       reportId: a.reportId,
+      parameters: a.parameters || null,
       error: a.error
     })),
     batchStatus,
