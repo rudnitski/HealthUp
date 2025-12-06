@@ -604,7 +604,8 @@
             const rejectedEmails = job.result?.rejectedEmails || [];
             const attachmentRejectedEmails = job.result?.attachmentRejectedEmails || [];
             const attachmentProblemEmails = job.result?.attachmentProblemEmails || [];
-            showAttachmentSelection(results, stats, rejectedEmails, attachmentRejectedEmails, attachmentProblemEmails);
+            const rejectedAttachments = job.result?.rejectedAttachments || [];
+            showAttachmentSelection(results, stats, rejectedEmails, attachmentRejectedEmails, attachmentProblemEmails, rejectedAttachments);
           }
         }
 
@@ -643,7 +644,7 @@
     gmailStepList.innerHTML = html;
   }
 
-  function showAttachmentSelection(results, stats = {}, rejectedEmails = [], attachmentRejectedEmails = [], attachmentProblemEmails = []) {
+  function showAttachmentSelection(results, stats = {}, rejectedEmails = [], attachmentRejectedEmails = [], attachmentProblemEmails = [], rejectedAttachments = []) {
     gmailSelection.hidden = false;
 
     // Summary
@@ -821,6 +822,75 @@
                     </td>
                   </tr>
                 `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // [NEW] Show rejected attachments (Step 2: Attachment-level filtering)
+    // This section shows attachments filtered from ACCEPTED emails only
+    // (Attachments from rejected emails are already covered in first debug section)
+    if (rejectedAttachments && rejectedAttachments.length > 0) {
+      const totalRejected = rejectedAttachments.reduce((sum, e) => sum + e.rejected.length, 0);
+      const rejectedAttId = 'rejected-attachments-section-' + Date.now();
+
+      summaryHtml += `
+        <div style="margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 12px;">
+          <button
+            type="button"
+            id="${rejectedAttId}-toggle"
+            style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 0.9em; padding: 4px 8px; display: flex; align-items: center; gap: 6px;"
+            onclick="
+              const content = document.getElementById('${rejectedAttId}-content');
+              const icon = document.getElementById('${rejectedAttId}-icon');
+              if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.textContent = '▼';
+              } else {
+                content.style.display = 'none';
+                icon.textContent = '▶';
+              }
+            ">
+            <span id="${rejectedAttId}-icon">▶</span>
+            <span>Show ${totalRejected} rejected attachment${totalRejected > 1 ? 's' : ''} (Step 2: Non-lab-report files filtered)</span>
+          </button>
+          <div id="${rejectedAttId}-content" style="display: none; margin-top: 8px;">
+            <p style="margin-bottom: 10px; color: #6b7280; font-size: 0.9em;">
+              These attachments were filtered out during email body classification because their filenames and context
+              suggest they are not lab reports (e.g., logos, signatures, decorative images).
+              If you believe an attachment was incorrectly filtered, please report this as a bug.
+            </p>
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85em;">
+              <thead>
+                <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                  <th style="text-align: left; padding: 8px;">Email</th>
+                  <th style="text-align: left; padding: 8px;">Rejected Attachment</th>
+                  <th style="text-align: left; padding: 8px;">Size</th>
+                  <th style="text-align: left; padding: 8px;">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rejectedAttachments.map(email =>
+                  email.rejected.map(att => `
+                    <tr style="border-bottom: 1px solid #f3f4f6;">
+                      <td style="padding: 8px;">
+                        <strong>From:</strong> ${email.from || '(unknown)'}<br>
+                        <strong>Subject:</strong> ${email.subject || '(no subject)'}
+                      </td>
+                      <td style="padding: 8px;">
+                        <code>${att.filename}</code>
+                      </td>
+                      <td style="padding: 8px; white-space: nowrap;">
+                        ${formatFileSize(att.size)}
+                      </td>
+                      <td style="padding: 8px; color: #6b7280;">
+                        ${att.reason}
+                      </td>
+                    </tr>
+                  `).join('')
+                ).join('')}
               </tbody>
             </table>
           </div>

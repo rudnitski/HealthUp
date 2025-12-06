@@ -543,12 +543,18 @@ router.post('/fetch', async (req, res) => {
             from: email.from,
             date: email.date,
             body_excerpt: email.body.substring(0, 200),
-            attachments: email.attachments.map(a => ({
+            attachments: (classification?.email?.attachments || email.attachments || []).map(a => ({
               filename: a.filename,
               mimeType: a.mimeType,
               size: a.size,
               attachmentId: a.attachmentId,
               isInline: a.isInline
+            })),
+            rejectedAttachments: (classification?.email?.rejectedAttachments || []).map(a => ({
+              filename: a.filename,
+              size: a.size,
+              rejection_reason: a.rejection_reason,
+              rejection_confidence: a.rejection_confidence
             })),
             step2_is_clinical: classification?.is_clinical_results_email || false,
             step2_confidence: classification?.confidence || 0,
@@ -666,11 +672,31 @@ router.post('/fetch', async (req, res) => {
             issues: email.attachmentIssues || [{ filename: '(none)', reason: 'No attachments detected in message' }]
           }));
 
+        // Collect rejected attachments for debug section (PRD v3.6)
+        // NOTE: This only includes attachments rejected from ACCEPTED emails (attachment-level filtering).
+        // Attachments from rejected emails are already covered by the "Show rejected emails" section.
+        // IMPORTANT: Always returns an array (empty if no rejections) - never null/undefined
+        const rejectedAttachments = resultsWithDuplicates
+          .filter(email => email.rejectedAttachments && email.rejectedAttachments.length > 0)
+          .map(email => ({
+            subject: email.subject,
+            from: email.from,
+            date: email.date,
+            rejected: email.rejectedAttachments.map(att => ({
+              filename: att.filename,
+              size: att.size,
+              reason: att.rejection_reason,
+              confidence: att.rejection_confidence
+            }))
+          }));
+        // rejectedAttachments is now [] if filter found nothing (guaranteed array)
+
         setJobResult(jobId, {
           results: resultsWithDuplicates,
           rejectedEmails,
           attachmentRejectedEmails,
           attachmentProblemEmails,
+          rejectedAttachments,  // NEW - ALWAYS present (empty array if no rejections)
           stats,
           threshold,
           debug: {

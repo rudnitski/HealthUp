@@ -24,7 +24,8 @@ const logger = pino({
 
 // Configuration
 const DEFAULT_MODEL = process.env.EMAIL_CLASSIFIER_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
-const BATCH_SIZE = 30; // Reduced from 50 due to larger bodies
+const BATCH_SIZE = 25; // Aligned with Step 1 for consistency
+const CONCURRENCY = 3; // Process 3 batches in parallel (like Step 1)
 const PROMPT_FILE = 'gmail_body_classifier.txt';
 
 let openAiClient;
@@ -75,6 +76,7 @@ function hasOcrableAttachments(attachments) {
 
 /**
  * Format attachment summary for LLM input (includes all attachments)
+ * @deprecated Use formatAttachmentsForLLM() instead for structured attachment data
  */
 function formatAttachmentsSummary(attachments) {
   if (!attachments || attachments.length === 0) return 'None';
@@ -88,7 +90,27 @@ function formatAttachmentsSummary(attachments) {
 }
 
 /**
- * Classification schema
+ * Format attachments for LLM input (detailed list with index for classification)
+ * Uses numeric index instead of full attachmentId to reduce output tokens
+ */
+function formatAttachmentsForLLM(attachments) {
+  if (!attachments || attachments.length === 0) return [];
+
+  return attachments.map((a, index) => {
+    const sizeMB = (a.size / 1024 / 1024).toFixed(2);
+    return {
+      index,  // LLM returns this index instead of long attachmentId
+      filename: a.filename,
+      mimeType: a.mimeType,
+      size_mb: sizeMB,
+      is_inline: a.isInline
+    };
+  });
+}
+
+/**
+ * Classification schema (includes attachment-level classification)
+ * Uses attachmentIndex (integer) instead of attachmentId (string) to reduce output tokens
  */
 const CLASSIFICATION_SCHEMA = {
   type: 'object',
@@ -103,9 +125,24 @@ const CLASSIFICATION_SCHEMA = {
           id: { type: 'string' },
           is_clinical_results_email: { type: 'boolean' },
           confidence: { type: 'number' },
-          reason: { type: 'string' }
+          reason: { type: 'string' },
+          attachments: {  // Required by OpenAI strict mode, but can be empty array
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                attachmentIndex: { type: 'integer' },  // Index from input array (0, 1, 2...)
+                is_likely_lab_report: { type: 'boolean' },
+                confidence: { type: 'number' },
+                reason: { type: 'string' }
+              },
+              required: ['attachmentIndex', 'is_likely_lab_report', 'confidence', 'reason']
+            }
+          }
         },
-        required: ['id', 'is_clinical_results_email', 'confidence', 'reason']
+        required: ['id', 'is_clinical_results_email', 'confidence', 'reason', 'attachments']
+        // NOTE: 'attachments' is required by OpenAI strict mode, but empty array [] is valid
       }
     }
   },
@@ -118,14 +155,14 @@ const CLASSIFICATION_SCHEMA = {
 async function classifyBatch(emailBatch, systemPrompt) {
   const client = getOpenAiClient();
 
-  // Format input with body and attachment info
+  // Format input with body and attachment info (structured attachments for classification)
   const formattedBatch = emailBatch.map(email => ({
     id: email.id,
     subject: email.subject,
     from: email.from,
     date: email.date,
     body_excerpt: email.body.substring(0, 8000), // Ensure limit
-    attachments_summary: formatAttachmentsSummary(email.attachments)
+    attachments: formatAttachmentsForLLM(email.attachments) // Structured, not summary string
   }));
 
   const requestPayload = {
@@ -163,6 +200,15 @@ async function classifyBatch(emailBatch, systemPrompt) {
       break;
     } catch (error) {
       retryCount++;
+      // Log full error details for debugging
+      console.log('[bodyClassifier] API Error Details:', JSON.stringify({
+        message: error.message,
+        status: error.status,
+        code: error.code,
+        type: error.type,
+        error: error.error
+      }, null, 2));
+
       if (retryCount > MAX_RETRIES) {
         logger.error(`[bodyClassifier] Failed to classify batch after ${MAX_RETRIES} retry:`, error.message);
         // Return "uncertain" classifications instead of throwing (graceful degradation)
@@ -257,8 +303,8 @@ async function classifyEmailBodies(emails, onProgress = null) {
 
   logger.info(`[bodyClassifier] Processing ${batches.length} batches of up to ${BATCH_SIZE} emails each`);
 
-  // Process batches sequentially (graceful degradation: failed batches return "uncertain" classifications)
-  const limit = pLimit(1);
+  // Process batches in parallel (3 concurrent requests like Step 1)
+  const limit = pLimit(CONCURRENCY);
   let completedBatches = 0;
 
   const batchResults = await Promise.all(
@@ -287,7 +333,69 @@ async function classifyEmailBodies(emails, onProgress = null) {
     `${emptyBodyRejections.length} rejected (no body), ${allClassifications.length} total`
   );
 
-  return allClassifications;
+  // Enrich classifications with attachment filtering (PRD v3.6)
+  // Create email lookup map for fast access
+  const emailsMap = new Map(emails.map(e => [e.id, e]));
+
+  const enrichedClassifications = allClassifications.map(classification => {
+    const email = emailsMap.get(classification.id);
+
+    if (!email || !email.attachments || email.attachments.length === 0) {
+      // No email found or no attachments - return classification as-is
+      return classification;
+    }
+
+    // Check if LLM returned attachment classifications
+    if (!classification.attachments || !Array.isArray(classification.attachments)) {
+      // LLM didn't return attachment classifications - accept all attachments (fallback)
+      logger.warn(`[bodyClassifier] No attachment classifications for email ${email.id}, accepting all attachments`);
+      return {
+        ...classification,
+        email: {
+          ...email,
+          rejectedAttachments: []
+        }
+      };
+    }
+
+    // Map attachment classifications back to attachment objects using index
+    const validAttachments = [];
+    const rejectedAttachments = [];
+
+    email.attachments.forEach((att, index) => {
+      const attClassification = classification.attachments.find(
+        a => a.attachmentIndex === index
+      );
+
+      if (!attClassification) {
+        // No classification for this attachment - default to accept (conservative)
+        logger.warn(`[bodyClassifier] No classification for attachment index ${index} (${att.filename}), defaulting to accept`);
+        validAttachments.push(att);
+        return;
+      }
+
+      if (attClassification.is_likely_lab_report === true) {
+        validAttachments.push(att);
+      } else {
+        rejectedAttachments.push({
+          ...att,
+          rejection_reason: attClassification.reason,
+          rejection_confidence: attClassification.confidence
+        });
+      }
+    });
+
+    return {
+      ...classification,
+      email: {
+        ...email,
+        attachments: validAttachments,
+        rejectedAttachments: rejectedAttachments
+      }
+    };
+  });
+
+  return enrichedClassifications; // Still returns array, maintaining backward compatibility
 }
 
 export {

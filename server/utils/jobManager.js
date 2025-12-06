@@ -17,11 +17,16 @@ const JobStatus = {
 };
 
 // Automatic cleanup of old jobs and batches (older than 1 hour)
+// NOTE: Only cleans up COMPLETED/FAILED jobs, never PROCESSING jobs
 setInterval(() => {
   const oneHourAgo = Date.now() - (60 * 60 * 1000);
 
-  // Clean up old jobs
+  // Clean up old jobs (only if not actively processing)
   for (const [jobId, job] of jobs.entries()) {
+    // Never delete jobs that are still processing - they may be long-running (e.g., 20k email classification)
+    if (job.status === JobStatus.PROCESSING || job.status === JobStatus.PENDING) {
+      continue;
+    }
     if (job.createdAt < oneHourAgo) {
       jobs.delete(jobId);
       console.log(`[JobManager] Cleaned up old job: ${jobId}`);
