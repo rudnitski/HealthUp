@@ -34,8 +34,13 @@ const GMAIL_CONCURRENCY_LIMIT = parseInt(process.env.GMAIL_CONCURRENCY_LIMIT) ||
 const GMAIL_TOKEN_PATH = process.env.GMAIL_TOKEN_PATH || path.join(__dirname, '../config/gmail-token.json');
 const OAUTH_REDIRECT_URI = process.env.GMAIL_OAUTH_REDIRECT_URI || 'http://localhost:3000/api/dev-gmail/oauth-callback';
 
+// Rate limit retry configuration
+const RATE_LIMIT_MAX_RETRIES = parseInt(process.env.GMAIL_RATE_LIMIT_MAX_RETRIES) || 5;
+const RATE_LIMIT_INITIAL_DELAY_MS = parseInt(process.env.GMAIL_RATE_LIMIT_INITIAL_DELAY_MS) || 60000; // 60 seconds
+
 // Log loaded configuration on module load
 logger.info(`[gmailConnector] Loaded GMAIL_MAX_EMAILS=${GMAIL_MAX_EMAILS} from ${process.env.GMAIL_MAX_EMAILS ? 'env' : 'default'}`);
+logger.info(`[gmailConnector] Rate limit retry config: maxRetries=${RATE_LIMIT_MAX_RETRIES}, initialDelay=${RATE_LIMIT_INITIAL_DELAY_MS}ms (exponential backoff)`);
 
 // Shared Gmail API rate limiter (prevents exceeding quota when multiple operations run concurrently)
 const SHARED_GMAIL_LIMITER = pLimit(GMAIL_CONCURRENCY_LIMIT);
@@ -330,6 +335,62 @@ async function getOAuth2Client() {
 }
 
 /**
+ * Check if error is a rate limit error
+ * @param {Error} error - Error object from googleapis
+ * @returns {boolean} True if rate limit error
+ */
+function isRateLimitError(error) {
+  // Check for HTTP 429 or 403 with rateLimitExceeded reason
+  const status = error.code || error.status || error.response?.status;
+  const reason = error.errors?.[0]?.reason || error.response?.data?.error?.errors?.[0]?.reason;
+
+  return status === 429 ||
+         status === 403 && (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded');
+}
+
+/**
+ * Retry wrapper with exponential backoff for rate limit errors
+ * @param {Function} fn - Async function to retry
+ * @param {string} context - Context string for logging
+ * @returns {Promise} Result of fn()
+ */
+async function retryWithBackoff(fn, context = 'operation') {
+  let lastError;
+
+  for (let attempt = 1; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      if (!isRateLimitError(error)) {
+        // Not a rate limit error - throw immediately
+        throw error;
+      }
+
+      if (attempt === RATE_LIMIT_MAX_RETRIES) {
+        // Last attempt - throw
+        logger.error(`[gmailConnector] ${context} failed after ${RATE_LIMIT_MAX_RETRIES} retries due to rate limits`);
+        throw error;
+      }
+
+      // Exponential backoff: 60s, 120s, 240s, 480s...
+      const delayMs = RATE_LIMIT_INITIAL_DELAY_MS * Math.pow(2, attempt - 1);
+      const delaySec = Math.floor(delayMs / 1000);
+
+      logger.warn(
+        `[gmailConnector] ${context} hit rate limit (attempt ${attempt}/${RATE_LIMIT_MAX_RETRIES}), ` +
+        `waiting ${delaySec}s before retry...`
+      );
+
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError;
+}
+
+/**
  * MIME header decoder
  * Decodes Base64 and Quoted-Printable encoded headers
  * @param {string} value - Header value to decode
@@ -401,7 +462,7 @@ async function fetchEmailMetadata(onBatchReady = null) {
       pageToken = listResponse.data.nextPageToken;
       pageCount++;
 
-      logger.info(`[gmailConnector] Page ${pageCount} complete: +${messages.length} emails (total: ${allMessages.length}/${GMAIL_MAX_EMAILS})`);
+      logger.info(`[gmailConnector] Page ${pageCount} complete: +${messages.length} emails (total: ${allMessages.length}/${GMAIL_MAX_EMAILS}), hasNextPage: ${!!pageToken}`);
 
       // Break if we've reached our target or there are no more pages
       if (allMessages.length >= GMAIL_MAX_EMAILS || !pageToken || pageCount >= MAX_PAGES) {
@@ -409,7 +470,15 @@ async function fetchEmailMetadata(onBatchReady = null) {
       }
     } while (true);
 
-    logger.info(`[gmailConnector] Pagination complete: fetched ${allMessages.length} emails in ${pageCount} page(s)`);
+    // Check for duplicate message IDs
+    const uniqueIds = new Set(allMessages.map(m => m.id));
+    const duplicateCount = allMessages.length - uniqueIds.size;
+
+    if (duplicateCount > 0) {
+      logger.warn(`[gmailConnector] Found ${duplicateCount} duplicate message IDs! Gmail API returned ${allMessages.length} messages but only ${uniqueIds.size} are unique.`);
+    }
+
+    logger.info(`[gmailConnector] Pagination complete: fetched ${allMessages.length} emails (${uniqueIds.size} unique) in ${pageCount} page(s)`);
 
     if (allMessages.length === 0) {
       logger.info('[gmailConnector] No emails found in inbox');
@@ -435,12 +504,18 @@ async function fetchEmailMetadata(onBatchReady = null) {
       const batchPromises = batchMessages.map(({ id }) =>
         SHARED_GMAIL_LIMITER(async () => {
           try {
-            const response = await gmail.users.messages.get({
-              userId: 'me',
-              id,
-              format: 'metadata',
-              metadataHeaders: ['Subject', 'From', 'Date']
-            });
+            // Wrap Gmail API call with retry logic for rate limit errors
+            const response = await retryWithBackoff(
+              async () => {
+                return await gmail.users.messages.get({
+                  userId: 'me',
+                  id,
+                  format: 'metadata',
+                  metadataHeaders: ['Subject', 'From', 'Date']
+                });
+              },
+              `Message ${id.substring(0, 8)}...`
+            );
 
             const headers = response.data.payload.headers || [];
 
@@ -668,11 +743,17 @@ async function fetchFullEmailsByIds(emailIds) {
     const emailPromises = emailIds.map(id =>
       SHARED_GMAIL_LIMITER(async () => {
         try {
-          const response = await gmail.users.messages.get({
-            userId: 'me',
-            id,
-            format: 'full'
-          });
+          // Wrap Gmail API call with retry logic for rate limit errors
+          const response = await retryWithBackoff(
+            async () => {
+              return await gmail.users.messages.get({
+                userId: 'me',
+                id,
+                format: 'full'
+              });
+            },
+            `Full message ${id.substring(0, 8)}...`
+          );
 
           const headers = response.data.payload.headers || [];
           const subject = headers.find(h => h.name === 'Subject')?.value || '';
@@ -694,10 +775,10 @@ async function fetchFullEmailsByIds(emailIds) {
             attachmentIssues: skippedAttachments
           };
         } catch (error) {
-          // Check for Gmail API rate limit (429) - fail job immediately
-          if (error.code === 429 || error.message?.includes('429') || error.message?.includes('rate limit')) {
-            logger.error('[gmailConnector] Gmail API rate limit hit (429), failing job');
-            throw new Error('Gmail API rate limit exceeded (429). Please wait and try again.');
+          // Rate limit errors exhausted all retries - fail the entire job
+          if (isRateLimitError(error)) {
+            logger.error('[gmailConnector] Gmail API rate limit exhausted after retries, failing job');
+            throw new Error(`Gmail API rate limit exceeded after ${RATE_LIMIT_MAX_RETRIES} retries. Please wait and try again later.`);
           }
 
           // For other errors, log but continue with placeholder (graceful degradation)
