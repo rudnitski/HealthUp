@@ -1001,11 +1001,11 @@
         body: JSON.stringify({ selections })
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to start ingestion');
-      }
-
       const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to start ingestion');
+      }
 
       // Hide Gmail section, show progress
       gmailSection.hidden = true;
