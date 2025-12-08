@@ -4,7 +4,6 @@
 
 import OpenAI from 'openai';
 import crypto from 'crypto';
-import pino from 'pino';
 import fs from 'fs';
 import path from 'path';
 import { pool } from '../db/index.js';
@@ -17,22 +16,9 @@ import {
   TOOL_DEFINITIONS,
 } from './agenticTools.js';
 import { getDirname } from '../utils/path-helpers.js';
+import logger from '../utils/logger.js';
 
 const __dirname = getDirname(import.meta.url);
-
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Logger with pretty printing in development
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
 
 // Configuration
 const AGENTIC_MAX_ITERATIONS = parseInt(process.env.AGENTIC_MAX_ITERATIONS) || 5;

@@ -5,25 +5,12 @@
  */
 
 import OpenAI from 'openai';
-import pino from 'pino';
 import pLimit from 'p-limit';
 import { loadPrompt } from '../utils/promptLoader.js';
+import logger from '../utils/logger.js';
 
-const NODE_ENV = process.env.NODE_ENV || 'development';
 const MAX_RETRIES = parseInt(process.env.EMAIL_CLASSIFIER_MAX_RETRIES, 10) || 3;
 const RETRY_DELAY_MS = parseInt(process.env.EMAIL_CLASSIFIER_RETRY_DELAY_MS, 10) || 1000;
-
-// Logger with pretty printing in development
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
 
 // Configuration
 const DEFAULT_MODEL = process.env.EMAIL_CLASSIFIER_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';

@@ -99,6 +99,41 @@ Important:
 - Be efficient: aim to complete in 2-3 iterations for simple queries
 - For complex queries requiring additional JOINs, use exploratory_sql to verify relationships
 
+## Data Discovery Strategy
+
+The `execute_exploratory_sql` tool (limited to 20 rows) is designed for **data discovery**, not data retrieval. Use aggregate queries to understand your data before generating final SQL:
+
+**Discovery patterns:**
+```sql
+-- Data volume and date range for specific analytes
+SELECT
+  a.code,
+  COUNT(*) as measurement_count,
+  MIN(pr.test_date_text) as earliest,
+  MAX(pr.test_date_text) as latest
+FROM lab_results lr
+JOIN patient_reports pr ON pr.id = lr.report_id
+JOIN analytes a ON lr.analyte_id = a.analyte_id
+WHERE a.code IN ('HDL', 'LDL', 'CHOL')
+GROUP BY a.code
+```
+
+These aggregate queries return few rows (one per group) and help you understand:
+- How much data exists for each analyte
+- What date range is available
+- Whether data is sparse or dense
+
+**When to use discovery:**
+- Time-series/trend queries: understand data volume first
+- Multi-analyte queries: verify all analytes have data
+- When user asks for "all data" or "history"
+
+**LIMIT decisions:**
+The 20-row limit on exploratory queries is a safety measure for raw data exploration.
+For final display queries (show_plot, show_table), the backend enforces appropriate limits (200/50).
+You don't need to add restrictive LIMITs - focus on getting the right data, backend handles the rest.
+If you want to limit results, base it on your data discovery findings, not arbitrary small numbers.
+
 CRITICAL - SQL Generation Rules:
 - Generate COMPLETE, EXECUTABLE queries (not templates or examples)
 - DO NOT use parameters like :param, :patient_id, or placeholders

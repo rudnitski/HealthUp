@@ -3,18 +3,10 @@
 
 import express from 'express';
 import { pool } from '../db/index.js';
-import pino from 'pino';
 import { detectLanguage } from '../utils/languageDetection.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
-
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  formatters: {
-    level: (label) => ({ level: label }),
-  },
-  timestamp: pino.stdTimeFunctions.isoTime,
-});
 
 // Helper function to log admin actions
 async function logAdminAction(actionType, entityType, entityId, changes, req) {

@@ -8,23 +8,11 @@
 
 import express from 'express';
 import { pool } from '../db/index.js';
-import pino from 'pino';
-
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Logger with pretty printing in development
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
+import logger from '../utils/logger.js';
 
 const router = express.Router();
+
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 /**
  * POST /api/execute-sql

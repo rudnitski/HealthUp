@@ -3,33 +3,15 @@
 // Performs read-only analyte mapping with structured logging
 // v0.9.1: Adds Tier C (LLM-based mapping)
 
-import pino from 'pino';
 import { pool } from '../db/index.js';
 import OpenAI from 'openai';
 import { detectLanguage } from '../utils/languageDetection.js';
 import fs from 'fs';
 import path from 'path';
 import { getDirname } from '../utils/path-helpers.js';
+import logger from '../utils/logger.js';
 
 const __dirname = getDirname(import.meta.url);
-
-// Configure Pino logger
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  formatters: {
-    level: (label) => ({ level: label }),
-  },
-  timestamp: pino.stdTimeFunctions.isoTime,
-  // In development, use pretty print; in production, use JSON
-  transport: process.env.NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
 
 // Initialize OpenAI client (only if API key is provided)
 let openai = null;

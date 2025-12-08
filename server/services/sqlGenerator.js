@@ -1,11 +1,11 @@
 import OpenAI from 'openai';
 import crypto from 'crypto';
-import pino from 'pino';
 import { pool } from '../db/index.js';
 import { getSchemaSnapshot, updateMRU } from './schemaSnapshot.js';
 import { validateSQL } from './sqlValidator.js';
 import { buildSchemaSection, buildPrompt } from './promptBuilder.js';
 import { generateSqlWithAgenticLoop } from './agenticSqlGenerator.js';
+import logger from '../utils/logger.js';
 
 // Configuration
 const SQL_GENERATION_ENABLED = process.env.SQL_GENERATION_ENABLED !== 'false';
@@ -14,19 +14,6 @@ const DEFAULT_MODEL = process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';
 const ALLOW_MODEL_OVERRIDE = process.env.ALLOW_MODEL_OVERRIDE === 'true';
 const QUESTION_MAX_LENGTH = 500;
 const RUSSIAN_CHAR_PATTERN = /[А-Яа-яЁё]/;
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Logger with pretty printing in development
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
 
 let openAiClient;
 

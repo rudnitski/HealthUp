@@ -8,25 +8,11 @@ import { google } from 'googleapis';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import pino from 'pino';
 import pLimit from 'p-limit';
 import { getDirname } from '../utils/path-helpers.js';
+import logger from '../utils/logger.js';
 
 const __dirname = getDirname(import.meta.url);
-
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Logger with pretty printing in development
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
 
 // Configuration
 const GMAIL_MAX_EMAILS = parseInt(process.env.GMAIL_MAX_EMAILS) || 200;

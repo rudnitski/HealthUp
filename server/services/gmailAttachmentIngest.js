@@ -9,21 +9,7 @@ import crypto from 'crypto';
 import * as jobManager from '../utils/jobManager.js';
 import { processLabReport } from './labReportProcessor.js';
 import { pool } from '../db/index.js';
-import pino from 'pino';
-
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Logger with pretty printing in development
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
+import logger from '../utils/logger.js';
 
 // Helper: Sleep for async delays
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

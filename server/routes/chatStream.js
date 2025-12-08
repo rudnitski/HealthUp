@@ -19,7 +19,6 @@
 
 import express from 'express';
 import OpenAI from 'openai';
-import pino from 'pino';
 import { pool } from '../db/index.js';
 import sessionManager from '../utils/sessionManager.js';
 import * as agenticCore from '../services/agenticCore.js';
@@ -32,22 +31,47 @@ const router = express.Router();
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
+// Simple console logger (replacing pino for full visibility)
+const logger = {
+  info: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.log(`[INFO] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.log(`[INFO] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  },
+  warn: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.warn(`[WARN] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.warn(`[WARN] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  },
+  error: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.error(`[ERROR] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.error(`[ERROR] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  },
+  debug: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.log(`[DEBUG] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.log(`[DEBUG] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  }
+};
 
 // Configuration
 const CHAT_MODEL = process.env.CHAT_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-4o-mini'; // Conversational chat model (defaults to SQL_GENERATOR_MODEL)
 const MAX_CONVERSATION_ITERATIONS = 50; // Safety limit to prevent infinite loops
 const MAX_TOKEN_THRESHOLD = parseInt(process.env.CHAT_MAX_TOKEN_THRESHOLD, 10) || 50000; // Token limit for conversation history pruning
 const KEEP_RECENT_MESSAGES = parseInt(process.env.CHAT_KEEP_RECENT_MESSAGES, 10) || 20; // Number of messages to keep when pruning
+
+// SQL Query Limits (from validator config)
+const MAX_PLOT_ROWS = parseInt(process.env.SQL_VALIDATOR_PLOT_LIMIT, 10) || 10000;
+const MAX_TABLE_ROWS = parseInt(process.env.SQL_VALIDATOR_TABLE_LIMIT, 10) || 50;
 
 let openAiClient;
 
@@ -727,7 +751,7 @@ async function handleShowPlot(session, params, toolCallId) {
 
   try {
     // Step 1: Validate SQL (reuse existing validation)
-    const validation = await validateSQL(sql, { schemaSnapshotId: null });
+    const validation = await validateSQL(sql, { schemaSnapshotId: null, queryType: 'plot_query' });
 
     if (!validation.valid) {
       logger.warn('[chatStream] Plot validation failed', {
@@ -747,14 +771,19 @@ async function handleShowPlot(session, params, toolCallId) {
       return;
     }
 
-    // Step 2: Enforce row limit
-    const MAX_PLOT_ROWS = 200;
+    // Step 2: Enforce row limit (from env config)
     let safeSql = ensureLimit(validation.sqlWithLimit, MAX_PLOT_ROWS);
 
     // Step 2b: SECURITY - Enforce patient scope (defense in depth)
     if (session.selectedPatientId && session.patientCount > 1) {
       safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
     }
+
+    // DEBUG: Log the actual SQL being executed
+    logger.debug('[chatStream] Executing show_plot SQL:', {
+      sql_length: safeSql.length,
+      sql_last_100_chars: safeSql.slice(-100)
+    });
 
     // Step 3: Execute query with 5-second timeout
     const queryResult = await Promise.race([
@@ -855,7 +884,7 @@ async function handleShowTable(session, params, toolCallId) {
 
   try {
     // 1. Validate SQL
-    const validation = await validateSQL(sql, { schemaSnapshotId: null });
+    const validation = await validateSQL(sql, { schemaSnapshotId: null, queryType: 'data_query' });
     if (!validation.valid) {
       logger.warn('[chatStream] Table validation failed', {
         sql_preview: sql.substring(0, 100),
@@ -874,8 +903,7 @@ async function handleShowTable(session, params, toolCallId) {
       return;
     }
 
-    // 2. Enforce MAX_TABLE_ROWS = 50
-    const MAX_TABLE_ROWS = 50;
+    // 2. Enforce table row limit (from env config)
     let safeSql = ensureLimit(validation.sqlWithLimit, MAX_TABLE_ROWS);
 
     // 2b. SECURITY - Enforce patient scope (same check as plot)

@@ -6,6 +6,11 @@ const MAX_SUBQUERIES = Number(process.env.SQLGEN_MAX_SUBQUERIES) || 2;
 const MAX_AGG_FUNCS = Number(process.env.SQLGEN_MAX_AGG_FUNCS) || 10;
 const VALIDATION_BYPASS = process.env.SQL_VALIDATION_BYPASS === 'true';
 
+// SQL Query Limits (configurable via env)
+const SQL_VALIDATOR_PLOT_LIMIT = Number(process.env.SQL_VALIDATOR_PLOT_LIMIT) || 10000;
+const SQL_VALIDATOR_TABLE_LIMIT = Number(process.env.SQL_VALIDATOR_TABLE_LIMIT) || 50;
+const SQL_VALIDATOR_EXPLORATORY_LIMIT = Number(process.env.SQL_VALIDATOR_EXPLORATORY_LIMIT) || 20;
+
 const VALIDATION_RULE_VERSION = 'v1.2.0';
 
 // Forbidden keywords (case-insensitive, whole-word matching)
@@ -261,8 +266,8 @@ function enforceLimitClause(sql, queryType = 'data_query') {
   const hasTrailingSemicolon = /;+\s*$/.test(trimmed);
   const withoutTrailingSemicolon = trimmed.replace(/;+\s*$/, '');
 
-  // Different limits for different query types
-  const maxLimit = queryType === 'plot_query' ? 10000 : 50;
+  // Different limits for different query types (configurable via env)
+  const maxLimit = queryType === 'plot_query' ? SQL_VALIDATOR_PLOT_LIMIT : SQL_VALIDATOR_TABLE_LIMIT;
 
   // Check if LIMIT exists
   const limitPattern = /\bLIMIT\s+(\d+)/i;

@@ -5,22 +5,9 @@
  */
 
 import OpenAI from 'openai';
-import pino from 'pino';
 import pLimit from 'p-limit';
 import { loadPrompt } from '../utils/promptLoader.js';
-
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
+import logger from '../utils/logger.js';
 
 // Configuration
 const DEFAULT_MODEL = process.env.EMAIL_CLASSIFIER_MODEL || process.env.SQL_GENERATOR_MODEL || 'gpt-5-mini';

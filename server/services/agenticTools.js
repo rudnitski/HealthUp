@@ -4,21 +4,38 @@
 
 import { pool } from '../db/index.js';
 import { validateSQL } from './sqlValidator.js';
-import pino from 'pino';
 
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Logger with pretty printing in development
-const logger = pino({
-  transport: NODE_ENV === 'development' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'HH:MM:ss',
-      ignore: 'pid,hostname',
-    },
-  } : undefined,
-});
+// Simple console logger (replacing pino for full visibility)
+const logger = {
+  info: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.log(`[INFO] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.log(`[INFO] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  },
+  warn: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.warn(`[WARN] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.warn(`[WARN] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  },
+  error: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.error(`[ERROR] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.error(`[ERROR] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  },
+  debug: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.log(`[DEBUG] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.log(`[DEBUG] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  }
+};
 
 // Configuration from environment
 const AGENTIC_FUZZY_SEARCH_LIMIT = parseInt(process.env.AGENTIC_FUZZY_SEARCH_LIMIT) || 20;
