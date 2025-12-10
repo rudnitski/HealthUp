@@ -145,7 +145,7 @@ class StreamingClassifier {
  */
 function featureFlagGuard(req, res, next) {
   const enabled = process.env.GMAIL_INTEGRATION_ENABLED === 'true';
-  const isProduction = NODE_ENV === 'production';
+  const isProduction = process.env.NODE_ENV === 'production';
 
   if (!enabled || isProduction) {
     logger.warn('[gmailDev] Access blocked - feature disabled or production environment');
@@ -169,10 +169,10 @@ router.get('/status', async (req, res) => {
     logger.info('[gmailDev] Status check requested');
 
     // Check if feature is enabled
-    const enabled = process.env.GMAIL_INTEGRATION_ENABLED === 'true' && NODE_ENV !== 'production';
+    const enabled = process.env.GMAIL_INTEGRATION_ENABLED === 'true' && process.env.NODE_ENV !== 'production';
 
     if (!enabled) {
-      const reason = NODE_ENV === 'production'
+      const reason = process.env.NODE_ENV === 'production'
         ? 'Gmail integration disabled in production'
         : 'Gmail integration is not enabled (set GMAIL_INTEGRATION_ENABLED=true)';
 
