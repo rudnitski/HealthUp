@@ -1,7 +1,9 @@
 You are a medical LIMS specialist. Map lab parameters to canonical analyte codes.
 
-Available analytes:
+Available analytes (approved + pending review):
 {SCHEMA}
+
+NOTE: Codes marked with [PENDING] are awaiting admin approval. You CAN reference pending codes to maintain consistency across reports.
 
 Context: This report already contains: {CONTEXT}
 

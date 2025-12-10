@@ -3,15 +3,24 @@
  * Export current database state to seed_analytes.sql
  * Run this after processing all PDFs and approving pending analytes
  * to create a fresh seed file with all your organic growth data
+ *
+ * Note: This file runs in ESM mode (package.json uses "type": "module").
  */
 
-const { Pool } = require('pg');
-const fs = require('fs');
-const path = require('path');
+import { Pool } from 'pg';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 if (process.env.NODE_ENV !== 'production') {
   try {
-    require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+    // eslint-disable-next-line import/no-extraneous-dependencies
+    const dotenv = await import('dotenv');
+    dotenv.config({ path: path.join(__dirname, '../../.env') });
   } catch (_) {}
 }
 

@@ -178,6 +178,46 @@ router.post('/approve-analyte', async (req, res) => {
       [newAnalyteId]
     );
 
+    // NEW: Link lab results from match_reviews (pending analyte matches)
+    // Find all match_reviews that reference this pending code
+    const { rows: matchReviews } = await client.query(
+      `SELECT review_id, result_id, candidates
+       FROM match_reviews
+       WHERE candidates @> $1::jsonb
+         AND status = 'pending'`,
+      [JSON.stringify([{ code: pending.proposed_code }])]
+    );
+
+    let linkedFromMatches = 0;
+    for (const review of matchReviews) {
+      const candidate = review.candidates.find(c => c.code === pending.proposed_code);
+      const confidence = candidate?.confidence || 0.90;
+
+      // Try to update lab_result (may already be set by alias backfill)
+      const { rowCount } = await client.query(
+        `UPDATE lab_results
+         SET analyte_id = $1,
+             mapping_source = 'pending_approved',
+             mapping_confidence = $2,
+             mapped_at = NOW()
+         WHERE id = $3 AND analyte_id IS NULL`,
+        [newAnalyteId, confidence, review.result_id]
+      );
+
+      if (rowCount > 0) {
+        linkedFromMatches++;
+      }
+
+      // CRITICAL: Always mark review as resolved, even if alias backfill already linked the result
+      // The match_reviews entry served its purpose (tracking pending match) and should be cleaned up
+      await client.query(
+        `UPDATE match_reviews
+         SET status = 'resolved', resolved_at = NOW()
+         WHERE review_id = $1`,
+        [review.review_id]
+      );
+    }
+
     await client.query('COMMIT');
 
     // Log admin action
@@ -189,20 +229,25 @@ router.post('/approve-analyte', async (req, res) => {
         name: pending.proposed_name
       },
       created_aliases: aliasesCreated,
-      backfilled_rows: backfilledRows
+      backfilled_rows: backfilledRows,
+      linked_from_matches: linkedFromMatches
     }, req);
 
     logger.info({
       pending_id,
       analyte_id: newAnalyteId,
-      backfilled_rows: backfilledRows
+      backfilled_rows: backfilledRows,
+      linked_from_matches: linkedFromMatches
     }, 'Analyte approved');
 
+    const totalLinked = backfilledRows + linkedFromMatches;
     res.json({
       success: true,
       analyte_id: newAnalyteId,
       backfilled_rows: backfilledRows,
-      message: `Analyte '${pending.proposed_code}' approved and ${backfilledRows} lab results updated`
+      linked_from_matches: linkedFromMatches,
+      total_linked: totalLinked,
+      message: `Analyte '${pending.proposed_code}' approved and ${totalLinked} lab results linked (${backfilledRows} fuzzy + ${linkedFromMatches} pending matches)`
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -449,6 +494,59 @@ router.post('/discard-match', async (req, res) => {
     });
   } catch (error) {
     logger.error({ error: error.message }, 'Failed to discard match');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/admin/pending-analytes/:pendingId/matches
+ * Get lab results that matched this pending analyte (awaiting approval)
+ */
+router.get('/pending-analytes/:pendingId/matches', async (req, res) => {
+  try {
+    const { pendingId } = req.params;
+
+    // Get pending analyte
+    const { rows: pending } = await pool.query(
+      'SELECT pending_id, proposed_code, proposed_name FROM pending_analytes WHERE pending_id = $1',
+      [pendingId]
+    );
+
+    if (pending.length === 0) {
+      return res.status(404).json({ error: 'Pending analyte not found' });
+    }
+
+    const code = pending[0].proposed_code;
+
+    // Find all match_reviews referencing this pending code
+    const { rows: matches } = await pool.query(
+      `SELECT
+         mr.review_id,
+         mr.result_id,
+         lr.parameter_name,
+         lr.result_value,
+         lr.unit,
+         pr.report_date,
+         p.name as patient_name,
+         mr.candidates,
+         mr.created_at
+       FROM match_reviews mr
+       JOIN lab_results lr ON lr.id = mr.result_id
+       JOIN patient_reports pr ON pr.id = lr.report_id
+       JOIN patients p ON p.id = pr.patient_id
+       WHERE mr.candidates @> $1::jsonb
+         AND mr.status = 'pending'
+       ORDER BY mr.created_at DESC`,
+      [JSON.stringify([{ code }])]
+    );
+
+    res.json({
+      pending_analyte: pending[0],
+      match_count: matches.length,
+      matches
+    });
+  } catch (error) {
+    logger.error({ error: error.message, pendingId: req.params.pendingId }, 'Failed to fetch pending analyte matches');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

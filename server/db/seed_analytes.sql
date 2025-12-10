@@ -1,6 +1,6 @@
 -- Seed analytes and aliases (auto-generated from database)
--- Generated: 2025-10-23T16:47:43.596Z
--- Total analytes: 123
+-- Generated: 2025-12-10T11:27:35.889Z
+-- Total analytes: 194
 
 -- ============================================================================
 -- ANALYTES (Canonical Tests)
@@ -10,13 +10,17 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   -- Hematology
   ('HCT', 'Hematocrit', '%', 'hematology'),
   ('HGB', 'Hemoglobin', 'g/dL', 'hematology'),
+  ('MANUAL_DIFF_TOTAL', 'Total Cells Count in Manual Differential (leukocyte formula)', '', 'hematology'),
   ('MCH', 'Mean Corpuscular Hemoglobin', 'pg', 'hematology'),
   ('MCHC', 'Mean Corpuscular Hemoglobin Concentration', 'g/dL', 'hematology'),
   ('MCV', 'Mean Corpuscular Volume', 'fL', 'hematology'),
   ('MPV', 'Mean Platelet Volume', 'fL', 'hematology'),
+  ('NEUT_BAND', 'Band Neutrophils (absolute)', '10^9/L', 'hematology'),
   ('PLT', 'Platelet Count', '10^9/L', 'hematology'),
   ('RBC', 'Red Blood Cell Count', '10^12/L', 'hematology'),
   ('RDW', 'Red Cell Distribution Width', '%', 'hematology'),
+  ('RDW_SD', 'Red Cell Distribution Width (SD)', 'fL', 'hematology'),
+  ('RETIC_PRCT', 'Reticulocytes (%)', '%o', 'hematology'),
   ('WBC', 'White Blood Cell Count', '10^9/L', 'hematology'),
 
   -- Liver Function
@@ -93,25 +97,60 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('PSA', 'Prostate Specific Antigen', 'ng/mL', 'tumor_marker'),
 
   -- undefined
+  ('ADRENALINE', 'Adrenaline (Epinephrine)', 'пг/мл', 'uncategorized'),
+  ('AFP', 'Alpha-Fetoprotein (AFP)', 'IU/mL', 'uncategorized'),
   ('AI', 'Atherogenic Index (Atherogenicity Index)', '', 'uncategorized'),
   ('APOA1', 'Apolipoprotein A1', 'г/л', 'uncategorized'),
   ('APOB', 'Apolipoprotein B', 'г/л', 'uncategorized'),
   ('APOB_APOA1', 'Apolipoprotein B / Apolipoprotein A1 Ratio', '', 'uncategorized'),
   ('APTT', 'Activated Partial Thromboplastin Time (APTT)', 'сек', 'uncategorized'),
+  ('APTT_RATIO', 'APTT Ratio', '', 'uncategorized'),
   ('ASLO', 'Antistreptolysin O (ASO) / Antistreptolysin O titer', 'МЕ/мл', 'uncategorized'),
   ('BASO', 'Basophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('BASO_PRCT', 'Basophils (%)', '%', 'uncategorized'),
+  ('C3', 'Complement C3', 'г/л', 'uncategorized'),
+  ('C4', 'Complement C4', 'г/л', 'uncategorized'),
+  ('CA125', 'Cancer Antigen 125 (CA 125)', 'U/mL', 'uncategorized'),
+  ('CA19_9', 'Cancer Antigen 19-9 (CA 19-9)', 'U/mL', 'uncategorized'),
+  ('CA72_4', 'Cancer Antigen 72-4 (CA 72-4)', 'U/mL', 'uncategorized'),
+  ('CA_ION', 'Ionized Calcium', 'ммоль/л', 'uncategorized'),
+  ('CALCITONIN', 'Calcitonin', 'pg/ml', 'uncategorized'),
+  ('CD19', 'CD19+ B-lymphocytes (absolute, 10^9/L)', '10^9 клеток/л', 'uncategorized'),
+  ('CD19_PRCT', 'CD19+ B-lymphocytes (%)', '%', 'uncategorized'),
+  ('CD3', 'CD3+ T-lymphocytes (absolute, 10^9/L)', '10^9 клеток/л', 'uncategorized'),
+  ('CD3_HLA_DR', 'CD3+ HLA-DR+ T-lymphocytes (absolute, 10^9/L)', '10^9 клеток/л', 'uncategorized'),
+  ('CD3_HLA_DR_PRCT', 'CD3+ HLA-DR+ T-lymphocytes (%)', '%', 'uncategorized'),
+  ('CD3_PRCT', 'CD3+ T-lymphocytes (%)', '%', 'uncategorized'),
+  ('CD4', 'CD3+CD4+ T-helpers (absolute, 10^9/L)', '10^9 клеток/л', 'uncategorized'),
+  ('CD4_CD8_RATIO', 'CD4+/CD8+ Lymphocyte Ratio', '', 'uncategorized'),
+  ('CD4_PRCT', 'CD3+CD4+ T-helpers (%)', '%', 'uncategorized'),
+  ('CD8', 'CD3+CD8+ Cytotoxic T-lymphocytes (absolute, 10^9/L)', '10^9 клеток/л', 'uncategorized'),
+  ('CD8_PRCT', 'CD3+CD8+ Cytotoxic T-lymphocytes (%)', '%', 'uncategorized'),
+  ('CEA', 'Carcinoembryonic Antigen (CEA)', 'ng/mL', 'uncategorized'),
   ('CMV_IGG', 'Cytomegalovirus IgG Antibody', 'Ед/мл', 'uncategorized'),
   ('CMV_IGM', 'Cytomegalovirus IgM Antibody', 'Индекс', 'uncategorized'),
+  ('COAG_END', 'Clotting time - end / coagulation end', '', 'uncategorized'),
+  ('COAG_START', 'Clotting time - start / coagulation start', '', 'uncategorized'),
   ('CORT', 'Cortisol', 'нмоль/л', 'uncategorized'),
+  ('C_PEPTIDE', 'C-Peptide', 'нг/мл', 'uncategorized'),
+  ('D_DIMER', 'D-dimer', 'нг/мл DDU', 'uncategorized'),
+  ('DOPAMINE', 'Dopamine', 'пг/мл', 'uncategorized'),
   ('EO', 'Eosinophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('EO_PRCT', 'Eosinophils (%)', '%', 'uncategorized'),
+  ('FIBRINOGEN', 'Fibrinogen', 'г/л', 'uncategorized'),
+  ('HBsAG', 'Hepatitis B surface antigen (HBsAg), qualitative', '', 'uncategorized'),
+  ('HCV_IGG', 'Hepatitis C Virus Antibodies (Anti-HCV), qualitative', 'Индекс', 'uncategorized'),
+  ('HIV_ANTIBODY', 'HIV Antibodies (screening), qualitative', '', 'uncategorized'),
   ('HOMA_IR', 'HOMA-IR (Homeostatic Model Assessment of Insulin Resistance)', '', 'uncategorized'),
   ('HSV1_IGG', 'Herpes Simplex Virus Type 1 IgG Antibody', 'Ед/мл', 'uncategorized'),
   ('HSV2_IGG', 'Herpes Simplex Virus Type 2 IgG Antibody', 'Ед/мл', 'uncategorized'),
   ('IBIL', 'Indirect Bilirubin (Unconjugated Bilirubin)', 'мкмоль/л', 'uncategorized'),
+  ('IG_A', 'Immunoglobulin A (IgA)', 'г/л', 'uncategorized'),
   ('IG_E', 'Total Immunoglobulin E (IgE)', 'МЕ/мл', 'uncategorized'),
+  ('IG_M', 'Immunoglobulin M (IgM)', 'г/л', 'uncategorized'),
+  ('INR', 'International Normalized Ratio (INR)', '', 'uncategorized'),
   ('INSULIN', 'Insulin', 'пмоль/л', 'uncategorized'),
+  ('K_ION', 'Ionized Potassium', 'ммоль/л', 'uncategorized'),
   ('LPA', 'Lipoprotein(a)', 'г/л', 'uncategorized'),
   ('LUC', 'Large Unstained Cells (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('LUC_PRCT', 'Large Unstained Cells (%)', '%', 'uncategorized'),
@@ -123,41 +162,72 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('NEUT', 'Neutrophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('NEUT_BAND_PRCT', 'Band Neutrophils (%)', '%', 'uncategorized'),
   ('NEUT_PRCT', 'Neutrophils (%)', '%', 'uncategorized'),
-  ('P_LCR', 'Platelet Large Cell Ratio (P-LCR)', '%', 'uncategorized'),
+  ('NK', 'NK cells (CD3-CD16+CD56+) (absolute, 10^9/L)', '10^9 клеток/л', 'uncategorized'),
+  ('NK_PRCT', 'NK cells (CD3-CD16+CD56+) (%)', '%', 'uncategorized'),
+  ('NKT', 'NKT cells (CD3+CD16+CD56+) (absolute, 10^9/L)', '10^9 клеток/л', 'uncategorized'),
+  ('NKT_PRCT', 'NKT cells (CD3+CD16+CD56+) (%)', '%', 'uncategorized'),
+  ('NOREPINEPHRINE', 'Norepinephrine (Noradrenaline)', 'пг/мл', 'uncategorized'),
+  ('NSE', 'Neuron-Specific Enolase (NSE)', 'ng/mL', 'uncategorized'),
   ('PCT', 'Plateletcrit (PCT)', '%', 'uncategorized'),
   ('PCTN', 'Procalcitonin', 'нг/мл', 'uncategorized'),
   ('PDW', 'Platelet Distribution Width (PDW)', '%', 'uncategorized'),
+  ('P_LCR', 'Platelet Large Cell Ratio (P-LCR)', '%', 'uncategorized'),
+  ('PROTHROMBIN_ACTIVITY', 'Prothrombin activity (% by Quick method)', '%', 'uncategorized'),
+  ('PT', 'Prothrombin Time (PT)', 'сек', 'uncategorized'),
+  ('RHEUMATOID_FACTOR', 'Rheumatoid Factor', 'МЕ/мл', 'uncategorized'),
   ('SARS2_IGG', 'SARS-CoV-2 IgG Antibody', '', 'uncategorized'),
   ('SARS2_IGG_N', 'SARS-CoV-2 Nucleocapsid IgG Antibody (semiquantitative, ELISA)', 'КП', 'uncategorized'),
   ('SARS2_IGG_S', 'SARS-CoV-2 Spike (S) Protein IgG Antibody (semiquantitative, ELISA)', 'КП', 'uncategorized'),
   ('SARS2_IGM', 'SARS-CoV-2 IgM Antibody', '', 'uncategorized'),
+  ('SYPH_IGG', 'Treponema pallidum Antibodies (syphilis), qualitative (ELISA)', '', 'uncategorized'),
+  ('TESTOSTERONE_TOTAL', 'Total Testosterone', 'нмоль/л', 'uncategorized'),
+  ('TG', 'Thyroglobulin (TG)', 'ng/mL', 'uncategorized'),
+  ('THROMBIN_TIME', 'Thrombin Time (TT)', 'сек', 'uncategorized'),
+  ('THROMBIN_TIME_RATIO', 'Thrombin Time Ratio', '', 'uncategorized'),
   ('TOXO_IGG', 'Toxoplasma gondii IgG Antibody', 'МЕ/мл', 'uncategorized'),
   ('TOXO_IGM', 'Toxoplasma gondii IgM Antibody', 'Индекс', 'uncategorized'),
   ('TPO_AB', 'Thyroid Peroxidase Antibodies (TPO Ab)', 'МЕ/мл', 'uncategorized'),
+  ('URINE_AMMONIUM_BIURATE', 'Urine Ammonium Biurate Crystals', '', 'uncategorized'),
   ('URINE_BACTERIA', 'Urine Bacteria (microscopy)', '', 'uncategorized'),
   ('URINE_BIL', 'Urine Bilirubin', 'мг/дл', 'uncategorized'),
+  ('URINE_CALCIUM_PHOSPHATE_CRYSTALS', 'Urine Calcium Phosphate Crystals', '', 'uncategorized'),
   ('URINE_CASTS', 'Urine Casts (cylinders)', 'в п/зр.', 'uncategorized'),
+  ('URINE_CASTS_HYALINE', 'Hyaline casts (urine)', 'ед/мкл', 'uncategorized'),
+  ('URINE_CASTS_NON_HYALINE', 'Non-hyaline Urine Casts', 'ед/мкл', 'uncategorized'),
   ('URINE_COLOR', 'Urine Color', '', 'uncategorized'),
   ('URINE_CRYSTALS', 'Urine Crystals / Salts', '', 'uncategorized'),
+  ('URINE_CRYSTALS_OXALATE', 'Urine Calcium Oxalate Crystals', 'ед/мкл', 'uncategorized'),
   ('URINE_EPIT', 'Urine Epithelial Cells (sediment)', '', 'uncategorized'),
+  ('URINE_EPIT_NONPLAT', 'Urine Non-squamous Epithelial Cells (sediment)', 'ед/мкл', 'uncategorized'),
   ('URINE_EPIT_PLAT', 'Urine Squamous Epithelial Cells (sediment)', 'в п/зр.', 'uncategorized'),
   ('URINE_EPIT_RENAL', 'Urine Renal (Renal Tubular) Epithelial Cells (sediment)', 'в п/зр.', 'uncategorized'),
   ('URINE_EPIT_TRANS', 'Urine Transitional Epithelial Cells (sediment)', 'в п/зр.', 'uncategorized'),
   ('URINE_GLUC', 'Urine Glucose', 'мг/дл', 'uncategorized'),
+  ('URINE_HGB', 'Urine Hemoglobin', 'мг/дл', 'uncategorized'),
+  ('URINE_INTACT_RBC', 'Urine Intact (Non-lysed) Red Blood Cells', 'ед/мкл', 'uncategorized'),
   ('URINE_KET', 'Urine Ketones', 'мг/дл', 'uncategorized'),
+  ('URINE_LEUKOCYTE_ESTERASE', 'Urine Leukocyte Esterase', '', 'uncategorized'),
   ('URINE_MUCUS', 'Urine Mucus (sediment)', '', 'uncategorized'),
+  ('URINE_MUCUS_SED', 'Mucus (urine sediment)', 'ед/мкл', 'uncategorized'),
   ('URINE_NIT', 'Urine Nitrites', '', 'uncategorized'),
   ('URINE_NORMAL_FLORA', 'Normal Flora (urine culture/microscopy)', '', 'uncategorized'),
   ('URINE_PH', 'Urine pH', '', 'uncategorized'),
   ('URINE_PROT', 'Urine Protein', 'мг/дл', 'uncategorized'),
   ('URINE_RBC', 'Urine Red Blood Cells', 'ед/мкл', 'uncategorized'),
+  ('URINE_RBC_HGB', 'Urine Red Blood Cells and Hemoglobin (urine haematuria/hemoglobin)', 'мг/л', 'uncategorized'),
   ('URINE_SED_RBC', 'Urine Sediment Erythrocytes', '', 'uncategorized'),
   ('URINE_SED_WBC', 'Urine Sediment Leukocytes', '', 'uncategorized'),
   ('URINE_SG', 'Urine Specific Gravity', '', 'uncategorized'),
+  ('URINE_SPERM', 'Spermatozoa in Urine (sediment)', 'ед/мкл', 'uncategorized'),
+  ('URINE_TRIPLE_PHOSPHATE_CRYSTALS', 'Urine Triple Phosphate (Struvite) Crystals', '', 'uncategorized'),
   ('URINE_TURBIDITY', 'Urine Transparency/Turbidity', '', 'uncategorized'),
   ('URINE_UBG', 'Urine Urobilinogen', 'мг/дл', 'uncategorized'),
+  ('URINE_URATES', 'Urine Urate Crystals', '', 'uncategorized'),
+  ('URINE_URIC_ACID_CRYSTALS', 'Urine Uric Acid Crystals', '', 'uncategorized'),
+  ('URINE_UROBILIN', 'Urine Urobilin', 'мкмоль/л', 'uncategorized'),
   ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized'),
-  ('URINE_YEAST', 'Urine Yeast (fungi, microscopy)', '', 'uncategorized')
+  ('URINE_WBC_CLUSTERS', 'Urine Leukocyte Aggregates / WBC Clusters (urine sediment)', 'ед/мкл', 'uncategorized'),
+  ('URINE_YEAST', 'Urine Yeast (fungi, microscopy)', 'ед/мкл', 'uncategorized'),
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
@@ -203,6 +273,13 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'MPV'), 'mpv', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'MPV'), 'средний объем тромбоцитов', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'MPV'), 'средний объем тромбоцитов (mpv)', 'ru', 1, 'manual_disambiguation'),
+
+  -- Band Neutrophils (absolute) (NEUT_BAND)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_BAND'), 'band neutrophils', 'en', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_BAND'), 'band neutrophils absolute', 'en', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_BAND'), 'neut bands abs', 'en', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_BAND'), 'нейтрофилы палочк абс', 'ru', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_BAND'), 'нейтрофилы палочкоядерные', 'ru', 1, 'dedup'),
 
   -- Platelet Count (PLT)
   ((SELECT analyte_id FROM analytes WHERE code = 'PLT'), 'platelets', 'en', 1, 'seed'),
@@ -274,8 +351,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'GGT'), 'gamma glutamyl transferase', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'GGT'), 'ggt', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'GGT'), 'ggtp', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'GGT'), 'ггт', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'GGT'), 'гамма глутамилтрансфераза', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'GGT'), 'ггт', 'ru', 1, 'seed'),
 
   -- Total Bilirubin (TBIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'TBIL'), 'bilirubin total', 'en', 1, 'seed'),
@@ -325,8 +402,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'CHOL'), 'chol', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'CHOL'), 'cholesterol', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'CHOL'), 'total cholesterol', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'CHOL'), 'холестерин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'CHOL'), 'общий холестерин', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'CHOL'), 'холестерин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'CHOL'), 'загальний холестерин', 'uk', 1, 'seed'),
 
   -- HDL Cholesterol (HDL)
@@ -345,6 +422,18 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'LDL'), 'холестерин лпнп', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'LDL'), 'хс лпнп', 'ru', 1, 'seed'),
 
+  -- Non-HDL Cholesterol (NON_HDL)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non hdl', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non-hdl', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'nonhdl', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non hdl cholesterol', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non-hdl cholesterol', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'не лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'не-лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'холестерин не лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'холестерин не-лпвп', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'хс не-лпвп', 'ru', 1, 'seed'),
+
   -- Triglycerides (TRIG)
   ((SELECT analyte_id FROM analytes WHERE code = 'TRIG'), 'tg', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TRIG'), 'trig', 'en', 1, 'seed'),
@@ -357,18 +446,6 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'VLDL'), 'vldl cholesterol', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VLDL'), 'лпонп', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VLDL'), 'холестерин лпонп', 'ru', 1, 'seed'),
-
-  -- Non-HDL Cholesterol (NON_HDL)
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non-hdl', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non-hdl cholesterol', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non hdl', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'non hdl cholesterol', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'nonhdl', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'холестерин не лпвп', 'ru', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'холестерин не-лпвп', 'ru', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'хс не-лпвп', 'ru', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'не-лпвп', 'ru', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'NON_HDL'), 'не лпвп', 'ru', 1, 'seed'),
 
   -- Fructosamine (FRUC)
   ((SELECT analyte_id FROM analytes WHERE code = 'FRUC'), 'fructosamine', 'en', 1, 'seed'),
@@ -388,8 +465,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'HBA1C'), 'glycated hemoglobin', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'HBA1C'), 'hba1c', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'HBA1C'), 'hemoglobin a1c', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'HBA1C'), 'гликогемоглобин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'HBA1C'), 'гликированный гемоглобин', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'HBA1C'), 'гликогемоглобин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'HBA1C'), 'глікований гемоглобін', 'uk', 1, 'seed'),
 
   -- Free T3 (FT3)
@@ -409,22 +486,22 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Triiodothyronine (T3)
   ((SELECT analyte_id FROM analytes WHERE code = 'T3'), 't3', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'T3'), 'triiodothyronine', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'T3'), 'трийодтиронин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'T3'), 'т3', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'T3'), 'трийодтиронин', 'ru', 1, 'seed'),
 
   -- Thyroxine (T4)
   ((SELECT analyte_id FROM analytes WHERE code = 'T4'), 't4', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'T4'), 'thyroxine', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'T4'), 'тироксин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'T4'), 'т4', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'T4'), 'тироксин', 'ru', 1, 'seed'),
 
   -- Thyroid Stimulating Hormone (TSH)
   ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'thyroid stimulating hormone', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'thyrotropin', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'tsh', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'ттг', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'тиреотропный гормон', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'тиреотропный гормон тиреотропин ттг', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'ттг', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TSH'), 'тиреотропний гормон', 'uk', 1, 'seed'),
 
   -- Calcium (CA)
@@ -474,8 +551,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'VITB12'), 'b12', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITB12'), 'cobalamin', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITB12'), 'vitamin b12', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'VITB12'), 'кобаламин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITB12'), 'витамин b12', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'VITB12'), 'кобаламин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITB12'), 'вітамін b12', 'uk', 1, 'seed'),
 
   -- Vitamin D (25-OH) (VITD)
@@ -483,8 +560,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'VITD'), '25 oh d', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITD'), 'vitamin d', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITD'), 'vitd', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'VITD'), 'витамин d', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITD'), '25 oh витамин d', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'VITD'), 'витамин d', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'VITD'), 'вітамін d', 'uk', 1, 'seed'),
 
   -- Iron (FE)
@@ -505,8 +582,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Total Iron Binding Capacity (TIBC)
   ((SELECT analyte_id FROM analytes WHERE code = 'TIBC'), 'tibc', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TIBC'), 'total iron binding capacity', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'TIBC'), 'ожсс', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TIBC'), 'общая железосвязывающая способность', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'TIBC'), 'ожсс', 'ru', 1, 'seed'),
 
   -- Transferrin Saturation (TSAT)
   ((SELECT analyte_id FROM analytes WHERE code = 'TSAT'), 'transferrin saturation', 'en', 1, 'seed'),
@@ -514,8 +591,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'TSAT'), 'насыщение трансферрина', 'ru', 1, 'seed'),
 
   -- B-type Natriuretic Peptide (BNP)
-  ((SELECT analyte_id FROM analytes WHERE code = 'BNP'), 'b type natriuretic peptide', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'BNP'), 'bnp', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'BNP'), 'b type natriuretic peptide', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'BNP'), 'натрийуретический пептид', 'ru', 1, 'seed'),
 
   -- Creatine Kinase (CK)
@@ -549,8 +626,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'ESR'), 'erythrocyte sedimentation rate', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'ESR'), 'esr', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'ESR'), 'sed rate', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'ESR'), 'соэ', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'ESR'), 'скорость оседания эритроцитов', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'ESR'), 'соэ', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'ESR'), 'швидкість осідання еритроцитів', 'uk', 1, 'seed'),
 
   -- Amylase (AMY)
@@ -574,8 +651,14 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Prostate Specific Antigen (PSA)
   ((SELECT analyte_id FROM analytes WHERE code = 'PSA'), 'prostate specific antigen', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'PSA'), 'psa', 'en', 1, 'seed'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'PSA'), 'пса', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'PSA'), 'простатспецифический антиген', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'PSA'), 'пса', 'ru', 1, 'seed'),
+
+  -- Adrenaline (Epinephrine) (ADRENALINE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'ADRENALINE'), 'адреналин', 'ru', 1, 'evidence_auto'),
+
+  -- Alpha-Fetoprotein (AFP) (AFP)
+  ((SELECT analyte_id FROM analytes WHERE code = 'AFP'), 'альфа фетопротеин afp', 'ru', 1, 'evidence_auto'),
 
   -- Atherogenic Index (Atherogenicity Index) (AI)
   ((SELECT analyte_id FROM analytes WHERE code = 'AI'), 'индекс атерогенности', 'ru', 1, 'evidence_auto'),
@@ -592,6 +675,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Activated Partial Thromboplastin Time (APTT) (APTT)
   ((SELECT analyte_id FROM analytes WHERE code = 'APTT'), 'активированное частичное тромбопластиновое время ачтв', 'ru', 1, 'evidence_auto'),
 
+  -- APTT Ratio (APTT_RATIO)
+  ((SELECT analyte_id FROM analytes WHERE code = 'APTT_RATIO'), 'ачтв ratio', 'en', 1, 'evidence_auto'),
+
   -- Antistreptolysin O (ASO) / Antistreptolysin O titer (ASLO)
   ((SELECT analyte_id FROM analytes WHERE code = 'ASLO'), 'асл о', 'ru', 1, 'evidence_auto'),
 
@@ -601,20 +687,104 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Basophils (%) (BASO_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'BASO_PRCT'), 'базофилы baso', 'ru', 1, 'evidence_auto'),
 
+  -- Complement C3 (C3)
+  ((SELECT analyte_id FROM analytes WHERE code = 'C3'), 'комплемент с3с', 'ru', 1, 'evidence_auto'),
+
+  -- Complement C4 (C4)
+  ((SELECT analyte_id FROM analytes WHERE code = 'C4'), 'комплемент с4', 'ru', 1, 'evidence_auto'),
+
+  -- Cancer Antigen 125 (CA 125) (CA125)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CA125'), 'ca 125', 'en', 1, 'evidence_auto'),
+
+  -- Cancer Antigen 19-9 (CA 19-9) (CA19_9)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CA19_9'), 'ca 19 9', 'en', 1, 'evidence_auto'),
+
+  -- Cancer Antigen 72-4 (CA 72-4) (CA72_4)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CA72_4'), 'ра 72 4 ca 72 4', 'ru', 1, 'evidence_auto'),
+
+  -- Ionized Calcium (CA_ION)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CA_ION'), 'кальций ионизированный', 'ru', 1, 'evidence_auto'),
+
+  -- Calcitonin (CALCITONIN)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CALCITONIN'), 'кальцитонин calcitonin', 'ru', 1, 'evidence_auto'),
+
+  -- CD19+ B-lymphocytes (absolute, 10^9/L) (CD19)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD19'), 'в лимфоциты cd19 10 9 л', 'ru', 1, 'evidence_auto'),
+
+  -- CD19+ B-lymphocytes (%) (CD19_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD19_PRCT'), 'в лимфоциты cd19', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+ T-lymphocytes (absolute, 10^9/L) (CD3)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD3'), 'т лимфоциты cd3 10 9 л', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+ HLA-DR+ T-lymphocytes (absolute, 10^9/L) (CD3_HLA_DR)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD3_HLA_DR'), 'cd3 hla dr t лимфоциты 10 9 л', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+ HLA-DR+ T-lymphocytes (%) (CD3_HLA_DR_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD3_HLA_DR_PRCT'), 'cd3 hla dr t лимфоциты', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+ T-lymphocytes (%) (CD3_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD3_PRCT'), 'т лимфоциты cd3', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+CD4+ T-helpers (absolute, 10^9/L) (CD4)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD4'), 'т хелперы cd3 cd4 10 9 л', 'ru', 1, 'evidence_auto'),
+
+  -- CD4+/CD8+ Lymphocyte Ratio (CD4_CD8_RATIO)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD4_CD8_RATIO'), 'соотношение лимфоцитов cd4 cd8', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+CD4+ T-helpers (%) (CD4_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD4_PRCT'), 'т хелперы cd3 cd4', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+CD8+ Cytotoxic T-lymphocytes (absolute, 10^9/L) (CD8)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD8'), 'цитототоксические т лимфоциты сd3 сd8 10 9 л', 'ru', 1, 'evidence_auto'),
+
+  -- CD3+CD8+ Cytotoxic T-lymphocytes (%) (CD8_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CD8_PRCT'), 'цитототоксические т лимфоциты сd3 сd8', 'ru', 1, 'evidence_auto'),
+
+  -- Carcinoembryonic Antigen (CEA) (CEA)
+  ((SELECT analyte_id FROM analytes WHERE code = 'CEA'), 'рэа cea', 'ru', 1, 'evidence_auto'),
+
   -- Cytomegalovirus IgG Antibody (CMV_IGG)
   ((SELECT analyte_id FROM analytes WHERE code = 'CMV_IGG'), 'цитомегаловирус igg', 'ru', 1, 'evidence_auto'),
 
   -- Cytomegalovirus IgM Antibody (CMV_IGM)
   ((SELECT analyte_id FROM analytes WHERE code = 'CMV_IGM'), 'цитомегаловирус igm', 'ru', 1, 'evidence_auto'),
 
+  -- Clotting time - end / coagulation end (COAG_END)
+  ((SELECT analyte_id FROM analytes WHERE code = 'COAG_END'), 'свертываемость крови конец', 'ru', 1, 'evidence_auto'),
+
+  -- Clotting time - start / coagulation start (COAG_START)
+  ((SELECT analyte_id FROM analytes WHERE code = 'COAG_START'), 'свертываемость крови начало', 'ru', 1, 'evidence_auto'),
+
   -- Cortisol (CORT)
   ((SELECT analyte_id FROM analytes WHERE code = 'CORT'), 'кортизол', 'ru', 1, 'evidence_auto'),
+
+  -- C-Peptide (C_PEPTIDE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'C_PEPTIDE'), 'с пептид', 'ru', 1, 'evidence_auto'),
+
+  -- D-dimer (D_DIMER)
+  ((SELECT analyte_id FROM analytes WHERE code = 'D_DIMER'), 'd димер', 'ru', 1, 'evidence_auto'),
+
+  -- Dopamine (DOPAMINE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'DOPAMINE'), 'дофамин', 'ru', 1, 'evidence_auto'),
 
   -- Eosinophils (absolute) (EO)
   ((SELECT analyte_id FROM analytes WHERE code = 'EO'), 'эозинофилы eo', 'ru', 1, 'evidence_auto'),
 
   -- Eosinophils (%) (EO_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'EO_PRCT'), 'эозинофилы eo', 'ru', 1, 'evidence_auto'),
+
+  -- Fibrinogen (FIBRINOGEN)
+  ((SELECT analyte_id FROM analytes WHERE code = 'FIBRINOGEN'), 'фибриноген', 'ru', 1, 'evidence_auto'),
+
+  -- Hepatitis B surface antigen (HBsAg), qualitative (HBsAG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'HBsAG'), 'hbsag австралийский антиген поверхностный качеств', 'ru', 1, 'evidence_auto'),
+
+  -- Hepatitis C Virus Antibodies (Anti-HCV), qualitative (HCV_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'HCV_IGG'), 'вирус гепатита с anti hcv антитела качеств', 'ru', 1, 'evidence_auto'),
+
+  -- HIV Antibodies (screening), qualitative (HIV_ANTIBODY)
+  ((SELECT analyte_id FROM analytes WHERE code = 'HIV_ANTIBODY'), 'исследование клинического материала на вич спид', 'ru', 1, 'evidence_auto'),
 
   -- HOMA-IR (Homeostatic Model Assessment of Insulin Resistance) (HOMA_IR)
   ((SELECT analyte_id FROM analytes WHERE code = 'HOMA_IR'), 'индекс homa ir', 'ru', 1, 'evidence_auto'),
@@ -628,11 +798,23 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Indirect Bilirubin (Unconjugated Bilirubin) (IBIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'IBIL'), 'билирубин непрямой', 'ru', 1, 'evidence_auto'),
 
+  -- Immunoglobulin A (IgA) (IG_A)
+  ((SELECT analyte_id FROM analytes WHERE code = 'IG_A'), 'иммуноглобулин a', 'ru', 1, 'evidence_auto'),
+
   -- Total Immunoglobulin E (IgE) (IG_E)
   ((SELECT analyte_id FROM analytes WHERE code = 'IG_E'), 'общий иммуноглобулин e', 'ru', 1, 'evidence_auto'),
 
+  -- Immunoglobulin M (IgM) (IG_M)
+  ((SELECT analyte_id FROM analytes WHERE code = 'IG_M'), 'иммуноглобулин m', 'ru', 1, 'evidence_auto'),
+
+  -- International Normalized Ratio (INR) (INR)
+  ((SELECT analyte_id FROM analytes WHERE code = 'INR'), 'мно inr', 'ru', 1, 'evidence_auto'),
+
   -- Insulin (INSULIN)
   ((SELECT analyte_id FROM analytes WHERE code = 'INSULIN'), 'инсулин', 'ru', 1, 'evidence_auto'),
+
+  -- Ionized Potassium (K_ION)
+  ((SELECT analyte_id FROM analytes WHERE code = 'K_ION'), 'калий ионизированный', 'ru', 1, 'evidence_auto'),
 
   -- Lipoprotein(a) (LPA)
   ((SELECT analyte_id FROM analytes WHERE code = 'LPA'), 'липопротеин а', 'ru', 1, 'evidence_auto'),
@@ -667,8 +849,23 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Neutrophils (%) (NEUT_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'NEUT_PRCT'), 'нейтрофильные гранулоциты neut', 'ru', 1, 'evidence_auto'),
 
-  -- Platelet Large Cell Ratio (P-LCR) (P_LCR)
-  ((SELECT analyte_id FROM analytes WHERE code = 'P_LCR'), 'коэффициент больших тромбоцитов p lcr', 'ru', 1, 'evidence_auto'),
+  -- NK cells (CD3-CD16+CD56+) (absolute, 10^9/L) (NK)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NK'), 'nk клетки cd3 cd16 cd56 10 9 л', 'en', 1, 'evidence_auto'),
+
+  -- NK cells (CD3-CD16+CD56+) (%) (NK_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NK_PRCT'), 'nk клетки cd3 cd16 cd56', 'en', 1, 'evidence_auto'),
+
+  -- NKT cells (CD3+CD16+CD56+) (absolute, 10^9/L) (NKT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NKT'), 'nkt клетки cd3 cd16 cd56 10 9 л', 'en', 1, 'evidence_auto'),
+
+  -- NKT cells (CD3+CD16+CD56+) (%) (NKT_PRCT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NKT_PRCT'), 'nkt клетки cd3 cd16 cd56', 'en', 1, 'evidence_auto'),
+
+  -- Norepinephrine (Noradrenaline) (NOREPINEPHRINE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NOREPINEPHRINE'), 'норадреналин', 'ru', 1, 'evidence_auto'),
+
+  -- Neuron-Specific Enolase (NSE) (NSE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'NSE'), 'нейрон специфическая энолаза nse', 'ru', 1, 'evidence_auto'),
 
   -- Plateletcrit (PCT) (PCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'PCT'), 'тромбокрит pct', 'ru', 1, 'evidence_auto'),
@@ -678,6 +875,18 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Platelet Distribution Width (PDW) (PDW)
   ((SELECT analyte_id FROM analytes WHERE code = 'PDW'), 'ширина распределения тромбоцитов по объемам pdw', 'ru', 1, 'evidence_auto'),
+
+  -- Platelet Large Cell Ratio (P-LCR) (P_LCR)
+  ((SELECT analyte_id FROM analytes WHERE code = 'P_LCR'), 'коэффициент больших тромбоцитов p lcr', 'ru', 1, 'evidence_auto'),
+
+  -- Prothrombin activity (% by Quick method) (PROTHROMBIN_ACTIVITY)
+  ((SELECT analyte_id FROM analytes WHERE code = 'PROTHROMBIN_ACTIVITY'), 'протромбин по квику', 'ru', 1, 'evidence_auto'),
+
+  -- Prothrombin Time (PT) (PT)
+  ((SELECT analyte_id FROM analytes WHERE code = 'PT'), 'протромбиновое время', 'ru', 1, 'evidence_auto'),
+
+  -- Rheumatoid Factor (RHEUMATOID_FACTOR)
+  ((SELECT analyte_id FROM analytes WHERE code = 'RHEUMATOID_FACTOR'), 'ревматоидный фактор', 'ru', 1, 'evidence_auto'),
 
   -- SARS-CoV-2 IgG Antibody (SARS2_IGG)
   ((SELECT analyte_id FROM analytes WHERE code = 'SARS2_IGG'), 'sars cov 2 igg', 'en', 1, 'evidence_auto'),
@@ -691,6 +900,21 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- SARS-CoV-2 IgM Antibody (SARS2_IGM)
   ((SELECT analyte_id FROM analytes WHERE code = 'SARS2_IGM'), 'sars cov 2 igm', 'en', 1, 'evidence_auto'),
 
+  -- Treponema pallidum Antibodies (syphilis), qualitative (ELISA) (SYPH_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'SYPH_IGG'), 'сифилис суммарные антитела к treponema pallidum ифа качеств опр', 'ru', 1, 'evidence_auto'),
+
+  -- Total Testosterone (TESTOSTERONE_TOTAL)
+  ((SELECT analyte_id FROM analytes WHERE code = 'TESTOSTERONE_TOTAL'), 'тестостерон общий', 'ru', 1, 'evidence_auto'),
+
+  -- Thyroglobulin (TG) (TG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'TG'), 'тиреоглобулин tg', 'ru', 1, 'evidence_auto'),
+
+  -- Thrombin Time (TT) (THROMBIN_TIME)
+  ((SELECT analyte_id FROM analytes WHERE code = 'THROMBIN_TIME'), 'тромбиновое время', 'ru', 1, 'evidence_auto'),
+
+  -- Thrombin Time Ratio (THROMBIN_TIME_RATIO)
+  ((SELECT analyte_id FROM analytes WHERE code = 'THROMBIN_TIME_RATIO'), 'тромбиновое время ratio', 'ru', 1, 'evidence_auto'),
+
   -- Toxoplasma gondii IgG Antibody (TOXO_IGG)
   ((SELECT analyte_id FROM analytes WHERE code = 'TOXO_IGG'), 'токсоплазма toxoplasma gondii igg', 'en', 1, 'evidence_auto'),
 
@@ -700,11 +924,18 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Thyroid Peroxidase Antibodies (TPO Ab) (TPO_AB)
   ((SELECT analyte_id FROM analytes WHERE code = 'TPO_AB'), 'переоксидаза щитовидной железы аутоантитела атпо', 'ru', 1, 'evidence_auto'),
 
+  -- Urine Ammonium Biurate Crystals (URINE_AMMONIUM_BIURATE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_AMMONIUM_BIURATE'), 'urine ammonium urate crystals', 'en', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_AMMONIUM_BIURATE'), 'кр кисл мочекислого аммония', 'ru', 1, 'dedup'),
+
   -- Urine Bacteria (microscopy) (URINE_BACTERIA)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BACTERIA'), 'бактерии', 'ru', 1, 'evidence_auto'),
 
   -- Urine Bilirubin (URINE_BIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BIL'), 'билирубин в моче', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Calcium Phosphate Crystals (URINE_CALCIUM_PHOSPHATE_CRYSTALS)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CALCIUM_PHOSPHATE_CRYSTALS'), 'крист фосфорнокисл кальция', 'ru', 1, 'evidence_auto'),
 
   -- Urine Casts (cylinders) (URINE_CASTS)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CASTS'), 'цилиндры', 'ru', 1, 'evidence_auto'),
@@ -714,6 +945,13 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Crystals / Salts (URINE_CRYSTALS)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CRYSTALS'), 'соли', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Calcium Oxalate Crystals (URINE_CRYSTALS_OXALATE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CRYSTALS_OXALATE'), 'calcium oxalate crystals', 'en', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CRYSTALS_OXALATE'), 'oxalate crystals', 'en', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CRYSTALS_OXALATE'), 'кристаллы оксалата кальция', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CRYSTALS_OXALATE'), 'кристаллы оксалаты', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CRYSTALS_OXALATE'), 'оксалатные кристаллы', 'ru', 1, 'dedup'),
 
   -- Urine Epithelial Cells (sediment) (URINE_EPIT)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_EPIT'), 'эпителиальные клетки осадок', 'ru', 1, 'evidence_auto'),
@@ -733,8 +971,15 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Urine Ketones (URINE_KET)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_KET'), 'кетоновые тела', 'ru', 1, 'evidence_auto'),
 
+  -- Urine Leukocyte Esterase (URINE_LEUKOCYTE_ESTERASE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_LEUKOCYTE_ESTERASE'), 'leukocyte esterase', 'en', 1, 'dedup'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_LEUKOCYTE_ESTERASE'), 'лейкоцитарная эстераза', 'ru', 1, 'dedup'),
+
   -- Urine Mucus (sediment) (URINE_MUCUS)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_MUCUS'), 'слизь осадок', 'ru', 1, 'evidence_auto'),
+
+  -- Mucus (urine sediment) (URINE_MUCUS_SED)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_MUCUS_SED'), 'слизь', 'ru', 1, 'evidence_auto'),
 
   -- Urine Nitrites (URINE_NIT)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_NIT'), 'нитриты', 'ru', 1, 'evidence_auto'),
@@ -751,6 +996,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Urine Red Blood Cells (URINE_RBC)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_RBC'), 'эритроциты в моче', 'ru', 1, 'evidence_auto'),
 
+  -- Urine Red Blood Cells and Hemoglobin (urine haematuria/hemoglobin) (URINE_RBC_HGB)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_RBC_HGB'), 'эритроциты гемоглобин в моче', 'ru', 1, 'evidence_auto'),
+
   -- Urine Sediment Erythrocytes (URINE_SED_RBC)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_SED_RBC'), 'эритроциты осадок', 'ru', 1, 'evidence_auto'),
 
@@ -765,6 +1013,12 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Urobilinogen (URINE_UBG)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_UBG'), 'уробилиноген в моче', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Urate Crystals (URINE_URATES)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_URATES'), 'ураты', 'ru', 1, 'evidence_auto'),
+
+  -- Urine Uric Acid Crystals (URINE_URIC_ACID_CRYSTALS)
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_URIC_ACID_CRYSTALS'), 'крист мочевой кислоты', 'ru', 1, 'evidence_auto'),
 
   -- Urine Leukocytes (WBC) (URINE_WBC)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_WBC'), 'лейкоциты в моче', 'ru', 1, 'evidence_auto'),

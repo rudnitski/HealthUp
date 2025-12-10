@@ -214,14 +214,31 @@ async function getAnalyteById(analyteId) {
 
 /**
  * Fetch all analytes from database for LLM schema
+ * Includes both approved analytes and pending analytes to prevent duplicates
  *
- * @returns {Promise<Array>} - Array of { code, name, category }
+ * @returns {Promise<Array>} - Array of { code, name, category, status, pending_id? }
  */
 async function getAnalyteSchema() {
-  const { rows } = await pool.query(
-    `SELECT code, name, category FROM analytes ORDER BY code`
+  // Fetch approved analytes
+  const { rows: approved } = await pool.query(
+    `SELECT code, name, category, 'approved' as status, NULL as pending_id
+     FROM analytes
+     ORDER BY code`
   );
-  return rows;
+
+  // Fetch pending analytes (status='pending' only)
+  const { rows: pending } = await pool.query(
+    `SELECT proposed_code AS code,
+            proposed_name AS name,
+            category,
+            'pending' as status,
+            pending_id
+     FROM pending_analytes
+     WHERE status = 'pending'
+     ORDER BY proposed_code`
+  );
+
+  return [...approved, ...pending];
 }
 
 /**
@@ -349,9 +366,12 @@ async function proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema) {
     .map(r => r.final_analyte?.code)
     .filter(Boolean);
 
-  // Build analyte schema string
+  // Build analyte schema string with status indicators
   const schemaText = analyteSchema
-    .map(a => `${a.code} (${a.name})`)
+    .map(a => {
+      const statusTag = a.status === 'pending' ? ' [PENDING]' : '';
+      return `${a.code}${statusTag} (${a.name})`;
+    })
     .join('\n');
 
   // Build batch prompt
@@ -1057,6 +1077,49 @@ async function queueNewAnalyte(rowResult) {
 }
 
 /**
+ * Queue lab result that matches a pending analyte
+ * Result stays unmapped until admin approves the pending analyte
+ *
+ * @param {Object} rowResult - Row decision object
+ * @param {Object} pendingAnalyte - Pending analyte from database
+ * @returns {Promise<void>}
+ */
+async function queuePendingMatch(rowResult, pendingAnalyte) {
+  const { result_id, confidence, label_raw } = rowResult;
+
+  const candidates = [{
+    pending_id: pendingAnalyte.pending_id,
+    code: pendingAnalyte.proposed_code,
+    name: pendingAnalyte.proposed_name,
+    source: 'pending_analyte',
+    confidence: confidence,
+    comment: 'Matched to pending analyte awaiting approval'
+  }];
+
+  try {
+    await pool.query(
+      `INSERT INTO match_reviews
+         (result_id, candidates, status, created_at)
+       VALUES ($1, $2, 'pending', NOW())
+       ON CONFLICT (result_id) DO UPDATE SET
+         candidates = EXCLUDED.candidates,
+         status = 'pending',
+         updated_at = NOW()`,
+      [result_id, JSON.stringify(candidates)]
+    );
+
+    logger.info({
+      result_id,
+      pending_code: pendingAnalyte.proposed_code,
+      pending_id: pendingAnalyte.pending_id,
+      parameter_name: label_raw
+    }, '[wetRun] Lab result matched to pending analyte - queued for approval');
+  } catch (error) {
+    logger.error({ error: error.message, result_id }, 'Failed to queue pending match');
+  }
+}
+
+/**
  * Hydrate fuzzy candidates with full analyte data (code, name)
  * @param {Array} fuzzyCandidates - Array of {analyte_id, alias, similarity}
  * @param {string} source - Source label for candidates
@@ -1300,6 +1363,7 @@ async function wetRun({ reportId, patientId, parameters }) {
   const counters = {
     written: 0,
     queued_for_review: 0,
+    queued_pending_match: 0,  // NEW: Lab results matched to pending analytes
     abstain_queued: 0,
     new_queued: 0,
     skipped: 0,
@@ -1366,6 +1430,7 @@ async function wetRun({ reportId, patientId, parameters }) {
       );
 
       if (analyteRows.length > 0) {
+        // Approved analyte exists → Write immediately
         const rowsAffected = await writeAnalyteId(
           result_id,
           analyteRows[0].analyte_id,
@@ -1374,6 +1439,27 @@ async function wetRun({ reportId, patientId, parameters }) {
         );
         if (rowsAffected > 0) {
           counters.written++;
+        }
+      } else {
+        // Check if code exists in pending_analytes
+        const { rows: pendingRows } = await pool.query(
+          `SELECT pending_id, proposed_code, proposed_name
+           FROM pending_analytes
+           WHERE proposed_code = $1 AND status = 'pending'`,
+          [final_analyte.code]
+        );
+
+        if (pendingRows.length > 0) {
+          // LLM matched a PENDING analyte → Queue for review
+          await queuePendingMatch(row, pendingRows[0]);
+          counters.queued_pending_match = (counters.queued_pending_match || 0) + 1;
+        } else {
+          // Code doesn't exist anywhere → This shouldn't happen but log it
+          logger.warn({
+            result_id,
+            code: final_analyte.code,
+            decision: final_decision
+          }, '[wetRun] MATCH_LLM but code not found in analytes or pending_analytes');
         }
       }
     }
