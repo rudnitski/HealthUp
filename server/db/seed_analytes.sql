@@ -227,7 +227,7 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('URINE_UROBILIN', 'Urine Urobilin', 'мкмоль/л', 'uncategorized'),
   ('URINE_WBC', 'Urine Leukocytes (WBC)', 'ед/мкл', 'uncategorized'),
   ('URINE_WBC_CLUSTERS', 'Urine Leukocyte Aggregates / WBC Clusters (urine sediment)', 'ед/мкл', 'uncategorized'),
-  ('URINE_YEAST', 'Urine Yeast (fungi, microscopy)', 'ед/мкл', 'uncategorized'),
+  ('URINE_YEAST', 'Urine Yeast (fungi, microscopy)', 'ед/мкл', 'uncategorized')
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================
