@@ -1482,6 +1482,12 @@ async function wetRun({ reportId, patientId, parameters }) {
       counters.abstain_queued++;
     }
 
+    // If LLM errored or left the row unmapped (e.g., API hiccup), still queue for review
+    else if (row.tiers?.llm?.error || final_decision === 'UNMAPPED') {
+      await queueAbstainForReview(row);
+      counters.abstain_queued++;
+    }
+
     // NEW analytes → Always queue
     else if (final_decision === 'NEW_LLM') {
       await queueNewAnalyte(row);
