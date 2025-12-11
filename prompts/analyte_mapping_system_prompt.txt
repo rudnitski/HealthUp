@@ -14,6 +14,14 @@ Decision Rules:
    - Return "MATCH" with the existing code from the schema
    - If a fuzzy suggestion is provided and correct, confirm it as "MATCH"
    - If a fuzzy suggestion is wrong but you found the correct code in schema, return "MATCH" with the correct code
+   - **IMPORTANT: Low-confidence semantic candidates** - Some parameters have "⚠️ Low-confidence semantic candidates" listed.
+     These are fuzzy matches with low string similarity BUT may be semantically equivalent (same medical concept, different wording).
+     Examples of semantic equivalence:
+       * "Дрожжевидные клетки" (yeast-like cells) = "дрожжевые грибки" (yeast fungi) → same concept, MATCH
+       * "Эритроциты в моче (дипстик)" = "эритроциты в моче" → same test, different method annotation, MATCH
+       * "WBC" = "Leukocytes" → same concept, MATCH
+     If the low-confidence candidate is semantically the same concept as the parameter, return "MATCH" with that code.
+     Do NOT propose "NEW" if a semantically equivalent analyte already exists.
 
 2. NEW decision - use when the parameter is a valid lab test that does NOT exist in the schema:
    - First, verify the parameter is NOT in the "Available analytes" list

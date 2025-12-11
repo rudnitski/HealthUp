@@ -213,6 +213,45 @@ async function getAnalyteById(analyteId) {
 }
 
 /**
+ * Auto-create alias when LLM confirms a semantic match
+ * This allows future exact matches without LLM involvement
+ *
+ * @param {number} analyteId - The analyte ID to create alias for
+ * @param {string} aliasText - The normalized label text to add as alias
+ * @param {string} lang - Language code (e.g., 'ru', 'en')
+ * @returns {Promise<boolean>} - True if alias was created
+ */
+async function autoCreateAlias(analyteId, aliasText, lang = 'ru') {
+  if (!analyteId || !aliasText) return false;
+
+  try {
+    const { rowCount } = await pool.query(
+      `INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source)
+       VALUES ($1, $2, $3, 1, 'llm_semantic_match')
+       ON CONFLICT (analyte_id, alias) DO NOTHING`,
+      [analyteId, aliasText.toLowerCase(), lang]
+    );
+
+    if (rowCount > 0) {
+      logger.info({
+        analyte_id: analyteId,
+        alias: aliasText,
+        lang,
+      }, '[autoCreateAlias] New alias created from LLM semantic match');
+      return true;
+    }
+    return false;
+  } catch (error) {
+    logger.error({
+      error: error.message,
+      analyte_id: analyteId,
+      alias: aliasText,
+    }, '[autoCreateAlias] Failed to create alias');
+    return false;
+  }
+}
+
+/**
  * Fetch all analytes from database for LLM schema
  * Includes both approved analytes and pending analytes to prevent duplicates
  *
@@ -277,7 +316,7 @@ function buildBatchPrompt(unmappedRows, categoryContext, schemaText) {
   const parametersText = unmappedRows.map((row, i) => {
     let contextText = '';
 
-    // Add provisional fuzzy match context
+    // Add provisional fuzzy match context (medium confidence 0.60-0.79)
     if (row.provisional_analyte) {
       const confidence = Number(row.provisional_analyte.confidence);
       const confStr = Number.isFinite(confidence) ? confidence.toFixed(2) : String(row.provisional_analyte.confidence);
@@ -290,6 +329,15 @@ function buildBatchPrompt(unmappedRows, categoryContext, schemaText) {
         const simStr = Number.isFinite(sim) ? sim.toFixed(2) : String(c.similarity);
         return `[${c.analyte_id}] sim: ${simStr}`;
       }).join(', ')}`;
+    }
+    // Add low-confidence fuzzy suggestions for semantic equivalence check
+    else if (row.low_confidence_suggestions && row.low_confidence_suggestions.length > 0) {
+      const suggestions = row.low_confidence_suggestions.map(s => {
+        const sim = Number(s.similarity);
+        const simStr = Number.isFinite(sim) ? sim.toFixed(2) : String(s.similarity);
+        return `${s.code} (${s.name}) [alias: "${s.alias}", sim: ${simStr}]`;
+      }).join('; ');
+      contextText = `   ⚠️ Low-confidence semantic candidates (check if same concept): ${suggestions}`;
     }
 
     return `
@@ -574,6 +622,32 @@ async function processRow(row, hasPgTrgm, analyteSuggestions) {
       };
       result.final_decision = 'NEEDS_LLM_REVIEW';
       result.note = 'medium_confidence_fuzzy_needs_llm';
+    }
+    // Case 4: Low-confidence fuzzy candidates (below 0.60) → pass to LLM for semantic check
+    else if (fuzzyMatch.candidates && fuzzyMatch.candidates.length > 0) {
+      // Hydrate candidates with analyte details for LLM context
+      const hydratedCandidates = [];
+      for (const candidate of fuzzyMatch.candidates) {
+        const analyte = await getAnalyteById(candidate.analyte_id);
+        if (analyte) {
+          hydratedCandidates.push({
+            analyte_id: analyte.analyte_id,
+            code: analyte.code,
+            name: analyte.name,
+            alias: candidate.alias,
+            similarity: candidate.sim,
+          });
+        }
+      }
+      if (hydratedCandidates.length > 0) {
+        result.tiers.fuzzy = {
+          matched: false,
+          low_confidence_candidates: hydratedCandidates,
+        };
+        result.low_confidence_suggestions = hydratedCandidates;
+        result.final_decision = 'UNMAPPED';
+        result.note = 'low_confidence_fuzzy_for_llm_semantic_check';
+      }
     }
   } else {
     result.tiers.fuzzy = {
@@ -1439,6 +1513,26 @@ async function wetRun({ reportId, patientId, parameters }) {
         );
         if (rowsAffected > 0) {
           counters.written++;
+
+          // Auto-create alias if LLM confirmed a low-confidence fuzzy suggestion
+          // This allows future exact matches without LLM involvement
+          if (row.low_confidence_suggestions && row.low_confidence_suggestions.length > 0) {
+            const matchedSuggestion = row.low_confidence_suggestions.find(
+              s => s.analyte_id === analyteRows[0].analyte_id
+            );
+            if (matchedSuggestion) {
+              // LLM confirmed the low-confidence suggestion was semantically correct
+              const lang = detectLanguage(row.label_raw);
+              const aliasCreated = await autoCreateAlias(
+                analyteRows[0].analyte_id,
+                normalizeLabel(row.label_raw),
+                lang
+              );
+              if (aliasCreated) {
+                counters.aliases_created = (counters.aliases_created || 0) + 1;
+              }
+            }
+          }
         }
       } else {
         // Check if code exists in pending_analytes

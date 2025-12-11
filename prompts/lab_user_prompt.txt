@@ -19,7 +19,6 @@ INCLUDE (blood tests - set specimen_type to "blood"):
 INCLUDE (urine tests - set specimen_type to "urine"):
 - Urinalysis: pH, specific gravity, protein, glucose, ketones, blood, bilirubin, urobilinogen, nitrites, leukocyte esterase
 - Urine microscopy: RBC, WBC, bacteria, casts, crystals
-- Urine culture: organism identification, colony counts
 - Urine protein: microalbumin, albumin/creatinine ratio, total protein
 - 24-hour urine: creatinine clearance, protein excretion, electrolytes
 
@@ -33,6 +32,9 @@ SKIP (do not extract at all):
 - Wound, throat, or other swab cultures
 - Genetic/DNA test results
 - Semen analysis
+- Urethral, vaginal, or cervical smear/swab microscopy (not urine tests)
+- Urine/bacterial cultures: organism names (e.g., "Staphylococcus", "E. coli", "Микроорганизм"), colony counts (e.g., "10^4 CFU/mL", "Количество"), antibiotic susceptibility results (e.g., "Resistant", "Sensitive", "Устойчивый", "Чувствительный")
+- Generic labels without specific analyte meaning: "Microorganism", "Organism", "Количество", "Count", "Growth"
 
 If a document contains ONLY non-blood/non-urine tests, return an empty parameters array.
 

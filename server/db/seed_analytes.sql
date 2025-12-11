@@ -141,6 +141,10 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('ENTEROCOCCUS_SPP', 'Enterococcus species (culture/microbiology identification)', '', 'uncategorized'),
   ('EO', 'Eosinophils (absolute)', '10^9 клеток/л', 'uncategorized'),
   ('EO_PRCT', 'Eosinophils (%)', '%', 'uncategorized'),
+  ('EBV_NA_IGG', 'Epstein-Barr Virus Nuclear Antigen (EBV-NA) IgG Antibody', 'Ед', 'uncategorized'),
+  ('EBV_VCA_IGA', 'Epstein-Barr Virus VCA IgA Antibody', 'Ед/мл', 'uncategorized'),
+  ('EBV_VCA_IGG', 'Epstein-Barr Virus VCA IgG Antibody', 'Ед/мл', 'uncategorized'),
+  ('EBV_VCA_IGM', 'Epstein-Barr Virus VCA IgM Antibody', 'R', 'uncategorized'),
   ('FIBRINOGEN', 'Fibrinogen', 'г/л', 'uncategorized'),
   ('HBsAG', 'Hepatitis B surface antigen (HBsAg), qualitative', '', 'uncategorized'),
   ('HCV_IGG', 'Hepatitis C Virus Antibodies (Anti-HCV), qualitative', 'Индекс', 'uncategorized'),
@@ -798,6 +802,18 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   -- Eosinophils (%) (EO_PRCT)
   ((SELECT analyte_id FROM analytes WHERE code = 'EO_PRCT'), 'эозинофилы eo', 'ru', 1, 'evidence_auto'),
 
+  -- Epstein-Barr Virus Nuclear Antigen (EBV-NA) IgG Antibody (EBV_NA_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'EBV_NA_IGG'), 'ат к ядерному антигену вируса эпштейн барр igg anti ebv na igg i125', 'ru', 1, 'evidence_auto'),
+
+  -- Epstein-Barr Virus VCA IgA Antibody (EBV_VCA_IGA)
+  ((SELECT analyte_id FROM analytes WHERE code = 'EBV_VCA_IGA'), 'вирус эпштейна барр капсидный антиген vca iga', 'ru', 1, 'evidence_auto'),
+
+  -- Epstein-Barr Virus VCA IgG Antibody (EBV_VCA_IGG)
+  ((SELECT analyte_id FROM analytes WHERE code = 'EBV_VCA_IGG'), 'вирус эпштейна барр капсидный антиген vca igg', 'ru', 1, 'evidence_auto'),
+
+  -- Epstein-Barr Virus VCA IgM Antibody (EBV_VCA_IGM)
+  ((SELECT analyte_id FROM analytes WHERE code = 'EBV_VCA_IGM'), 'вирус эпштейна барр капсидный антиген vca igm', 'ru', 1, 'evidence_auto'),
+
   -- Fibrinogen (FIBRINOGEN)
   ((SELECT analyte_id FROM analytes WHERE code = 'FIBRINOGEN'), 'фибриноген', 'ru', 1, 'evidence_auto'),
 
@@ -975,6 +991,7 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Bilirubin (URINE_BIL)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BIL'), 'билирубин в моче', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_BIL'), 'билирубин', 'ru', 1, 'evidence_auto'),
 
   -- Urine Calcium Phosphate Crystals (URINE_CALCIUM_PHOSPHATE_CRYSTALS)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_CALCIUM_PHOSPHATE_CRYSTALS'), 'крист фосфорнокисл кальция', 'ru', 1, 'evidence_auto'),
@@ -1046,6 +1063,8 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Red Blood Cells (URINE_RBC)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_RBC'), 'эритроциты в моче', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_RBC'), 'эритроциты в моче дипстик', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_RBC'), 'эритроциты моча', 'ru', 1, 'evidence_auto'),
 
   -- Urine Red Blood Cells and Hemoglobin (urine haematuria/hemoglobin) (URINE_RBC_HGB)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_RBC_HGB'), 'эритроциты гемоглобин в моче', 'ru', 1, 'evidence_auto'),
@@ -1079,7 +1098,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
 
   -- Urine Yeast (fungi, microscopy) (URINE_YEAST)
   ((SELECT analyte_id FROM analytes WHERE code = 'URINE_YEAST'), 'дрожжевые грибки', 'ru', 1, 'evidence_auto'),
-  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_YEAST'), 'дрожжевые грибы', 'ru', 1, 'evidence_auto')
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_YEAST'), 'дрожжевые грибы', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_YEAST'), 'дрожжевидные клетки', 'ru', 1, 'evidence_auto'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'URINE_YEAST'), 'дрожжи', 'ru', 1, 'evidence_auto')
 ON CONFLICT (analyte_id, alias) DO NOTHING;
 
 -- ============================================================================
