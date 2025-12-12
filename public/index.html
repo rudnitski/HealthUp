@@ -3,220 +3,287 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HealthUp</title>
+  <title>HealthUp — Lab Report Analysis</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/chat.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
 </head>
 <body>
-  <main class="container">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-      <h1 style="margin: 0;">HealthUp</h1>
-      <a href="/admin/pending-analytes" class="admin-link" style="color: #3b82f6; text-decoration: none; font-weight: 500;">
-        📋 Review Pending Analytes
-      </a>
-    </div>
-
-    <!-- NEW UNIFIED UPLOAD UI (Phase 2: Coexistence) -->
-    <div id="unified-upload-ui">
-      <!-- Upload Source Buttons -->
-      <div class="upload-source-selector">
-        <button id="manual-upload-btn" class="upload-source-button">
-          <span class="icon">📁</span>
-          <span class="label">Upload Files</span>
-        </button>
-        <button id="gmail-import-btn" class="upload-source-button" hidden>
-          <span class="icon">📧</span>
-          <span class="label">Import from Gmail</span>
-        </button>
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">H</div>
+          <span class="sidebar-logo-text">HealthUp</span>
+        </div>
       </div>
-      <p class="help-text">
-        Drag & drop files or click above<br>
-        Supported: PDF, PNG, JPEG, HEIC (max 10MB each, up to 20 files)
-      </p>
 
-      <!-- Hidden file input for multi-file selection -->
-      <input
-        id="multi-file-input"
-        type="file"
-        name="analysisFile"
-        accept="application/pdf,image/png,image/jpeg,image/heic,.pdf,.png,.jpg,.jpeg,.heic"
-        multiple
-        style="display: none;"
-      >
-
-      <!-- Upload Queue Table -->
-      <section id="upload-queue-section" class="queue-section" hidden>
-        <h3>Selected Files</h3>
-        <table class="queue-table">
-          <thead>
-            <tr>
-              <th>Filename</th>
-              <th>Size</th>
-              <th>Type</th>
-            </tr>
-          </thead>
-          <tbody id="queue-tbody">
-            <!-- Populated dynamically -->
-          </tbody>
-        </table>
-        <div style="display: flex; gap: 0.5rem;">
-          <button id="start-processing-btn" class="primary-button">
-            Start Processing (<span id="file-count">0</span> files)
-          </button>
-          <button id="clear-queue-btn" class="secondary-button">Clear Queue</button>
-        </div>
-      </section>
-
-      <!-- Gmail Section -->
-      <section id="gmail-section" class="gmail-section" hidden>
-        <!-- Auth Status -->
-        <div id="gmail-auth-status" class="gmail-subsection">
-          <h3>Import from Gmail</h3>
-          <div id="auth-status-message"></div>
-          <button id="gmail-action-btn" class="primary-button"></button>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Main</div>
+          <a href="#upload" class="nav-item active" data-section="upload">
+            <span class="nav-icon">📤</span>
+            <span>Upload Reports</span>
+          </a>
+          <a href="#assistant" class="nav-item" data-section="assistant">
+            <span class="nav-icon">💬</span>
+            <span>Health Assistant</span>
+          </a>
         </div>
 
-        <!-- Fetch Progress -->
-        <div id="gmail-fetch-progress" class="gmail-subsection" hidden>
-          <h3>Fetching Lab Tests from Gmail</h3>
-          <div class="progress-bar-wrapper">
-            <div id="gmail-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
-            <span id="gmail-progress-percent">0%</span>
+        <div class="nav-section">
+          <div class="nav-section-title">Management</div>
+          <a href="/admin/pending-analytes" class="nav-item">
+            <span class="nav-icon">📋</span>
+            <span>Review Queue</span>
+            <span class="nav-badge" id="pending-count" hidden>0</span>
+          </a>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <p class="sidebar-footer-text">HealthUp v3.0</p>
+      </div>
+    </aside>
+
+    <!-- Mobile Overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="content-header">
+        <div class="content-header-inner">
+          <h1 class="page-title" id="page-title">Upload Lab Reports</h1>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <!-- Upload Section -->
+        <section id="section-upload" class="content-section">
+          <!-- Upload Source Buttons -->
+          <div id="unified-upload-ui">
+            <div class="upload-source-selector">
+              <button id="manual-upload-btn" class="upload-source-button">
+                <span class="icon">📁</span>
+                <span class="label">Upload Files</span>
+                <span class="help-text">Drag & drop or click to select</span>
+              </button>
+              <button id="gmail-import-btn" class="upload-source-button" hidden>
+                <span class="icon">📧</span>
+                <span class="label">Import from Gmail</span>
+                <span class="help-text">Connect & import automatically</span>
+              </button>
+            </div>
+            <p class="help-text" style="text-align: center; margin-top: -1rem; margin-bottom: 2rem;">
+              Supported: PDF, PNG, JPEG, HEIC (max 10MB each, up to 20 files)
+            </p>
+
+            <!-- Hidden file input for multi-file selection -->
+            <input
+              id="multi-file-input"
+              type="file"
+              name="analysisFile"
+              accept="application/pdf,image/png,image/jpeg,image/heic,.pdf,.png,.jpg,.jpeg,.heic"
+              multiple
+              style="display: none;"
+            >
+
+            <!-- Upload Queue Table -->
+            <section id="upload-queue-section" class="queue-section" hidden>
+              <h3>Selected Files</h3>
+              <div class="table-wrapper">
+                <table class="queue-table">
+                  <thead>
+                    <tr>
+                      <th>Filename</th>
+                      <th>Size</th>
+                      <th>Type</th>
+                    </tr>
+                  </thead>
+                  <tbody id="queue-tbody">
+                    <!-- Populated dynamically -->
+                  </tbody>
+                </table>
+              </div>
+              <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+                <button id="start-processing-btn" class="btn btn-primary btn-lg">
+                  Start Processing (<span id="file-count">0</span> files)
+                </button>
+                <button id="clear-queue-btn" class="btn btn-secondary">Clear Queue</button>
+              </div>
+            </section>
+
+            <!-- Gmail Section -->
+            <section id="gmail-section" class="gmail-section" hidden>
+              <!-- Auth Status -->
+              <div id="gmail-auth-status" class="gmail-subsection">
+                <h3>Import from Gmail</h3>
+                <div id="auth-status-message"></div>
+                <button id="gmail-action-btn" class="btn btn-primary"></button>
+              </div>
+
+              <!-- Fetch Progress -->
+              <div id="gmail-fetch-progress" class="gmail-subsection" hidden>
+                <h3>Fetching Lab Tests from Gmail</h3>
+                <div class="progress-bar-wrapper" style="height: 24px; margin-bottom: 1rem;">
+                  <div id="gmail-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+                </div>
+                <span id="gmail-progress-percent" style="font-weight: 600;">0%</span>
+                <ul id="gmail-step-list" class="step-list">
+                  <!-- 2 steps populated here -->
+                </ul>
+                <p id="gmail-time-estimate" class="help-text"></p>
+              </div>
+
+              <!-- Attachment Selection -->
+              <div id="gmail-selection" class="gmail-subsection" hidden>
+                <h3>Select Attachments to Process</h3>
+                <div id="gmail-selection-summary" style="margin-bottom: 1rem;"></div>
+                <div class="selection-actions">
+                  <button id="select-all-btn" class="btn btn-secondary btn-sm">Select All</button>
+                  <button id="deselect-all-btn" class="btn btn-secondary btn-sm">Deselect All</button>
+                  <button id="download-recognize-btn" class="btn btn-primary" disabled>
+                    Download & Recognize Selected (<span id="selected-count">0</span>)
+                  </button>
+                </div>
+                <div class="table-wrapper">
+                  <table id="attachment-selection-table" class="selection-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 40px;"></th>
+                        <th>Email Details</th>
+                        <th>Filename</th>
+                        <th>Size</th>
+                        <th>Dup</th>
+                      </tr>
+                    </thead>
+                    <tbody id="attachment-selection-tbody">
+                      <!-- Populated dynamically -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <!-- Unified Progress Table -->
+            <section id="progress-section" class="progress-section" hidden>
+              <h3>Processing Files</h3>
+              <div class="table-wrapper">
+                <table class="progress-table">
+                  <thead>
+                    <tr>
+                      <th>Filename</th>
+                      <th>Status</th>
+                      <th>Progress</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody id="progress-tbody">
+                    <!-- Rows populated dynamically, updated via polling -->
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <!-- Results Table -->
+            <section id="results-section" class="results-section" hidden>
+              <h3>Processing Complete</h3>
+              <div class="results-summary">
+                <span class="summary-stat">✅ Succeeded: <strong id="success-count">0</strong></span>
+                <span class="summary-stat" id="duplicate-stat" hidden>🔄 Duplicates: <strong id="duplicate-count">0</strong></span>
+                <span class="summary-stat">❌ Failed: <strong id="failed-count">0</strong></span>
+              </div>
+              <div class="table-wrapper">
+                <table class="results-table">
+                  <thead>
+                    <tr>
+                      <th>Filename</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="results-tbody">
+                    <!-- Populated with results -->
+                  </tbody>
+                </table>
+              </div>
+              <p class="help-text" style="margin-top: 1.5rem;">To upload more files, refresh this page</p>
+            </section>
           </div>
-          <ul id="gmail-step-list" class="step-list">
-            <!-- 2 steps populated here -->
-          </ul>
-          <p id="gmail-time-estimate"></p>
-        </div>
 
-        <!-- Attachment Selection -->
-        <div id="gmail-selection" class="gmail-subsection" hidden>
-          <h3>Select Attachments to Process</h3>
-          <div id="gmail-selection-summary"></div>
-          <div class="selection-actions">
-            <button id="select-all-btn" class="secondary-button">Select All</button>
-            <button id="deselect-all-btn" class="secondary-button">Deselect All</button>
-            <button id="download-recognize-btn" class="primary-button" disabled>
-              Download & Recognize Selected (<span id="selected-count">0</span>)
-            </button>
+          <!-- Report Viewing UI (shown when ?reportId= parameter is present) -->
+          <div id="report-view-ui" style="display: none;">
+            <p id="file-message" class="message" aria-live="polite" hidden></p>
+            <p id="analysis-result" class="message" aria-live="polite" hidden></p>
+
+            <!-- View Original File Button -->
+            <div class="action-buttons">
+              <button
+                id="viewOriginalBtn"
+                class="btn btn-secondary"
+                onclick="viewOriginalFile()"
+              >
+                📄 View Original File
+              </button>
+            </div>
+
+            <section class="progress" aria-live="polite" hidden>
+              <div class="progress-bar-wrapper" style="height: 10px;">
+                <progress id="progress-bar" class="progress-bar" max="5" value="0" style="display: none;"></progress>
+                <div id="progress-bar-visual" class="progress-bar-fill" style="width: 0%;"></div>
+              </div>
+              <div id="progress-steps" class="progress-steps"></div>
+            </section>
+            <section id="analysis-details" class="result-details" aria-live="polite" hidden></section>
+            <pre id="analysis-raw" class="raw-output" hidden></pre>
           </div>
-          <table id="attachment-selection-table" class="selection-table">
-            <thead>
-              <tr>
-                <th style="width: 40px;"></th>
-                <th>Email Details</th>
-                <th>Filename</th>
-                <th>Size</th>
-                <th>Dup</th>
-              </tr>
-            </thead>
-            <tbody id="attachment-selection-tbody">
-              <!-- Populated dynamically -->
-            </tbody>
-          </table>
-        </div>
-      </section>
+        </section>
 
-      <!-- Unified Progress Table -->
-      <section id="progress-section" class="progress-section" hidden>
-        <h3>Processing Files</h3>
-        <table class="progress-table">
-          <thead>
-            <tr>
-              <th>Filename</th>
-              <th>Status</th>
-              <th>Progress</th>
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody id="progress-tbody">
-            <!-- Rows populated dynamically, updated via polling -->
-          </tbody>
-        </table>
-      </section>
+        <!-- Conversational Assistant Section -->
+        <section id="section-assistant" class="content-section" style="display: none;">
+          <div id="conversational-chat-container" class="chat-container">
+            <div class="chat-header">
+              <h2>HealthUp Assistant</h2>
+              <p>Ask questions about your lab results in natural language</p>
+            </div>
+            <div class="chat-medical-disclaimer">
+              <strong>Note:</strong> This analysis is based on your lab data and general medical knowledge.
+              Always consult your healthcare provider to interpret results in the context of your complete health history.
+            </div>
+            <div class="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
+              <!-- Messages appended dynamically -->
+            </div>
+            <div class="chat-input-container">
+              <div class="chat-input-wrapper">
+                <textarea
+                  class="chat-input-textarea"
+                  placeholder="Ask a question about your lab results..."
+                  rows="2"
+                  aria-label="Chat message input"
+                  disabled
+                ></textarea>
+                <button class="chat-send-button" type="button" aria-label="Send message" disabled>
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
 
-      <!-- Results Table -->
-      <section id="results-section" class="results-section" hidden>
-        <h3>Processing Complete</h3>
-        <div class="results-summary">
-          <span class="summary-stat">✅ Succeeded: <strong id="success-count">0</strong></span>
-          <span class="summary-stat" id="duplicate-stat" hidden>🔄 Duplicates: <strong id="duplicate-count">0</strong></span>
-          <span class="summary-stat">❌ Failed: <strong id="failed-count">0</strong></span>
-        </div>
-        <table class="results-table">
-          <thead>
-            <tr>
-              <th>Filename</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="results-tbody">
-            <!-- Populated with results -->
-          </tbody>
-        </table>
-        <p class="help-text">To upload more files, refresh this page</p>
-      </section>
-    </div>
-
-    <!-- Report Viewing UI (shown when ?reportId= parameter is present) -->
-    <div id="report-view-ui" style="display: none;">
-      <p id="file-message" class="message" aria-live="polite" hidden></p>
-      <p id="analysis-result" class="message" aria-live="polite" hidden></p>
-
-      <!-- View Original File Button -->
-      <div class="action-buttons" style="margin: 1rem 0;">
-        <button
-          id="viewOriginalBtn"
-          class="btn btn-secondary"
-          onclick="viewOriginalFile()"
-        >
-          📄 View Original File
-        </button>
+          <!-- Results container (populated by chat assistant) -->
+          <div id="sqlResults" style="display: none; margin-top: 2rem;">
+            <!-- Results populated dynamically -->
+          </div>
+        </section>
       </div>
+    </main>
 
-      <section class="progress" aria-live="polite" hidden>
-        <progress id="progress-bar" class="progress-bar" max="5" value="0"></progress>
-        <div id="progress-steps" class="progress-steps"></div>
-      </section>
-      <section id="analysis-details" class="result-details" aria-live="polite" hidden></section>
-      <pre id="analysis-raw" class="raw-output" hidden></pre>
-    </div>
+    <!-- Mobile Menu Toggle -->
+    <button class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Toggle menu">
+      ☰
+    </button>
+  </div>
 
-    <!-- PRD v3.2: Conversational SQL Assistant -->
-    <div id="conversational-chat-container" class="chat-container">
-      <div class="chat-header">
-        <h2>HealthUp Assistant</h2>
-        <p>Ask questions about your lab results in natural language</p>
-      </div>
-      <div class="chat-medical-disclaimer">
-        <strong>Note:</strong> This analysis is based on your lab data and general medical knowledge.
-        Always consult your healthcare provider to interpret results in the context of your complete health history.
-      </div>
-      <div class="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
-        <!-- Messages appended dynamically -->
-      </div>
-      <div class="chat-input-container">
-        <div class="chat-input-wrapper">
-          <textarea
-            class="chat-input-textarea"
-            placeholder="Ask a question about your lab results..."
-            rows="2"
-            aria-label="Chat message input"
-            disabled
-          ></textarea>
-          <button class="chat-send-button" type="button" aria-label="Send message" disabled>
-            Send
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Results container (populated by chat assistant) -->
-    <div id="sqlResults" style="display: none; margin-top: 2rem;">
-      <!-- Results populated dynamically -->
-    </div>
-  </main>
   <!-- Chart.js and date adapter for time-series plots (must load before our scripts) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
@@ -230,5 +297,110 @@
   <script src="js/unified-upload.js"></script>
   <script src="js/chat.js"></script>
   <script src="js/app.js"></script>
+
+  <!-- Navigation Script -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const hasReportId = Boolean(urlParams.get('reportId'));
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('sidebar-overlay');
+      const mobileToggle = document.getElementById('mobile-menu-toggle');
+      const navItems = document.querySelectorAll('.nav-item[data-section]');
+      const sections = document.querySelectorAll('.content-section');
+      const pageTitle = document.getElementById('page-title');
+
+      // Section titles
+      const sectionTitles = {
+        'upload': 'Upload Lab Reports',
+        'assistant': 'Health Assistant'
+      };
+
+      // Mobile menu toggle
+      function toggleMobileMenu() {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('visible');
+        mobileToggle.textContent = sidebar.classList.contains('open') ? '✕' : '☰';
+      }
+
+      mobileToggle.addEventListener('click', toggleMobileMenu);
+      overlay.addEventListener('click', toggleMobileMenu);
+
+      // Navigation
+      function switchSection(sectionId) {
+        if (hasReportId && sectionId !== 'upload') {
+          sectionId = 'upload';
+        }
+
+        // Update nav items
+        navItems.forEach(item => {
+          item.classList.toggle('active', item.dataset.section === sectionId);
+        });
+
+        // Update sections
+        sections.forEach(section => {
+          const isActive = section.id === `section-${sectionId}`;
+          section.style.display = isActive ? 'block' : 'none';
+        });
+
+        // Update page title
+        pageTitle.textContent = sectionTitles[sectionId] || 'HealthUp';
+
+        // Close mobile menu
+        if (sidebar.classList.contains('open')) {
+          toggleMobileMenu();
+        }
+
+        // Update URL hash
+        history.replaceState(null, '', `#${sectionId}`);
+      }
+
+      // Handle nav clicks
+      navItems.forEach(item => {
+        item.addEventListener('click', function(e) {
+          e.preventDefault();
+          const sectionId = this.dataset.section;
+          if (sectionId) {
+            switchSection(sectionId);
+          }
+        });
+      });
+
+      // Handle initial hash
+      const hash = window.location.hash.slice(1);
+      if (hash && sectionTitles[hash]) {
+        switchSection(hash);
+      } else {
+        switchSection(hasReportId ? 'upload' : 'upload');
+      }
+
+      // Handle hash changes
+      window.addEventListener('hashchange', function() {
+        const newHash = window.location.hash.slice(1);
+        if (newHash && sectionTitles[newHash]) {
+          switchSection(newHash);
+        }
+      });
+
+      // Fetch pending count for badge
+      async function fetchPendingCount() {
+        try {
+          const response = await fetch('/api/admin/pending-analytes');
+          if (response.ok) {
+            const data = await response.json();
+            const badge = document.getElementById('pending-count');
+            const pending = Array.isArray(data.pending) ? data.pending : [];
+            if (badge && pending.length > 0) {
+              badge.textContent = pending.length;
+              badge.hidden = false;
+            }
+          }
+        } catch (e) {
+          // Silently fail - badge just won't show
+        }
+      }
+      fetchPendingCount();
+    });
+  </script>
 </body>
 </html>

@@ -6,13 +6,15 @@ let pendingAnalytes = [];
 let ambiguousMatches = [];
 
 // DOM Elements
-const tabButtons = document.querySelectorAll('.tab-button');
+const tabButtons = document.querySelectorAll('.admin-tab');
 const tabContents = document.querySelectorAll('.tab-content');
+const navPendingCount = document.getElementById('nav-pending-count');
 
 // New Analytes Tab
 const loadingNew = document.getElementById('loading-new');
 const emptyNew = document.getElementById('empty-new');
 const errorNew = document.getElementById('error-new');
+const tableNewWrapper = document.getElementById('table-new-wrapper');
 const tableNew = document.getElementById('table-new');
 const tbodyNew = document.getElementById('tbody-new');
 const newCount = document.getElementById('new-count');
@@ -21,6 +23,7 @@ const newCount = document.getElementById('new-count');
 const loadingAmbiguous = document.getElementById('loading-ambiguous');
 const emptyAmbiguous = document.getElementById('empty-ambiguous');
 const errorAmbiguous = document.getElementById('error-ambiguous');
+const tableAmbiguousWrapper = document.getElementById('table-ambiguous-wrapper');
 const tableAmbiguous = document.getElementById('table-ambiguous');
 const tbodyAmbiguous = document.getElementById('tbody-ambiguous');
 const ambiguousCount = document.getElementById('ambiguous-count');
@@ -150,6 +153,7 @@ function confirm(title, message, options = {}) {
 async function fetchPendingAnalytes() {
   loadingNew.hidden = false;
   errorNew.hidden = true;
+  tableNewWrapper.hidden = true;
   tableNew.hidden = true;
   emptyNew.hidden = true;
 
@@ -162,6 +166,14 @@ async function fetchPendingAnalytes() {
     const data = await response.json();
     pendingAnalytes = data.pending || [];
     newCount.textContent = pendingAnalytes.length;
+    if (navPendingCount) {
+      if (pendingAnalytes.length > 0) {
+        navPendingCount.textContent = pendingAnalytes.length;
+        navPendingCount.hidden = false;
+      } else {
+        navPendingCount.hidden = true;
+      }
+    }
 
     renderPendingAnalytes();
   } catch (error) {
@@ -179,11 +191,13 @@ function renderPendingAnalytes() {
 
   if (pendingAnalytes.length === 0) {
     emptyNew.hidden = false;
+    tableNewWrapper.hidden = true;
     tableNew.hidden = true;
     return;
   }
 
   emptyNew.hidden = true;
+  tableNewWrapper.hidden = false;
   tableNew.hidden = false;
 
   pendingAnalytes.forEach(analyte => {
@@ -229,6 +243,7 @@ function renderPendingAnalytes() {
 async function fetchAmbiguousMatches() {
   loadingAmbiguous.hidden = false;
   errorAmbiguous.hidden = true;
+  tableAmbiguousWrapper.hidden = true;
   tableAmbiguous.hidden = true;
   emptyAmbiguous.hidden = true;
 
@@ -258,11 +273,13 @@ function renderAmbiguousMatches() {
 
   if (ambiguousMatches.length === 0) {
     emptyAmbiguous.hidden = false;
+    tableAmbiguousWrapper.hidden = true;
     tableAmbiguous.hidden = true;
     return;
   }
 
   emptyAmbiguous.hidden = true;
+  tableAmbiguousWrapper.hidden = false;
   tableAmbiguous.hidden = false;
 
   ambiguousMatches.forEach(match => {

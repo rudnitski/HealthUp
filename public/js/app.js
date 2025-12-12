@@ -10,6 +10,7 @@
   const reportIdParam = urlParams.get('reportId');
 
   const progressBarEl = document.querySelector('#progress-bar');
+  const progressBarVisualEl = document.querySelector('#progress-bar-visual');
   const progressStepsEl = document.querySelector('#progress-steps');
   const progressContainerEl = progressBarEl?.parentElement || null;
   const pipelineSteps = [
@@ -70,6 +71,10 @@
       progressBarEl.max = pipelineSteps.length;
       progressBarEl.dataset.status = 'idle';
     }
+    if (progressBarVisualEl) {
+      progressBarVisualEl.style.width = '0%';
+      progressBarVisualEl.classList.remove('error', 'completed');
+    }
     if (progressStepsEl) {
       progressStepsEl.replaceChildren();
     }
@@ -122,6 +127,16 @@
       : merged[merged.length - 1].status === 'completed'
         ? 'completed'
         : 'in_progress';
+    if (progressBarVisualEl) {
+      const percent = Math.min((completedCount / pipelineSteps.length) * 100, 100);
+      progressBarVisualEl.style.width = `${percent}%`;
+      progressBarVisualEl.classList.remove('error', 'completed');
+      if (merged.some((step) => step.status === 'failed')) {
+        progressBarVisualEl.classList.add('error');
+      } else if (merged[merged.length - 1].status === 'completed') {
+        progressBarVisualEl.classList.add('completed');
+      }
+    }
 
     const fragment = document.createDocumentFragment();
     merged.forEach((step, index) => {
@@ -657,20 +672,37 @@
 
   // Old upload button event listener removed (functionality moved to unified-upload.js)
 
-  // PRD v3.2: Initialize Conversational SQL Assistant
+  // PRD v3.2: Initialize Conversational SQL Assistant (lazy-init when visible)
   let conversationalSQLChat = null;
+  let chatInitialized = false;
+  const assistantSection = document.getElementById('section-assistant');
+  const chatContainer = document.getElementById('conversational-chat-container');
 
-  (async () => {
-    const chatContainer = document.getElementById('conversational-chat-container');
-
-    if (chatContainer && window.ConversationalSQLChat) {
-      conversationalSQLChat = new window.ConversationalSQLChat();
-      conversationalSQLChat.init(chatContainer);
-      console.log('[app] Conversational SQL chat initialized');
-    } else if (!window.ConversationalSQLChat) {
-      console.error('[app] ConversationalSQLChat not loaded');
+  const initChatIfVisible = () => {
+    if (chatInitialized || !chatContainer || !assistantSection) {
+      return;
     }
-  })();
+    if (getComputedStyle(assistantSection).display === 'none') {
+      return;
+    }
+    if (!window.ConversationalSQLChat) {
+      // eslint-disable-next-line no-console
+      console.error('[app] ConversationalSQLChat not loaded');
+      return;
+    }
+    conversationalSQLChat = new window.ConversationalSQLChat();
+    conversationalSQLChat.init(chatContainer);
+    chatInitialized = true;
+    // eslint-disable-next-line no-console
+    console.log('[app] Conversational SQL chat initialized');
+  };
+
+  if (assistantSection && 'MutationObserver' in window) {
+    const observer = new MutationObserver(() => initChatIfVisible());
+    observer.observe(assistantSection, { attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
+  }
+  // Initial check in case assistant is shown on load
+  initChatIfVisible();
 
   // Auto-load report if reportId is in URL parameters
   if (reportIdParam) {

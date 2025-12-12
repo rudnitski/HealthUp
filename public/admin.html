@@ -3,129 +3,211 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HealthUp — Admin Review Panel</title>
+  <title>HealthUp — Admin Panel</title>
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/admin.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
 </head>
 <body>
-  <main class="container">
-    <nav class="breadcrumb">
-      <a href="/" class="breadcrumb-link">← Back to Main</a>
-    </nav>
-
-    <h1>Admin Review Panel</h1>
-    <p class="help-text">Review and approve pending analytes and resolve ambiguous matches</p>
-
-    <!-- Tab Navigation -->
-    <div class="tabs">
-      <button id="tab-new-analytes" class="tab-button active" data-tab="new-analytes">
-        📋 New Analytes <span id="new-count" class="tab-count">0</span>
-      </button>
-      <button id="tab-ambiguous" class="tab-button" data-tab="ambiguous">
-        ❓ Ambiguous Matches <span id="ambiguous-count" class="tab-count">0</span>
-      </button>
-      <button id="tab-danger-zone" class="tab-button" data-tab="danger-zone">
-        ⚠️ Danger Zone
-      </button>
-    </div>
-
-    <!-- Tab Content: New Analytes -->
-    <section id="content-new-analytes" class="tab-content active" aria-live="polite">
-      <h2>Pending New Analytes</h2>
-
-      <div id="loading-new" class="loading-state" hidden>
-        <p>Loading...</p>
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <a href="/" class="sidebar-logo" style="text-decoration: none;">
+          <div class="sidebar-logo-icon">H</div>
+          <span class="sidebar-logo-text">HealthUp</span>
+        </a>
       </div>
 
-      <div id="empty-new" class="empty-state" hidden>
-        <p>✅ All caught up! No pending analytes to review.</p>
-      </div>
-
-      <div id="error-new" class="error-state" hidden>
-        <p class="error-message"></p>
-      </div>
-
-      <table id="table-new" class="admin-table" hidden>
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Name</th>
-            <th>Category</th>
-            <th>Unit</th>
-            <th>Confidence</th>
-            <th>Variations</th>
-            <th>First Seen</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="tbody-new">
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Tab Content: Ambiguous Matches -->
-    <section id="content-ambiguous" class="tab-content" aria-live="polite" hidden>
-      <h2>Ambiguous Matches</h2>
-
-      <div id="loading-ambiguous" class="loading-state" hidden>
-        <p>Loading...</p>
-      </div>
-
-      <div id="empty-ambiguous" class="empty-state" hidden>
-        <p>✅ All caught up! No ambiguous matches to review.</p>
-      </div>
-
-      <div id="error-ambiguous" class="error-state" hidden>
-        <p class="error-message"></p>
-      </div>
-
-      <table id="table-ambiguous" class="admin-table" hidden>
-        <thead>
-          <tr>
-            <th>Parameter Name</th>
-            <th>Unit</th>
-            <th>Candidates</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="tbody-ambiguous">
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Tab Content: Danger Zone -->
-    <section id="content-danger-zone" class="tab-content" aria-live="polite" hidden>
-      <h2>⚠️ Danger Zone</h2>
-      <p class="help-text">Destructive operations that cannot be undone</p>
-
-      <div class="danger-zone-container">
-        <div class="danger-zone-item">
-          <div class="danger-zone-info">
-            <h3>Reset Database</h3>
-            <p>Drop all tables and recreate schema with seed data. This will delete:</p>
-            <ul>
-              <li>All uploaded lab reports</li>
-              <li>All patient data</li>
-              <li>All lab results and mappings</li>
-              <li>All pending analytes and reviews</li>
-            </ul>
-            <p><strong>Analyte definitions and aliases will be restored from seed data.</strong></p>
-          </div>
-          <div class="danger-zone-action">
-            <button id="reset-database-btn" class="danger-button">
-              🗑️ Reset Database
-            </button>
-          </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Main</div>
+          <a href="/#upload" class="nav-item">
+            <span class="nav-icon">📤</span>
+            <span>Upload Reports</span>
+          </a>
+          <a href="/#assistant" class="nav-item">
+            <span class="nav-icon">💬</span>
+            <span>Health Assistant</span>
+          </a>
         </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">Management</div>
+          <a href="/admin/pending-analytes" class="nav-item active">
+            <span class="nav-icon">📋</span>
+            <span>Review Queue</span>
+            <span class="nav-badge" id="nav-pending-count" hidden>0</span>
+          </a>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <p class="sidebar-footer-text">HealthUp v3.0</p>
       </div>
+    </aside>
 
-      <div id="reset-status" class="status-message" hidden></div>
-    </section>
+    <!-- Mobile Overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
-    <!-- Toast Notifications -->
-    <div id="toast-container" class="toast-container" aria-live="polite"></div>
-  </main>
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="content-header">
+        <div class="content-header-inner">
+          <h1 class="page-title">Admin Panel</h1>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <p class="help-text" style="margin-bottom: 2rem;">Review and approve pending analytes and resolve ambiguous matches</p>
+
+        <!-- Tab Navigation -->
+        <div class="admin-tabs">
+          <button id="tab-new-analytes" class="admin-tab active" data-tab="new-analytes">
+            <span class="admin-tab-icon">📋</span>
+            <span class="admin-tab-label">New Analytes</span>
+            <span id="new-count" class="admin-tab-badge">0</span>
+          </button>
+          <button id="tab-ambiguous" class="admin-tab" data-tab="ambiguous">
+            <span class="admin-tab-icon">❓</span>
+            <span class="admin-tab-label">Ambiguous Matches</span>
+            <span id="ambiguous-count" class="admin-tab-badge">0</span>
+          </button>
+          <button id="tab-danger-zone" class="admin-tab admin-tab-danger" data-tab="danger-zone">
+            <span class="admin-tab-icon">⚠️</span>
+            <span class="admin-tab-label">Danger Zone</span>
+          </button>
+        </div>
+
+        <!-- Tab Content: New Analytes -->
+        <section id="content-new-analytes" class="tab-content active" aria-live="polite">
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Pending New Analytes</h2>
+              <p class="card-subtitle">Review LLM-proposed analytes before adding to the catalog</p>
+            </div>
+            <div class="card-body">
+              <div id="loading-new" class="loading-state" hidden>
+                <div class="loading-spinner"></div>
+                <p>Loading pending analytes...</p>
+              </div>
+
+              <div id="empty-new" class="empty-state" hidden>
+                <div class="empty-state-icon">✅</div>
+                <div class="empty-state-title">All caught up!</div>
+                <p class="empty-state-desc">No pending analytes to review.</p>
+              </div>
+
+              <div id="error-new" class="error-state" hidden>
+                <p class="error-message"></p>
+              </div>
+
+              <div class="table-wrapper" id="table-new-wrapper" hidden>
+                <table id="table-new" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Name</th>
+                      <th>Category</th>
+                      <th>Unit</th>
+                      <th>Confidence</th>
+                      <th>Variations</th>
+                      <th>First Seen</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-new">
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab Content: Ambiguous Matches -->
+        <section id="content-ambiguous" class="tab-content" aria-live="polite" hidden>
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Ambiguous Matches</h2>
+              <p class="card-subtitle">Resolve parameter names with multiple possible mappings</p>
+            </div>
+            <div class="card-body">
+              <div id="loading-ambiguous" class="loading-state" hidden>
+                <div class="loading-spinner"></div>
+                <p>Loading ambiguous matches...</p>
+              </div>
+
+              <div id="empty-ambiguous" class="empty-state" hidden>
+                <div class="empty-state-icon">✅</div>
+                <div class="empty-state-title">All caught up!</div>
+                <p class="empty-state-desc">No ambiguous matches to review.</p>
+              </div>
+
+              <div id="error-ambiguous" class="error-state" hidden>
+                <p class="error-message"></p>
+              </div>
+
+              <div class="table-wrapper" id="table-ambiguous-wrapper" hidden>
+                <table id="table-ambiguous" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter Name</th>
+                      <th>Unit</th>
+                      <th>Candidates</th>
+                      <th>Created</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-ambiguous">
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab Content: Danger Zone -->
+        <section id="content-danger-zone" class="tab-content" aria-live="polite" hidden>
+          <div class="danger-zone-card">
+            <div class="danger-zone-header">
+              <h2>⚠️ Danger Zone</h2>
+              <p>Destructive operations that cannot be undone</p>
+            </div>
+            <div class="danger-zone-body">
+              <div class="danger-zone-item">
+                <div class="danger-zone-info">
+                  <h3>Reset Database</h3>
+                  <p>Drop all tables and recreate schema with seed data. This will permanently delete:</p>
+                  <ul>
+                    <li>All uploaded lab reports</li>
+                    <li>All patient data</li>
+                    <li>All lab results and mappings</li>
+                    <li>All pending analytes and reviews</li>
+                  </ul>
+                  <p><strong>Analyte definitions and aliases will be restored from seed data.</strong></p>
+                </div>
+                <div class="danger-zone-action">
+                  <button id="reset-database-btn" class="btn btn-danger btn-lg">
+                    🗑️ Reset Database
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="reset-status" class="status-message" hidden></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Mobile Menu Toggle -->
+    <button class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Toggle menu">
+      ☰
+    </button>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <!-- Modal for Expandable Details -->
   <div id="details-modal" class="modal" hidden>
@@ -141,14 +223,33 @@
     <div class="modal-content">
       <h3 id="confirm-title"></h3>
       <p id="confirm-message"></p>
-      <input type="text" id="confirm-input" class="confirm-input" placeholder="" hidden>
+      <input type="text" id="confirm-input" class="form-input confirm-input" placeholder="" hidden>
       <div class="modal-actions">
-        <button id="confirm-yes" class="analyze-button">Confirm</button>
-        <button id="confirm-no" class="secondary-button">Cancel</button>
+        <button id="confirm-yes" class="btn btn-primary">Confirm</button>
+        <button id="confirm-no" class="btn btn-secondary">Cancel</button>
       </div>
     </div>
   </div>
 
   <script src="/js/admin.js"></script>
+
+  <!-- Navigation Script -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('sidebar-overlay');
+      const mobileToggle = document.getElementById('mobile-menu-toggle');
+
+      // Mobile menu toggle
+      function toggleMobileMenu() {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('visible');
+        mobileToggle.textContent = sidebar.classList.contains('open') ? '✕' : '☰';
+      }
+
+      mobileToggle.addEventListener('click', toggleMobileMenu);
+      overlay.addEventListener('click', toggleMobileMenu);
+    });
+  </script>
 </body>
 </html>
