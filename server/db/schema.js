@@ -376,6 +376,7 @@ const schemaStatements = [
     pr.patient_id,
     a.code AS analyte_code,
     a.name AS analyte_name,
+    lr.parameter_name,
     lr.numeric_result AS value_num,
     lr.result_value AS value_text,
     lr.unit AS units,
