@@ -821,19 +821,22 @@ async function handleShowPlot(session, params, toolCallId) {
     }));
 
     // Step 6: Clear previous display results if replacing
-    // CRITICAL: Only remove tool messages that have display_type (plot/table)
-    // Do NOT remove other tool responses (fuzzy_search, etc.) as this breaks conversation integrity
-    if (replace_previous) {
-      const beforeCount = session.messages.length;
-      const removedCount = removeDisplayResults(session);
-
-      logger.info('[chatStream] Replaced previous display in show_plot:', {
-        session_id: session.id,
-        before_count: beforeCount,
-        after_count: session.messages.length,
-        removed_count: removedCount
-      });
-    }
+    // REMOVED: This prevented LLM from comparing multiple plots/tables
+    // Keeping all display results in context allows LLM to:
+    // - Compare trends across different parameters (cholesterol vs glucose)
+    // - Reference previous data in multi-step analysis
+    // - Avoid re-querying data that was recently shown
+    // Automatic token pruning (50k threshold) handles context overflow
+    // if (replace_previous) {
+    //   const beforeCount = session.messages.length;
+    //   const removedCount = removeDisplayResults(session);
+    //   logger.info('[chatStream] Replaced previous display in show_plot:', {
+    //     session_id: session.id,
+    //     before_count: beforeCount,
+    //     after_count: session.messages.length,
+    //     removed_count: removedCount
+    //   });
+    // }
 
     // Step 7: Add compact result to conversation
     session.messages.push({
@@ -946,19 +949,22 @@ async function handleShowTable(session, params, toolCallId) {
     }));
 
     // 6. Clear previous display results if replace_previous=true
-    // CRITICAL: Only remove tool messages that have display_type (plot/table)
-    // Do NOT remove other tool responses (fuzzy_search, etc.) as this breaks conversation integrity
-    if (replace_previous) {
-      const beforeCount = session.messages.length;
-      const removedCount = removeDisplayResults(session);
-
-      logger.info('[chatStream] Replaced previous display in show_table:', {
-        session_id: session.id,
-        before_count: beforeCount,
-        after_count: session.messages.length,
-        removed_count: removedCount
-      });
-    }
+    // REMOVED: This prevented LLM from comparing multiple plots/tables
+    // Keeping all display results in context allows LLM to:
+    // - Compare data across different parameters
+    // - Reference previous tables in multi-step analysis
+    // - Avoid re-querying data that was recently shown
+    // Automatic token pruning (50k threshold) handles context overflow
+    // if (replace_previous) {
+    //   const beforeCount = session.messages.length;
+    //   const removedCount = removeDisplayResults(session);
+    //   logger.info('[chatStream] Replaced previous display in show_table:', {
+    //     session_id: session.id,
+    //     before_count: beforeCount,
+    //     after_count: session.messages.length,
+    //     removed_count: removedCount
+    //   });
+    // }
 
     // 7. Add to conversation
     session.messages.push({
