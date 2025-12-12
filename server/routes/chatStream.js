@@ -127,10 +127,16 @@ async function extractPatientId(userResponse, patients) {
   }
 
   // Try fuzzy name matching (case-insensitive)
+  // Only match if BOTH user input and patient name are non-empty and meaningful
   const lowerResponse = textToMatch.toLowerCase();
   for (const patient of patients) {
-    const lowerName = (patient.full_name || '').toLowerCase();
-    if (lowerName.includes(lowerResponse) || lowerResponse.includes(lowerName)) {
+    const lowerName = (patient.full_name || '').toLowerCase().trim();
+    // Skip patients with empty names - prevents false matches on empty string
+    if (!lowerName || lowerName.length < 2) {
+      continue;
+    }
+    // Require minimum 2 characters match to avoid false positives
+    if (lowerResponse.length >= 2 && (lowerName.includes(lowerResponse) || lowerResponse.includes(lowerName))) {
       logger.info('[chatStream] Matched patient by name:', {
         user_input: trimmed,
         extracted_text: textToMatch,
