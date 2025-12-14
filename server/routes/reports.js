@@ -9,6 +9,20 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 
 const isUuid = (value) => UUID_REGEX.test(value);
 
+// Timestamp normalization helper (matches reportRetrieval.js pattern)
+const toIsoString = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+};
+
 /**
  * Sanitize filename for use in Content-Disposition header
  * Prevents HTTP header injection, response splitting, and other attacks
@@ -83,6 +97,115 @@ router.get('/patients/:patientId/reports', async (req, res) => {
     // eslint-disable-next-line no-console
     console.error('[reports] Failed to fetch patient reports', error);
     return res.status(500).json({ error: 'Unable to fetch patient reports' });
+  }
+});
+
+// GET /api/reports - List all reports with optional filters
+// Query params: ?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD&patientId=uuid
+router.get('/reports', async (req, res) => {
+  const { fromDate, toDate, patientId } = req.query;
+
+  // Validate date parameters (must be valid ISO format YYYY-MM-DD)
+  const ISO_DATE_REGEX = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
+  if (fromDate && !ISO_DATE_REGEX.test(fromDate)) {
+    return res.status(400).json({ error: 'fromDate must be valid YYYY-MM-DD format' });
+  }
+  if (toDate && !ISO_DATE_REGEX.test(toDate)) {
+    return res.status(400).json({ error: 'toDate must be valid YYYY-MM-DD format' });
+  }
+
+  // Validate patientId is valid UUID if provided
+  if (patientId && !isUuid(patientId)) {
+    return res.status(400).json({ error: 'patientId must be valid UUID' });
+  }
+
+  // SQL expression to parse multiple date formats into YYYY-MM-DD
+  // Supports: ISO (YYYY-MM-DD, YYYY-MM-DDTHH:mm:ss), European (DD/MM/YYYY, DD.MM.YYYY)
+  // Single source of truth - returned as effective_date column for frontend display
+  const effectiveDateExpr = `
+    CASE
+      WHEN pr.test_date_text ~ '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])'
+      THEN SUBSTRING(pr.test_date_text FROM 1 FOR 10)
+      WHEN pr.test_date_text ~ '^\\d{1,2}[/.]\\d{1,2}[/.]\\d{4}'
+      THEN CONCAT(
+        SUBSTRING(pr.test_date_text FROM '(\\d{4})'),
+        '-',
+        LPAD(SUBSTRING(pr.test_date_text FROM '^\\d{1,2}[/.](\\d{1,2})'), 2, '0'),
+        '-',
+        LPAD(SUBSTRING(pr.test_date_text FROM '^(\\d{1,2})'), 2, '0')
+      )
+      ELSE to_char(pr.recognized_at, 'YYYY-MM-DD')
+    END
+  `;
+
+  try {
+    let query = `
+      SELECT
+        pr.id AS report_id,
+        ${effectiveDateExpr} AS effective_date,
+        p.id AS patient_id,
+        COALESCE(pr.patient_name_snapshot, p.full_name, 'Unnamed Patient') AS patient_name,
+        (pr.file_path IS NOT NULL) AS has_file
+      FROM patient_reports pr
+      JOIN patients p ON pr.patient_id = p.id
+      WHERE pr.status = 'completed'
+    `;
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (fromDate) {
+      query += ` AND ${effectiveDateExpr} >= $${paramIndex}`;
+      params.push(fromDate);
+      paramIndex++;
+    }
+
+    if (toDate) {
+      query += ` AND ${effectiveDateExpr} <= $${paramIndex}`;
+      params.push(toDate);
+      paramIndex++;
+    }
+
+    if (patientId) {
+      query += ` AND pr.patient_id = $${paramIndex}`;
+      params.push(patientId);
+      paramIndex++;
+    }
+
+    // Sort by effective date (parsed from multiple formats)
+    query += `
+      ORDER BY ${effectiveDateExpr} DESC,
+        pr.recognized_at DESC,
+        pr.id DESC
+    `;
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      reports: result.rows,
+      total: result.rows.length
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[reports] Failed to list reports:', error);
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+// GET /api/reports/patients - List all patients for filter dropdown
+router.get('/reports/patients', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, COALESCE(full_name, 'Unnamed Patient') AS full_name
+      FROM patients
+      ORDER BY full_name ASC
+    `);
+
+    res.json({ patients: result.rows });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[reports] Failed to list patients:', error);
+    res.status(500).json({ error: 'Failed to fetch patients' });
   }
 });
 

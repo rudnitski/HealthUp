@@ -30,6 +30,10 @@
             <span class="nav-icon">💬</span>
             <span>Health Assistant</span>
           </a>
+          <a href="#reports" class="nav-item" data-section="reports">
+            <span class="nav-icon">📄</span>
+            <span>Reports</span>
+          </a>
         </div>
 
         <div class="nav-section">
@@ -275,6 +279,46 @@
             <!-- Results populated dynamically -->
           </div>
         </section>
+
+        <!-- Reports Browser Section -->
+        <section id="section-reports" class="content-section" style="display: none;">
+          <div class="reports-filters">
+            <div class="filter-group">
+              <label for="reports-from-date">From</label>
+              <input type="date" id="reports-from-date">
+            </div>
+            <div class="filter-group">
+              <label for="reports-to-date">To</label>
+              <input type="date" id="reports-to-date">
+            </div>
+            <div class="filter-group">
+              <label for="reports-patient-filter">Patient</label>
+              <select id="reports-patient-filter">
+                <option value="">All Patients</option>
+              </select>
+            </div>
+            <button id="reports-clear-filters" class="btn btn-secondary">Clear</button>
+          </div>
+
+          <div class="table-wrapper">
+            <table class="reports-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Patient</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="reports-table-body">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <div class="reports-summary">
+            <span id="reports-count">0 reports</span>
+          </div>
+        </section>
       </div>
     </main>
 
@@ -296,6 +340,7 @@
   <script src="js/plotRenderer.js"></script>
   <script src="js/unified-upload.js"></script>
   <script src="js/chat.js"></script>
+  <script src="js/reports-browser.js"></script>
   <script src="js/app.js"></script>
 
   <!-- Navigation Script -->
@@ -313,7 +358,8 @@
       // Section titles
       const sectionTitles = {
         'upload': 'Upload Lab Reports',
-        'assistant': 'Health Assistant'
+        'assistant': 'Health Assistant',
+        'reports': 'Reports'
       };
 
       // Mobile menu toggle
@@ -345,6 +391,12 @@
 
         // Update page title
         pageTitle.textContent = sectionTitles[sectionId] || 'HealthUp';
+
+        // Initialize Reports Browser on first view
+        if (sectionId === 'reports' && typeof ReportsBrowser !== 'undefined' && !ReportsBrowser.initialized) {
+          ReportsBrowser.init();
+          ReportsBrowser.initialized = true;
+        }
 
         // Close mobile menu
         if (sidebar.classList.contains('open')) {
