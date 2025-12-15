@@ -71,6 +71,13 @@ const publicDir = path.join(__dirname, '..', 'public');
 app.disable('x-powered-by');
 app.use(express.static(publicDir));
 
+// Track open sockets to force-close long-lived connections (e.g., SSE) on shutdown
+const activeConnections = new Set();
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = Number.isFinite(Number(process.env.SHUTDOWN_TIMEOUT_MS))
+  ? Number(process.env.SHUTDOWN_TIMEOUT_MS)
+  : 5000;
+let server;
+
 // Only apply file upload middleware to upload routes (avoid warnings on JSON/SSE routes)
 const uploadMiddleware = fileUpload({
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -187,8 +194,13 @@ app.use((err, req, res, _next) => {
   });
 });
 
-const server = app.listen(PORT, () => {
+server = app.listen(PORT, () => {
   console.log(`HealthUp upload form available at http://localhost:${PORT}`);
+});
+
+server.on('connection', (socket) => {
+  activeConnections.add(socket);
+  socket.on('close', () => activeConnections.delete(socket));
 });
 
 let isShuttingDown = false;
@@ -200,13 +212,33 @@ async function shutdown(code = 0, { skipPool = false } = {}) {
   try {
     if (server?.listening) {
       await new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+
+        const forceCloseTimer = setTimeout(() => {
+          console.warn(`[http] Force closing ${activeConnections.size} open connection(s) after ${GRACEFUL_SHUTDOWN_TIMEOUT_MS}ms`);
+          for (const socket of activeConnections) {
+            try {
+              socket.destroy();
+            } catch (err) {
+              console.error('[http] Error destroying socket during shutdown:', err);
+            }
+          }
+          done();
+        }, GRACEFUL_SHUTDOWN_TIMEOUT_MS);
+
         server.close((err) => {
+          clearTimeout(forceCloseTimer);
           if (err) {
             console.error('[http] Error closing server:', err);
           } else {
             console.log('[http] Server closed');
           }
-          resolve();
+          done();
         });
       });
     }
