@@ -18,7 +18,7 @@ const JobStatus = {
 
 // Automatic cleanup of old jobs and batches (older than 1 hour)
 // NOTE: Only cleans up COMPLETED/FAILED jobs, never PROCESSING jobs
-setInterval(() => {
+let cleanupIntervalId = setInterval(() => {
   const oneHourAgo = Date.now() - (60 * 60 * 1000);
 
   // Clean up old jobs (only if not actively processing)
@@ -311,6 +311,19 @@ function getBatch(batchId) {
   return batches.get(batchId) || null;
 }
 
+/**
+ * Shutdown job manager - clears cleanup interval to allow process exit
+ */
+function shutdown() {
+  if (cleanupIntervalId) {
+    clearInterval(cleanupIntervalId);
+    cleanupIntervalId = null;
+    console.log('[JobManager] Shutdown: cleanup interval cleared');
+  }
+  jobs.clear();
+  batches.clear();
+}
+
 export {
   JobStatus,
   createJob,
@@ -325,5 +338,6 @@ export {
   getUserJobs,
   createBatch,
   getBatchStatus,
-  getBatch
+  getBatch,
+  shutdown
 };

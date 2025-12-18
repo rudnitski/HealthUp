@@ -3,7 +3,7 @@
 // PRD: docs/PRD_v2_0_agentic_sql_generation_mvp.md
 
 import { pool } from '../db/index.js';
-import { validateSQL } from './sqlValidator.js';
+import { validateSQL, ensurePatientScope } from './sqlValidator.js';
 
 // Simple console logger (replacing pino for full visibility)
 const logger = {
@@ -41,6 +41,13 @@ const logger = {
 const AGENTIC_FUZZY_SEARCH_LIMIT = parseInt(process.env.AGENTIC_FUZZY_SEARCH_LIMIT) || 20;
 const AGENTIC_EXPLORATORY_SQL_LIMIT = parseInt(process.env.AGENTIC_EXPLORATORY_SQL_LIMIT) || 20;
 const AGENTIC_SIMILARITY_THRESHOLD = parseFloat(process.env.AGENTIC_SIMILARITY_THRESHOLD) || 0.3;
+
+// Query type limits (PRD v4.2.2 - separation of concerns)
+const QUERY_TYPE_LIMITS = {
+  explore: parseInt(process.env.AGENTIC_EXPLORATORY_SQL_LIMIT) || 20,
+  plot: parseInt(process.env.SQL_VALIDATOR_PLOT_LIMIT) || 200,
+  table: parseInt(process.env.SQL_VALIDATOR_TABLE_LIMIT) || 50
+};
 
 /**
  * Fuzzy search on lab_results.parameter_name using PostgreSQL trigram similarity
@@ -218,14 +225,16 @@ async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_
 }
 
 /**
- * Execute exploratory SQL with validation and limit enforcement
+ * Execute SQL with validation and limit enforcement
  *
  * This is a VALIDATED tool - all SQL goes through existing validator
- * Used for general data exploration when fuzzy search isn't enough
+ * Used for data exploration AND data retrieval for display tools
+ *
+ * PRD v4.2.2: Separation of concerns - this tool FETCHES data, display tools SHOW data
  *
  * @param {string} sql - Read-only SELECT query
  * @param {string} reasoning - Why this query is needed (for logging)
- * @param {Object} options - Additional options (schemaSnapshotId, etc.)
+ * @param {Object} options - Additional options (schemaSnapshotId, query_type, etc.)
  * @returns {Object} Query results with metadata
  */
 async function executeExploratorySql(sql, reasoning, options = {}) {
@@ -233,16 +242,22 @@ async function executeExploratorySql(sql, reasoning, options = {}) {
     throw new Error('sql is required and must be a string');
   }
 
-  const exploratoryLimit = AGENTIC_EXPLORATORY_SQL_LIMIT;
+  // Determine limit based on query_type (PRD v4.2.2)
+  const queryType = options.query_type || 'explore';
+  const maxLimit = QUERY_TYPE_LIMITS[queryType] || QUERY_TYPE_LIMITS.explore;
 
   logger.debug({
     sql_preview: sql.substring(0, 100),
     reasoning,
-  }, '[agenticTools] execute_exploratory_sql');
+    query_type: queryType,
+    max_limit: maxLimit
+  }, '[agenticTools] execute_sql');
 
   try {
     // Step 1: Validate SQL safety (uses existing validator)
-    const validation = await validateSQL(sql, options);
+    // Map query_type to validator's queryType format (PRD v4.2.2 fix)
+    const validatorQueryType = queryType === 'plot' ? 'plot_query' : 'data_query';
+    const validation = await validateSQL(sql, { ...options, queryType: validatorQueryType });
 
     if (!validation.valid) {
       const errorMsg = `SQL validation failed: ${validation.violations.map(v => `${v.code}: ${v.pattern || v.keyword || ''}`).join(', ')}`;
@@ -250,14 +265,42 @@ async function executeExploratorySql(sql, reasoning, options = {}) {
       logger.warn({
         sql,
         violations: validation.violations,
-      }, '[agenticTools] execute_exploratory_sql validation failed');
+      }, '[agenticTools] execute_sql validation failed');
 
       throw new Error(errorMsg);
     }
 
-    // Step 2: Enforce exploratory limit (clamp to stricter limit if needed)
-    // The validator injects LIMIT 50, but we want max 20 for exploratory queries
-    // Only clamp DOWN if the existing limit is higher than our exploratory limit
+    // Step 2: Enforce patient scope for data-fetching queries (plot, table)
+    // SECURITY: Prevents cross-patient data leakage in multi-patient sessions
+    // Skip for 'explore' queries which need broader access for schema discovery
+    if ((queryType === 'plot' || queryType === 'table') && options.patientCount > 1) {
+      const patientScope = ensurePatientScope(
+        validation.sqlWithLimit,
+        options.selectedPatientId,
+        options.patientCount
+      );
+
+      if (!patientScope.valid) {
+        const errorMsg = `Patient scope validation failed: ${patientScope.violation?.message || 'Unknown error'}`;
+
+        logger.warn({
+          sql,
+          query_type: queryType,
+          patient_count: options.patientCount,
+          selected_patient_id: options.selectedPatientId,
+          violation: patientScope.violation,
+        }, '[agenticTools] execute_sql patient scope validation failed');
+
+        throw new Error(errorMsg);
+      }
+
+      logger.debug({
+        query_type: queryType,
+        patient_id: options.selectedPatientId,
+      }, '[agenticTools] Patient scope validated');
+    }
+
+    // Step 3: Enforce limit based on query_type
     let safeSql = validation.sqlWithLimit;
 
     // Find the last (outermost) LIMIT clause (handles semicolons and whitespace)
@@ -266,35 +309,34 @@ async function executeExploratorySql(sql, reasoning, options = {}) {
     if (limitMatch) {
       const existingLimit = parseInt(limitMatch[1], 10);
 
-      // Only replace if existing limit is HIGHER than our exploratory limit
-      if (existingLimit > exploratoryLimit) {
-        // Replace only the outermost/final LIMIT (at end of query)
-        // Preserve semicolon if present
+      // Only replace if existing limit is HIGHER than our max limit
+      if (existingLimit > maxLimit) {
         const hasSemicolon = /;\s*$/.test(safeSql);
-        safeSql = safeSql.replace(/\bLIMIT\s+\d+\s*;?\s*$/i, `LIMIT ${exploratoryLimit}${hasSemicolon ? ';' : ''}`);
+        safeSql = safeSql.replace(/\bLIMIT\s+\d+\s*;?\s*$/i, `LIMIT ${maxLimit}${hasSemicolon ? ';' : ''}`);
 
         logger.debug({
           original_limit: existingLimit,
-          clamped_to: exploratoryLimit,
-        }, '[agenticTools] Clamped exploratory SQL limit');
+          clamped_to: maxLimit,
+        }, '[agenticTools] Clamped SQL limit');
       }
     } else {
       // Safety: if no LIMIT found (shouldn't happen after validator), add it
       const hasSemicolon = /;\s*$/.test(safeSql);
       if (hasSemicolon) {
-        safeSql = safeSql.replace(/;\s*$/, ` LIMIT ${exploratoryLimit};`);
+        safeSql = safeSql.replace(/;\s*$/, ` LIMIT ${maxLimit};`);
       } else {
-        safeSql = `${safeSql.trim()} LIMIT ${exploratoryLimit}`;
+        safeSql = `${safeSql.trim()} LIMIT ${maxLimit}`;
       }
     }
 
-    // Step 3: Execute query
+    // Step 4: Execute query
     const result = await pool.query(safeSql);
 
     const response = {
       rows: result.rows,
       row_count: result.rowCount,
       reasoning,
+      query_type: queryType,
       query_executed: safeSql,
       fields: result.fields?.map(f => f.name) || []
     };
@@ -302,7 +344,8 @@ async function executeExploratorySql(sql, reasoning, options = {}) {
     logger.info({
       row_count: result.rowCount,
       reasoning,
-    }, '[agenticTools] execute_exploratory_sql completed');
+      query_type: queryType
+    }, '[agenticTools] execute_sql completed');
 
     return response;
   } catch (error) {
@@ -310,7 +353,8 @@ async function executeExploratorySql(sql, reasoning, options = {}) {
       error: error.message,
       sql,
       reasoning,
-    }, '[agenticTools] execute_exploratory_sql failed');
+      query_type: queryType
+    }, '[agenticTools] execute_sql failed');
 
     throw error;
   }
@@ -368,8 +412,8 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
-      name: "execute_exploratory_sql",
-      description: "Execute a read-only SELECT query to explore data structure, patterns, or specific records. Use this when you need to understand how data is organized, check value distributions, or explore relationships between tables. Query will be validated for safety and limited to 20 rows.",
+      name: "execute_sql",
+      description: "Execute a read-only SELECT query and return data. Use query_type to specify the purpose: 'explore' for data discovery (20 rows), 'plot' for plot data (200 rows), 'table' for table data (50 rows). This tool FETCHES data - use show_plot/show_table to DISPLAY it.",
       parameters: {
         type: "object",
         properties: {
@@ -380,6 +424,12 @@ const TOOL_DEFINITIONS = [
           reasoning: {
             type: "string",
             description: "Brief explanation of why you need this query (for audit logging)"
+          },
+          query_type: {
+            type: "string",
+            enum: ["explore", "plot", "table"],
+            description: "Purpose of query: 'explore' for discovery (20 rows max), 'plot' for time-series data (200 rows max), 'table' for tabular display (50 rows max). Default: 'explore'",
+            default: "explore"
           }
         },
         required: ["sql", "reasoning"]
@@ -390,29 +440,38 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "show_plot",
-      description: "Display a time-series plot of lab results in the UI. The plot will appear in the results area. You can call this multiple times - use replace_previous=true to update the current plot, or false to keep conversation context. After calling this tool, you will receive the full dataset in the tool result, allowing you to analyze and discuss the data with the user.",
+      description: "Display pre-fetched data as a time-series plot in the UI. Call execute_sql with query_type='plot' first to get the data, then pass that data here. You can call show_plot and show_thumbnail in PARALLEL since you already have the data.",
       parameters: {
         type: "object",
         properties: {
-          sql: {
-            type: "string",
-            description: "SQL query returning time-series data. MUST include columns: t (bigint timestamp in ms), y (numeric value), parameter_name (text), unit (text). SHOULD include: reference_lower, reference_upper, is_out_of_range. Will be limited to 200 rows max."
+          data: {
+            type: "array",
+            description: "Array of data points from execute_sql. Each object MUST have: t (timestamp ms), y (numeric), parameter_name, unit. SHOULD have: reference_lower, reference_upper, is_out_of_range.",
+            items: {
+              type: "object",
+              properties: {
+                t: { type: "number", description: "Timestamp in milliseconds" },
+                y: { type: "number", description: "Numeric value" },
+                parameter_name: { type: "string", description: "Parameter name" },
+                unit: { type: "string", description: "Unit of measurement" },
+                reference_lower: { type: "number", description: "Lower reference bound (optional)" },
+                reference_upper: { type: "number", description: "Upper reference bound (optional)" },
+                is_out_of_range: { type: "boolean", description: "Whether value is out of range (optional)" }
+              },
+              required: ["t", "y", "parameter_name", "unit"]
+            }
           },
           plot_title: {
             type: "string",
-            description: "Short title for the plot (max 30 chars). Use only the parameter name, no extra words. Examples: 'Vitamin D', 'Холестерин', 'Glucose'."
+            description: "Short title for the plot (max 30 chars). Use only the parameter name. Examples: 'Vitamin D', 'Холестерин', 'Glucose'."
           },
           replace_previous: {
             type: "boolean",
-            description: "If true, replace the current plot/table. If false, keep previous context. Use true when user says 'show as...', 'change to...', 'instead...'. Default: false.",
+            description: "If true, replace the current plot/table. Default: false.",
             default: false
-          },
-          reasoning: {
-            type: "string",
-            description: "Brief explanation of why you're showing this plot (for logging)"
           }
         },
-        required: ["sql", "plot_title"]
+        required: ["data", "plot_title"]
       }
     }
   },
@@ -420,13 +479,16 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "show_table",
-      description: "Display lab results as a table in the UI. The table will appear in the results area. Use for latest values, detailed comparison, or when user prefers tabular format. After calling this tool, you receive the full dataset for analysis and discussion.",
+      description: "Display pre-fetched data as a table in the UI. Call execute_sql with query_type='table' first to get the data, then pass that data here.",
       parameters: {
         type: "object",
         properties: {
-          sql: {
-            type: "string",
-            description: "SQL query returning tabular data. SHOULD include columns: parameter_name, value, unit, date, reference_interval or reference_lower/upper. Will be limited to 50 rows max."
+          data: {
+            type: "array",
+            description: "Array of row objects from execute_sql. Typically includes: parameter_name, value, unit, date, reference_interval.",
+            items: {
+              type: "object"
+            }
           },
           table_title: {
             type: "string",
@@ -434,15 +496,58 @@ const TOOL_DEFINITIONS = [
           },
           replace_previous: {
             type: "boolean",
-            description: "If true, replace current table/plot. If false, keep previous context. Default: false.",
+            description: "If true, replace current table/plot. Default: false.",
             default: false
-          },
-          reasoning: {
-            type: "string",
-            description: "Brief explanation (for logging)"
           }
         },
-        required: ["sql", "table_title"]
+        required: ["data", "table_title"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_thumbnail",
+      description: "Display a compact thumbnail summary for a plot in the chat interface. Call this in PARALLEL with show_plot after you have data from execute_sql. Analyze the data and pick the most clinically significant analyte to summarize.",
+      parameters: {
+        type: "object",
+        properties: {
+          plot_title: {
+            type: "string",
+            description: "Title matching the plot (for association with show_plot)"
+          },
+          analyte_name: {
+            type: "string",
+            description: "Name of the specific analyte being summarized (e.g., 'LDL Cholesterol' for a lipid panel). For single-analyte plots, same as plot_title. For multi-analyte plots, pick the most clinically significant one."
+          },
+          latest_value: {
+            type: "number",
+            description: "Most recent numeric value for the chosen analyte (optional)"
+          },
+          unit: {
+            type: "string",
+            description: "Unit of measurement (e.g., 'ng/ml', 'ммоль/л') (optional)"
+          },
+          status: {
+            type: "string",
+            enum: ["normal", "high", "low", "unknown"],
+            description: "Value status: 'high' if above reference, 'low' if below, 'normal' if within range, 'unknown' if no reference"
+          },
+          delta_pct: {
+            type: "number",
+            description: "Percentage change from oldest to newest value (e.g., -12 for 12% decrease) (optional)"
+          },
+          delta_direction: {
+            type: "string",
+            enum: ["up", "down", "stable"],
+            description: "Direction of change: 'up' if delta > 1%, 'down' if delta < -1%, 'stable' otherwise (optional)"
+          },
+          delta_period: {
+            type: "string",
+            description: "Human-readable time span (e.g., '2y', '6m', '3w') (optional)"
+          }
+        },
+        required: ["plot_title", "analyte_name", "status"]
       }
     }
   }

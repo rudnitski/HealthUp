@@ -25,7 +25,7 @@ import * as agenticCore from '../services/agenticCore.js';
 import { TOOL_DEFINITIONS } from '../services/agenticTools.js';
 import { getSchemaSnapshot } from '../services/schemaSnapshot.js';
 import { buildSchemaSection } from '../services/promptBuilder.js';
-import { validateSQL } from '../services/sqlValidator.js';
+// Note: validateSQL no longer needed here - display tools receive pre-fetched data (PRD v4.2.2)
 
 const router = express.Router();
 
@@ -616,10 +616,26 @@ async function executeToolCalls(session, toolCalls) {
       continue; // Continue to next tool or LLM response
     }
 
+    if (toolName === 'show_thumbnail') {
+      await handleShowThumbnail(session, params, toolCallId);
+      // Send tool_complete event
+      if (session.sseResponse) {
+        streamEvent(session.sseResponse, {
+          type: 'tool_complete',
+          tool: toolName,
+          duration_ms: Date.now() - toolStartTime
+        });
+      }
+      continue; // Continue to next tool or LLM response
+    }
+
     // Execute other tools (fuzzy search, exploratory SQL)
     try {
       const result = await agenticCore.executeToolCall(toolName, params, {
-        schemaSnapshotId: null // TODO: track schema snapshot in session
+        schemaSnapshotId: null, // TODO: track schema snapshot in session
+        // PRD v4.2.2 security fix: pass patient context for scope enforcement
+        selectedPatientId: session.selectedPatientId || null,
+        patientCount: session.patientCount || 0
       });
 
       const toolDuration = Date.now() - toolStartTime;
@@ -688,7 +704,7 @@ async function executeToolCalls(session, toolCalls) {
  */
 function removeDisplayResults(session) {
   const beforeCount = session.messages.length;
-  const beforeRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+  const beforeRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0, 8)}]` : ''}`);
 
   // Step 1: Find tool_call_ids of display results we want to remove
   const removedToolCallIds = new Set();
@@ -730,7 +746,7 @@ function removeDisplayResults(session) {
     return true; // Keep all other messages
   });
 
-  const afterRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0,8)}]` : ''}`);
+  const afterRoles = session.messages.map(m => `${m.role}${m.tool_calls ? '[tc]' : ''}${m.tool_call_id ? `[${m.tool_call_id.slice(0, 8)}]` : ''}`);
 
   console.log('[chatStream] BEFORE FILTER:', beforeRoles);
   console.log('[chatStream] AFTER FILTER:', afterRoles);
@@ -741,104 +757,74 @@ function removeDisplayResults(session) {
 
 /**
  * Handle show_plot tool call
- * Executes SQL, sends plot to frontend, adds compact data to conversation
+ * PRD v4.2.2: Receives pre-fetched data from LLM (no SQL execution here)
+ * Sends data to frontend for display, adds to conversation history
  * Does NOT end conversation
  */
 async function handleShowPlot(session, params, toolCallId) {
-  const { sql, plot_title, replace_previous = false, reasoning } = params;
+  const { data, plot_title, replace_previous = false } = params;
   const startTime = Date.now();
 
   logger.info('[chatStream] show_plot called:', {
     session_id: session.id,
     plot_title,
     replace_previous,
-    reasoning
+    data_count: data?.length || 0
   });
 
   try {
-    // Step 1: Validate SQL (reuse existing validation)
-    const validation = await validateSQL(sql, { schemaSnapshotId: null, queryType: 'plot_query' });
-
-    if (!validation.valid) {
-      logger.warn('[chatStream] Plot validation failed', {
-        sql_preview: sql.substring(0, 100),
-        violations: validation.violations
-      });
+    // Validate data array
+    if (!data || !Array.isArray(data)) {
       session.messages.push({
         role: 'tool',
         tool_call_id: toolCallId,
         content: JSON.stringify({
           success: false,
-          error: 'SQL validation failed',
-          violations: validation.violations.map(v => v.message || v.code),
-          attempted_sql: sql.substring(0, 200) + (sql.length > 200 ? '...' : '')
+          error: 'data parameter is required and must be an array'
         })
       });
       return;
     }
 
-    // Step 2: Enforce row limit (from env config)
-    let safeSql = ensureLimit(validation.sqlWithLimit, MAX_PLOT_ROWS);
-
-    // Step 2b: SECURITY - Enforce patient scope (defense in depth)
-    if (session.selectedPatientId && session.patientCount > 1) {
-      safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
+    if (data.length === 0) {
+      session.messages.push({
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: JSON.stringify({
+          success: false,
+          error: 'data array is empty - no data to display'
+        })
+      });
+      return;
     }
 
-    // DEBUG: Log the actual SQL being executed
-    logger.debug('[chatStream] Executing show_plot SQL:', {
-      sql_length: safeSql.length,
-      sql_last_100_chars: safeSql.slice(-100)
-    });
+    // Validate required fields in data
+    const firstRow = data[0];
+    const requiredFields = ['t', 'y', 'parameter_name', 'unit'];
+    const missingFields = requiredFields.filter(f => !(f in firstRow));
+    if (missingFields.length > 0) {
+      session.messages.push({
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: JSON.stringify({
+          success: false,
+          error: `Missing required fields in data: ${missingFields.join(', ')}. Each row must have: t, y, parameter_name, unit`
+        })
+      });
+      return;
+    }
 
-    // Step 3: Execute query with 5-second timeout
-    const queryResult = await Promise.race([
-      pool.query(safeSql),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Query timeout after 5 seconds')), 5000)
-      )
-    ]);
-
-    // Step 4: Send FULL data to frontend
+    // Send data to frontend via SSE
     if (session.sseResponse) {
       streamEvent(session.sseResponse, {
         type: 'plot_result',
         plot_title,
-        rows: queryResult.rows,
+        rows: data,
         replace_previous
       });
     }
 
-    // Step 5: Create COMPACT data for conversation history
-    const compactRows = queryResult.rows.map(row => ({
-      t: row.t,
-      y: row.y,
-      p: row.parameter_name,
-      u: row.unit,
-      ...(row.reference_lower != null && { rl: row.reference_lower }),
-      ...(row.reference_upper != null && { ru: row.reference_upper }),
-      ...(row.is_out_of_range != null && { oor: row.is_out_of_range })
-    }));
-
-    // Step 6: Clear previous display results if replacing
-    // REMOVED: This prevented LLM from comparing multiple plots/tables
-    // Keeping all display results in context allows LLM to:
-    // - Compare trends across different parameters (cholesterol vs glucose)
-    // - Reference previous data in multi-step analysis
-    // - Avoid re-querying data that was recently shown
-    // Automatic token pruning (50k threshold) handles context overflow
-    // if (replace_previous) {
-    //   const beforeCount = session.messages.length;
-    //   const removedCount = removeDisplayResults(session);
-    //   logger.info('[chatStream] Replaced previous display in show_plot:', {
-    //     session_id: session.id,
-    //     before_count: beforeCount,
-    //     after_count: session.messages.length,
-    //     removed_count: removedCount
-    //   });
-    // }
-
-    // Step 7: Add compact result to conversation
+    // Add result to conversation (confirm success to LLM)
     session.messages.push({
       role: 'tool',
       tool_call_id: toolCallId,
@@ -846,16 +832,15 @@ async function handleShowPlot(session, params, toolCallId) {
         success: true,
         display_type: 'plot',
         plot_title,
-        rows: compactRows,
-        row_count: compactRows.length
+        row_count: data.length
       })
     });
 
-    // Log success with execution time
+    // Log success
     logger.info('[chatStream] show_plot completed:', {
       session_id: session.id,
       plot_title,
-      row_count: compactRows.length,
+      row_count: data.length,
       duration_ms: Date.now() - startTime
     });
 
@@ -876,97 +861,58 @@ async function handleShowPlot(session, params, toolCallId) {
 
 /**
  * Handle show_table tool call
- * Executes SQL, sends table to frontend, adds compact data to conversation
+ * PRD v4.2.2: Receives pre-fetched data from LLM (no SQL execution here)
+ * Sends data to frontend for display, adds to conversation history
  * Does NOT end conversation
  */
 async function handleShowTable(session, params, toolCallId) {
-  const { sql, table_title, replace_previous = false, reasoning } = params;
+  const { data, table_title, replace_previous = false } = params;
   const startTime = Date.now();
 
   logger.info('[chatStream] show_table called:', {
     session_id: session.id,
     table_title,
     replace_previous,
-    reasoning,
-    sql_preview: sql.substring(0, 200)
+    data_count: data?.length || 0
   });
 
   try {
-    // 1. Validate SQL
-    const validation = await validateSQL(sql, { schemaSnapshotId: null, queryType: 'data_query' });
-    if (!validation.valid) {
-      logger.warn('[chatStream] Table validation failed', {
-        sql_preview: sql.substring(0, 100),
-        violations: validation.violations
-      });
+    // Validate data array
+    if (!data || !Array.isArray(data)) {
       session.messages.push({
         role: 'tool',
         tool_call_id: toolCallId,
         content: JSON.stringify({
           success: false,
-          error: 'SQL validation failed',
-          violations: validation.violations.map(v => v.message || v.code),
-          attempted_sql: sql.substring(0, 200) + (sql.length > 200 ? '...' : '')
+          error: 'data parameter is required and must be an array'
         })
       });
       return;
     }
 
-    // 2. Enforce table row limit (from env config)
-    let safeSql = ensureLimit(validation.sqlWithLimit, MAX_TABLE_ROWS);
-
-    // 2b. SECURITY - Enforce patient scope (same check as plot)
-    if (session.selectedPatientId && session.patientCount > 1) {
-      safeSql = enforcePatientScope(safeSql, session.selectedPatientId);
+    if (data.length === 0) {
+      session.messages.push({
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: JSON.stringify({
+          success: false,
+          error: 'data array is empty - no data to display'
+        })
+      });
+      return;
     }
 
-    // 3. Execute query with 5-second timeout
-    const queryResult = await Promise.race([
-      pool.query(safeSql),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Query timeout after 5 seconds')), 5000)
-      )
-    ]);
-
-    // 4. Send to frontend
+    // Send data to frontend via SSE
     if (session.sseResponse) {
       streamEvent(session.sseResponse, {
         type: 'table_result',
         table_title,
-        rows: queryResult.rows,
+        rows: data,
         replace_previous
       });
     }
 
-    // 5. Compact format (simplified for tables)
-    const compactRows = queryResult.rows.map(row => ({
-      p: row.parameter_name,
-      v: row.value,
-      u: row.unit,
-      d: row.date,
-      ri: row.reference_interval,
-      oor: row.is_out_of_range
-    }));
-
-    // 6. Clear previous display results if replace_previous=true
-    // REMOVED: This prevented LLM from comparing multiple plots/tables
-    // Keeping all display results in context allows LLM to:
-    // - Compare data across different parameters
-    // - Reference previous tables in multi-step analysis
-    // - Avoid re-querying data that was recently shown
-    // Automatic token pruning (50k threshold) handles context overflow
-    // if (replace_previous) {
-    //   const beforeCount = session.messages.length;
-    //   const removedCount = removeDisplayResults(session);
-    //   logger.info('[chatStream] Replaced previous display in show_table:', {
-    //     session_id: session.id,
-    //     before_count: beforeCount,
-    //     after_count: session.messages.length,
-    //     removed_count: removedCount
-    //   });
-    // }
-
-    // 7. Add to conversation
+    // Add result to conversation (confirm success to LLM)
     session.messages.push({
       role: 'tool',
       tool_call_id: toolCallId,
@@ -974,16 +920,15 @@ async function handleShowTable(session, params, toolCallId) {
         success: true,
         display_type: 'table',
         table_title,
-        rows: compactRows,
-        row_count: compactRows.length
+        row_count: data.length
       })
     });
 
-    // Log success with execution time
+    // Log success
     logger.info('[chatStream] show_table completed:', {
       session_id: session.id,
       table_title,
-      row_count: compactRows.length,
+      row_count: data.length,
       duration_ms: Date.now() - startTime
     });
 
@@ -1001,6 +946,79 @@ async function handleShowTable(session, params, toolCallId) {
     });
   }
 }
+
+/**
+ * Handle show_thumbnail tool call
+ * PRD v4.2.2: LLM calls this IN PARALLEL with show_plot after getting data from execute_sql
+ * Sends thumbnail to frontend via SSE for display in chat
+ */
+async function handleShowThumbnail(session, params, toolCallId) {
+  const { plot_title, analyte_name, latest_value, unit, status, delta_pct, delta_direction, delta_period } = params;
+
+  logger.info('[chatStream] show_thumbnail called:', {
+    session_id: session.id,
+    plot_title,
+    analyte_name,
+    latest_value,
+    status,
+    delta_pct
+  });
+
+  try {
+    // Build thumbnail object from LLM-provided params
+    const thumbnail = {
+      title: plot_title,
+      analyte_name: analyte_name || plot_title, // Fallback to plot_title for single-analyte
+      latest_value: latest_value ?? null,
+      unit: unit ?? null,
+      status: status || 'unknown',
+      delta_pct: delta_pct ?? null,
+      delta_direction: delta_direction ?? null,
+      delta_period: delta_period ?? null
+    };
+
+    // Send thumbnail to frontend via SSE
+    if (session.sseResponse) {
+      streamEvent(session.sseResponse, {
+        type: 'thumbnail_update',
+        plot_title,
+        thumbnail
+      });
+    }
+
+    logger.info('[chatStream] show_thumbnail sent:', {
+      session_id: session.id,
+      plot_title,
+      analyte_name: thumbnail.analyte_name,
+      latest_value: thumbnail.latest_value,
+      status: thumbnail.status,
+      delta_pct: thumbnail.delta_pct
+    });
+
+    // Add tool result to conversation
+    session.messages.push({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: JSON.stringify({
+        success: true,
+        message: `Thumbnail displayed for "${plot_title}" (${thumbnail.analyte_name})`
+      })
+    });
+  } catch (error) {
+    logger.error('[chatStream] show_thumbnail error:', {
+      error: error.message,
+      stack: error.stack,
+      session_id: session.id,
+      plot_title
+    });
+    session.messages.push({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: JSON.stringify({ success: false, error: error.message })
+    });
+  }
+}
+
 
 /**
  * Handle final query generation

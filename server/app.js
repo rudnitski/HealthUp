@@ -17,6 +17,7 @@ import adminRouter from './routes/admin.js';
 import gmailDevRouter from './routes/gmailDev.js';
 import { shutdownSchemaSnapshot } from './services/schemaSnapshot.js';
 import sessionManager from './utils/sessionManager.js';
+import { shutdown as shutdownJobManager } from './utils/jobManager.js';
 
 const __dirname = getDirname(import.meta.url);
 
@@ -251,6 +252,12 @@ async function shutdown(code = 0, { skipPool = false } = {}) {
       sessionManager.shutdown();
     } catch (e) {
       console.error('[sessionManager] Shutdown error:', e);
+    }
+
+    try {
+      shutdownJobManager();
+    } catch (e) {
+      console.error('[jobManager] Shutdown error:', e);
     }
 
     try {

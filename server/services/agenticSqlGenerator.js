@@ -580,8 +580,12 @@ async function generateSqlWithAgenticLoop({
             }, '[agenticSql] Slow tool execution detected (>5s)');
           }
 
-        } else if (toolName === 'execute_exploratory_sql') {
-          result = await executeExploratorySql(params.sql, params.reasoning, { schemaSnapshotId });
+        } else if (toolName === 'execute_sql' || toolName === 'execute_exploratory_sql') {
+          // PRD v4.2.2: execute_sql with query_type parameter (backward compatible with execute_exploratory_sql)
+          result = await executeExploratorySql(params.sql, params.reasoning, {
+            schemaSnapshotId,
+            query_type: params.query_type || 'explore'
+          });
           const toolDuration = Date.now() - toolCallStart;
 
           iterationLog.push({

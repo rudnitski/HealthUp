@@ -120,6 +120,7 @@ This information is pre-loaded. Do NOT query \`SELECT COUNT(*) FROM patients\` -
 
 /**
  * Execute a tool call by name
+ * PRD v4.2.2: execute_sql replaces execute_exploratory_sql with query_type parameter
  */
 async function executeToolCall(toolName, params, options = {}) {
   switch (toolName) {
@@ -129,6 +130,14 @@ async function executeToolCall(toolName, params, options = {}) {
     case 'fuzzy_search_analyte_names':
       return await fuzzySearchAnalyteNames(params.search_term, params.limit);
 
+    // PRD v4.2.2: New unified execute_sql tool with query_type parameter
+    case 'execute_sql':
+      return await executeExploratorySql(params.sql, params.reasoning, {
+        ...options,
+        query_type: params.query_type || 'explore'
+      });
+
+    // Backward compatibility: support old tool name
     case 'execute_exploratory_sql':
       return await executeExploratorySql(params.sql, params.reasoning, options);
 
