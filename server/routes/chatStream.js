@@ -19,12 +19,21 @@
 
 import express from 'express';
 import OpenAI from 'openai';
+import crypto from 'crypto';
 import { pool } from '../db/index.js';
 import sessionManager from '../utils/sessionManager.js';
 import * as agenticCore from '../services/agenticCore.js';
 import { TOOL_DEFINITIONS } from '../services/agenticTools.js';
 import { getSchemaSnapshot } from '../services/schemaSnapshot.js';
 import { buildSchemaSection } from '../services/promptBuilder.js';
+import {
+  preprocessData,
+  deriveThumbnail,
+  deriveEmptyThumbnail,
+  validateThumbnailConfig,
+  normalizeRowsForFrontend,
+  ensureOutOfRangeField
+} from '../utils/thumbnailDerivation.js';
 // Note: validateSQL no longer needed here - display tools receive pre-fetched data (PRD v4.2.2)
 
 const router = express.Router();
@@ -616,19 +625,6 @@ async function executeToolCalls(session, toolCalls) {
       continue; // Continue to next tool or LLM response
     }
 
-    if (toolName === 'show_thumbnail') {
-      await handleShowThumbnail(session, params, toolCallId);
-      // Send tool_complete event
-      if (session.sseResponse) {
-        streamEvent(session.sseResponse, {
-          type: 'tool_complete',
-          tool: toolName,
-          duration_ms: Date.now() - toolStartTime
-        });
-      }
-      continue; // Continue to next tool or LLM response
-    }
-
     // Execute other tools (fuzzy search, exploratory SQL)
     try {
       const result = await agenticCore.executeToolCall(toolName, params, {
@@ -758,105 +754,126 @@ function removeDisplayResults(session) {
 /**
  * Handle show_plot tool call
  * PRD v4.2.2: Receives pre-fetched data from LLM (no SQL execution here)
- * Sends data to frontend for display, adds to conversation history
+ * Unified tool: handles both plot display and optional thumbnail derivation
  * Does NOT end conversation
  */
 async function handleShowPlot(session, params, toolCallId) {
-  const { data, plot_title, replace_previous = false } = params;
-  const startTime = Date.now();
+  const { data, plot_title, replace_previous = false, thumbnail: thumbnailConfig } = params;
+  const res = session.sseResponse;
 
-  logger.info('[chatStream] show_plot called:', {
-    session_id: session.id,
-    plot_title,
-    replace_previous,
-    data_count: data?.length || 0
-  });
+  // Step 1: Guard against invalid data type (defensive against schema validation failures)
+  if (!Array.isArray(data)) {
+    logger.warn('[handleShowPlot] Invalid data type:', {
+      session_id: session.id,
+      plot_title,
+      data_type: typeof data,
+      data_is_null: data === null
+    });
 
-  try {
-    // Validate data array
-    if (!data || !Array.isArray(data)) {
-      session.messages.push({
-        role: 'tool',
-        tool_call_id: toolCallId,
-        content: JSON.stringify({
-          success: false,
-          error: 'data parameter is required and must be an array'
-        })
-      });
-      return;
-    }
-
-    if (data.length === 0) {
-      session.messages.push({
-        role: 'tool',
-        tool_call_id: toolCallId,
-        content: JSON.stringify({
-          success: false,
-          error: 'data array is empty - no data to display'
-        })
-      });
-      return;
-    }
-
-    // Validate required fields in data
-    const firstRow = data[0];
-    const requiredFields = ['t', 'y', 'parameter_name', 'unit'];
-    const missingFields = requiredFields.filter(f => !(f in firstRow));
-    if (missingFields.length > 0) {
-      session.messages.push({
-        role: 'tool',
-        tool_call_id: toolCallId,
-        content: JSON.stringify({
-          success: false,
-          error: `Missing required fields in data: ${missingFields.join(', ')}. Each row must have: t, y, parameter_name, unit`
-        })
-      });
-      return;
-    }
-
-    // Send data to frontend via SSE
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
+    if (res) {
+      streamEvent(res, {
         type: 'plot_result',
         plot_title,
-        rows: data,
-        replace_previous
+        rows: [],
+        replace_previous: true
       });
     }
 
-    // Add result to conversation (confirm success to LLM)
+    if (thumbnailConfig && res) {
+      streamEvent(res, {
+        type: 'thumbnail_update',
+        plot_title,
+        result_id: crypto.randomUUID(),
+        thumbnail: deriveEmptyThumbnail(plot_title),
+        replace_previous: true
+      });
+    }
+
     session.messages.push({
       role: 'tool',
       tool_call_id: toolCallId,
       content: JSON.stringify({
-        success: true,
+        success: false,
+        error: 'Invalid data format - expected array',
         display_type: 'plot',
-        plot_title,
-        row_count: data.length
+        plot_title
       })
     });
+    return;
+  }
 
-    // Log success
-    logger.info('[chatStream] show_plot completed:', {
-      session_id: session.id,
+  // Step 2: Validate and preprocess data (filters invalid rows, sorts by timestamp)
+  const preprocessed = preprocessData(data);
+
+  // Step 3: Normalize timestamps to epoch ms
+  const normalizedRows = normalizeRowsForFrontend(preprocessed);
+
+  // Step 4: Compute is_out_of_range/is_value_out_of_range if missing (backward compat)
+  const rowsWithOutOfRange = ensureOutOfRangeField(normalizedRows);
+
+  // Step 5: Emit plot_result (always, even if data is empty after filtering)
+  if (res) {
+    streamEvent(res, {
+      type: 'plot_result',
       plot_title,
-      row_count: data.length,
-      duration_ms: Date.now() - startTime
-    });
-
-  } catch (error) {
-    logger.error('[chatStream] show_plot error:', {
-      error: error.message,
-      stack: error.stack,
-      session_id: session.id,
-      duration_ms: Date.now() - startTime
-    });
-    session.messages.push({
-      role: 'tool',
-      tool_call_id: toolCallId,
-      content: JSON.stringify({ success: false, error: error.message })
+      rows: rowsWithOutOfRange,
+      replace_previous: replace_previous || false
     });
   }
+
+  // Step 6: If thumbnail config provided, derive using the same sanitized rows
+  if (thumbnailConfig) {
+    const validation = validateThumbnailConfig(thumbnailConfig);
+    if (!validation.valid) {
+      logger.warn('[handleShowPlot] Invalid thumbnail config:', {
+        session_id: session.id,
+        plot_title,
+        errors: validation.errors
+      });
+    }
+
+    const result = deriveThumbnail({
+      plot_title,
+      thumbnail: thumbnailConfig,
+      rows: rowsWithOutOfRange
+    });
+
+    if (result && res) {
+      logger.info('[handleShowPlot] Emitting thumbnail_update:', {
+        plot_title,
+        result_id: result.resultId,
+        thumbnail: result.thumbnail
+      });
+
+      streamEvent(res, {
+        type: 'thumbnail_update',
+        plot_title,
+        result_id: result.resultId,
+        thumbnail: result.thumbnail
+      });
+    }
+  }
+
+  // Step 7: Push tool response to session.messages
+  session.messages.push({
+    role: 'tool',
+    tool_call_id: toolCallId,
+    content: JSON.stringify({
+      success: true,
+      display_type: 'plot',
+      plot_title,
+      row_count: preprocessed.length,
+      message: preprocessed.length > 0 ? 'Plot displayed successfully' : 'Empty result displayed'
+    })
+  });
+
+  logger.info('[handleShowPlot] completed:', {
+    session_id: session.id,
+    plot_title,
+    raw_count: data.length,
+    preprocessed_count: preprocessed.length,
+    has_thumbnail: !!thumbnailConfig
+  });
 }
 
 /**
@@ -946,79 +963,6 @@ async function handleShowTable(session, params, toolCallId) {
     });
   }
 }
-
-/**
- * Handle show_thumbnail tool call
- * PRD v4.2.2: LLM calls this IN PARALLEL with show_plot after getting data from execute_sql
- * Sends thumbnail to frontend via SSE for display in chat
- */
-async function handleShowThumbnail(session, params, toolCallId) {
-  const { plot_title, analyte_name, latest_value, unit, status, delta_pct, delta_direction, delta_period } = params;
-
-  logger.info('[chatStream] show_thumbnail called:', {
-    session_id: session.id,
-    plot_title,
-    analyte_name,
-    latest_value,
-    status,
-    delta_pct
-  });
-
-  try {
-    // Build thumbnail object from LLM-provided params
-    const thumbnail = {
-      title: plot_title,
-      analyte_name: analyte_name || plot_title, // Fallback to plot_title for single-analyte
-      latest_value: latest_value ?? null,
-      unit: unit ?? null,
-      status: status || 'unknown',
-      delta_pct: delta_pct ?? null,
-      delta_direction: delta_direction ?? null,
-      delta_period: delta_period ?? null
-    };
-
-    // Send thumbnail to frontend via SSE
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
-        type: 'thumbnail_update',
-        plot_title,
-        thumbnail
-      });
-    }
-
-    logger.info('[chatStream] show_thumbnail sent:', {
-      session_id: session.id,
-      plot_title,
-      analyte_name: thumbnail.analyte_name,
-      latest_value: thumbnail.latest_value,
-      status: thumbnail.status,
-      delta_pct: thumbnail.delta_pct
-    });
-
-    // Add tool result to conversation
-    session.messages.push({
-      role: 'tool',
-      tool_call_id: toolCallId,
-      content: JSON.stringify({
-        success: true,
-        message: `Thumbnail displayed for "${plot_title}" (${thumbnail.analyte_name})`
-      })
-    });
-  } catch (error) {
-    logger.error('[chatStream] show_thumbnail error:', {
-      error: error.message,
-      stack: error.stack,
-      session_id: session.id,
-      plot_title
-    });
-    session.messages.push({
-      role: 'tool',
-      tool_call_id: toolCallId,
-      content: JSON.stringify({ success: false, error: error.message })
-    });
-  }
-}
-
 
 /**
  * Handle final query generation

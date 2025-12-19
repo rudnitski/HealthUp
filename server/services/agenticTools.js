@@ -440,17 +440,24 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "show_plot",
-      description: "Display pre-fetched data as a time-series plot in the UI. Call execute_sql with query_type='plot' first to get the data, then pass that data here. You can call show_plot and show_thumbnail in PARALLEL since you already have the data.",
+      description: "Display pre-fetched data as a time-series plot in the UI. Optionally include thumbnail config to show a compact summary in chat. Call execute_sql with query_type='plot' first to get the data, then pass that data here.",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
           data: {
             type: "array",
-            description: "Array of data points from execute_sql. Each object MUST have: t (timestamp ms), y (numeric), parameter_name, unit. SHOULD have: reference_lower, reference_upper, is_out_of_range.",
+            description: "Array of data points from execute_sql. Each object MUST have: t (timestamp), y (numeric), parameter_name, unit. SHOULD have: reference_lower, reference_upper, is_out_of_range.",
             items: {
               type: "object",
+              // NOTE: No additionalProperties: false on items to allow DB schema evolution
               properties: {
-                t: { type: "number", description: "Timestamp in milliseconds" },
+                t: {
+                  oneOf: [
+                    { type: "string", description: "ISO 8601 timestamp" },
+                    { type: "number", description: "Epoch seconds or milliseconds" }
+                  ]
+                },
                 y: { type: "number", description: "Numeric value" },
                 parameter_name: { type: "string", description: "Parameter name" },
                 unit: { type: "string", description: "Unit of measurement" },
@@ -469,6 +476,22 @@ const TOOL_DEFINITIONS = [
             type: "boolean",
             description: "If true, replace the current plot/table. Default: false.",
             default: false
+          },
+          thumbnail: {
+            type: "object",
+            description: "Optional thumbnail config to show a compact summary in chat stream.",
+            properties: {
+              focus_analyte_name: {
+                type: "string",
+                description: "For multi-analyte plots, specifies which series to feature in thumbnail. If omitted, defaults to first alphabetically."
+              },
+              status: {
+                type: "string",
+                enum: ["normal", "high", "low", "unknown"],
+                description: "Value status based on latest value vs reference ranges. Use 'unknown' if uncertain."
+              }
+            }
+            // NOTE: status is optional - backend defaults to 'unknown' if omitted
           }
         },
         required: ["data", "plot_title"]
@@ -504,53 +527,6 @@ const TOOL_DEFINITIONS = [
       }
     }
   },
-  {
-    type: "function",
-    function: {
-      name: "show_thumbnail",
-      description: "Display a compact thumbnail summary for a plot in the chat interface. Call this in PARALLEL with show_plot after you have data from execute_sql. Analyze the data and pick the most clinically significant analyte to summarize.",
-      parameters: {
-        type: "object",
-        properties: {
-          plot_title: {
-            type: "string",
-            description: "Title matching the plot (for association with show_plot)"
-          },
-          analyte_name: {
-            type: "string",
-            description: "Name of the specific analyte being summarized (e.g., 'LDL Cholesterol' for a lipid panel). For single-analyte plots, same as plot_title. For multi-analyte plots, pick the most clinically significant one."
-          },
-          latest_value: {
-            type: "number",
-            description: "Most recent numeric value for the chosen analyte (optional)"
-          },
-          unit: {
-            type: "string",
-            description: "Unit of measurement (e.g., 'ng/ml', 'ммоль/л') (optional)"
-          },
-          status: {
-            type: "string",
-            enum: ["normal", "high", "low", "unknown"],
-            description: "Value status: 'high' if above reference, 'low' if below, 'normal' if within range, 'unknown' if no reference"
-          },
-          delta_pct: {
-            type: "number",
-            description: "Percentage change from oldest to newest value (e.g., -12 for 12% decrease) (optional)"
-          },
-          delta_direction: {
-            type: "string",
-            enum: ["up", "down", "stable"],
-            description: "Direction of change: 'up' if delta > 1%, 'down' if delta < -1%, 'stable' otherwise (optional)"
-          },
-          delta_period: {
-            type: "string",
-            description: "Human-readable time span (e.g., '2y', '6m', '3w') (optional)"
-          }
-        },
-        required: ["plot_title", "analyte_name", "status"]
-      }
-    }
-  }
 ];
 
 export {

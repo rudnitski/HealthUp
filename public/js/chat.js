@@ -122,6 +122,12 @@ class ConversationalSQLChat {
         this.handleTableResult(data);
         break;
 
+      case 'thumbnail_update':
+        // PRD v4.2.2: Backend now emits thumbnail_update events from show_plot
+        // No UI rendering yet; intentionally ignore to avoid console warnings
+        // Debug logging (optional): console.log('[v4.2.2 DEBUG] thumbnail_update:', data);
+        break;
+
       case 'error':
         this.handleError(data);
         break;
