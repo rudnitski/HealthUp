@@ -564,7 +564,7 @@ async function streamLLMResponse(session) {
         if (session.sseResponse) {
           streamEvent(session.sseResponse, {
             type: 'text',
-            message_id: session.currentMessageId,  // ADD
+            message_id: session.currentMessageId,
             content: delta.content
           });
         }
@@ -692,7 +692,7 @@ async function executeToolCalls(session, toolCalls) {
     if (session.sseResponse) {
       streamEvent(session.sseResponse, {
         type: 'tool_start',
-        message_id: session.currentMessageId,  // ADD
+        message_id: session.currentMessageId,
         tool: toolName,
         params
       });
@@ -707,7 +707,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
-          message_id: session.currentMessageId,  // ADD
+          message_id: session.currentMessageId,
           tool: toolName,
           duration_ms: Date.now() - toolStartTime
         });
@@ -721,7 +721,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
-          message_id: session.currentMessageId,  // ADD
+          message_id: session.currentMessageId,
           tool: toolName,
           duration_ms: Date.now() - toolStartTime
         });
@@ -744,7 +744,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
-          message_id: session.currentMessageId,  // ADD
+          message_id: session.currentMessageId,
           tool: toolName,
           duration_ms: toolDuration
         });
@@ -769,7 +769,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
-          message_id: session.currentMessageId,  // ADD
+          message_id: session.currentMessageId,
           tool: toolName,
           duration_ms: Date.now() - toolStartTime,
           error: error.message,
@@ -933,7 +933,7 @@ async function handleShowPlot(session, params, toolCallId) {
     if (res) {
       streamEvent(res, {
         type: 'plot_result',
-        message_id: session.currentMessageId,  // REQUIRED
+        message_id: session.currentMessageId,
         plot_title,
         rows: [],
         replace_previous: true
@@ -943,12 +943,10 @@ async function handleShowPlot(session, params, toolCallId) {
     if (thumbnailConfig && res) {
       streamEvent(res, {
         type: 'thumbnail_update',
-        message_id: session.currentMessageId,  // REQUIRED
+        message_id: session.currentMessageId,
         plot_title,
         result_id: crypto.randomUUID(),
         thumbnail: deriveEmptyThumbnail(plot_title)
-        // CRITICAL FIX: Remove existing `replace_previous: true` from line 788
-        // The thumbnail_update contract does NOT include replace_previous field
       });
     }
 
@@ -978,7 +976,7 @@ async function handleShowPlot(session, params, toolCallId) {
   if (res) {
     streamEvent(res, {
       type: 'plot_result',
-      message_id: session.currentMessageId,  // ADD
+      message_id: session.currentMessageId,
       plot_title,
       rows: rowsWithOutOfRange,
       replace_previous: replace_previous || false
@@ -1011,7 +1009,7 @@ async function handleShowPlot(session, params, toolCallId) {
 
       streamEvent(res, {
         type: 'thumbnail_update',
-        message_id: session.currentMessageId,  // ADD
+        message_id: session.currentMessageId,
         plot_title,
         result_id: result.resultId,
         thumbnail: result.thumbnail
@@ -1088,7 +1086,7 @@ async function handleShowTable(session, params, toolCallId) {
     if (session.sseResponse) {
       streamEvent(session.sseResponse, {
         type: 'table_result',
-        message_id: session.currentMessageId,  // ADD
+        message_id: session.currentMessageId,
         table_title,
         rows: data,
         replace_previous

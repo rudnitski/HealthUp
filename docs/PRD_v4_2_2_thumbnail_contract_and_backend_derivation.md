@@ -456,9 +456,13 @@ function getUnitInfo(focusRows) {
     ? focusRows[focusRows.length - 1].unit
     : null;
 
+  // unit_display includes leading space for frontend concatenation (PRD v4.2.4)
+  // Frontend renders: formattedValue + unit_display (no additional space needed)
+  const unitDisplay = latestUnit ? ' ' + latestUnit : null;
+
   return {
     unit_raw: latestUnit,
-    unit_display: latestUnit,
+    unit_display: unitDisplay,
     isMixed
   };
 }
@@ -858,8 +862,8 @@ This is purely for development visibility and should be removed before v4.2.3 or
 | `point_count` | count of focus series rows | 0 |
 | `series_count` | count distinct parameter_name | 0 |
 | `latest_value` | last point by timestamp | null |
-| `unit_raw` | from focus series (latest) | null |
-| `unit_display` | same as unit_raw | null |
+| `unit_raw` | from focus series (latest, no spacing) | null |
+| `unit_display` | unit_raw with leading space prepended | null |
 | `status` | LLM input, backend validates/overrides | "unknown" |
 | `delta_pct` | computed from first/last values | null |
 | `delta_direction` | derived from delta_pct | null |

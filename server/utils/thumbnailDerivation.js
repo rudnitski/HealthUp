@@ -139,9 +139,13 @@ function getUnitInfo(focusRows) {
     ? focusRows[focusRows.length - 1].unit
     : null;
 
+  // unit_display includes leading space for frontend concatenation (PRD v4.2.4)
+  // Frontend renders: formattedValue + unit_display (no additional space needed)
+  const unitDisplay = latestUnit ? ' ' + latestUnit : null;
+
   return {
     unit_raw: latestUnit,
-    unit_display: latestUnit,
+    unit_display: unitDisplay,
     isMixed
   };
 }
