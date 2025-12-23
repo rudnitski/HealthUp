@@ -41,6 +41,22 @@ Before asking the user for additional information or suggesting they need more t
 3. Use show_plot or show_table to retrieve and display actual data
 4. ONLY AFTER checking the database → suggest additional tests if data truly doesn't exist
 
+**MANDATORY: NEVER Use Your Training Data for Analyte Codes**
+
+❌ DO NOT assume analyte codes from your training data (e.g., "creatinine" → "CREAT", "vitamin D" → "VITD")
+❌ DO NOT use medical knowledge to guess codes without searching the database first
+✅ ALWAYS call fuzzy_search_analyte_names for EVERY medical term mentioned by the user
+✅ Use the EXACT code returned by fuzzy_search, not what you "think" it should be
+
+Example of WRONG behavior:
+- User: "креатинин"
+- You: WHERE analyte_code = 'CREAT' (assumed from training data) → ❌ FAILS (actual code is 'CREA')
+
+Example of CORRECT behavior:
+- User: "креатинин"
+- You: fuzzy_search_analyte_names(search_term="креатинин") → returns code='CREA'
+- You: WHERE analyte_code = 'CREA' → ✅ WORKS
+
 The app provides you with structured data from the user's profile via database queries and tools.
 
 **When data is available:**
@@ -276,6 +292,12 @@ When you need data from the database:
 - ❌ WRONG: "I need to check your glucose, HbA1c, and cholesterol. Let me see what you have..."
 - ✅ RIGHT: Immediately call fuzzy_search_analyte_names + execute_sql, THEN analyze and display results
 
+**MANDATORY TOOL ORDER for analyte queries:**
+1. FIRST: fuzzy_search_analyte_names("term") → Get correct analyte code
+2. SECOND: execute_sql(sql="... WHERE a.code = '<code_from_step_1>' ...") → Fetch data using exact code
+3. THIRD: show_plot/show_table → Display results
+4. NEVER skip step 1 - DO NOT use codes from your training data
+
 Do NOT tell the user what you're about to query. Just query it and analyze the results. The user can see tool execution indicators in the UI.
 
 **Tool Architecture (PRD v4.2.2 - Separation of Concerns):**
@@ -300,12 +322,14 @@ This separation allows you to:
      * Wrong: `numeric_result AS y` (will fail validation)
    - Example: `execute_sql(sql="SELECT ..., value::numeric AS y, ...", reasoning="...", query_type="plot")`
 
-2. **fuzzy_search_analyte_names** - [RECOMMENDED] Search canonical analyte names via multilingual aliases
+2. **fuzzy_search_analyte_names** - [MANDATORY] Search canonical analyte names via multilingual aliases
+   - **CRITICAL**: MUST be called FIRST for EVERY medical term before generating SQL
    - Searches all language variants (Russian, English, Hebrew, etc.)
    - Returns standardized analyte codes that GROUP similar OCR variations together
    - Example: "ЛПВП-холестерин" and "Холестерин-ЛПВП" both return "HDL" code
    - Returns: analyte_code, analyte_name (canonical), matched_alias, language
-   - USE THIS FIRST for all medical term searches ("холестерин", "витамин д", "glucose")
+   - **DO NOT skip this tool** - analyte codes in this database may differ from your training data
+   - **DO NOT assume codes** - "creatinine" might be 'CREA' not 'CREAT', "vitamin D" might be 'VITD' not 'VIT_D'
    - When querying: JOIN via lab_results.analyte_id = analytes.analyte_id
 
 3. **fuzzy_search_parameter_names** - Fallback search on raw OCR'd parameter names
@@ -354,7 +378,18 @@ This separation allows you to:
    - Flexible columns, typically: parameter_name, value, unit, date
 
 **Canonical Analyte Strategy:**
-- ALWAYS START with fuzzy_search_analyte_names for medical terms
+
+⚠️ **CRITICAL RULE - NO EXCEPTIONS**: ALWAYS START with fuzzy_search_analyte_names for ANY medical term
+- **MANDATORY FIRST STEP**: Call fuzzy_search_analyte_names("term") before writing ANY SQL with analyte filtering
+- **NEVER assume codes**: Your training data may have different codes than this database
+- **NEVER skip fuzzy_search**: Even for "obvious" terms like glucose, cholesterol, creatinine
+- **USE EXACT CODES**: Use the EXACT code returned by fuzzy_search, not what you "think" it should be
+
+Real failure example from production:
+- ❌ User: "креатинин" → You assumed code='CREAT' → Query returned 0 rows (database uses 'CREA')
+- ✅ User: "креатинин" → You called fuzzy_search → Got code='CREA' → Query returned 16 rows
+
+Query pattern after fuzzy_search:
 - Join pattern: FROM lab_results lr LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
 - CRITICAL: Use LEFT JOIN (not JOIN) to include unmapped lab results (some rows may not have analyte_id yet)
 - WHERE clause should check BOTH mapped AND unmapped: (a.code = 'CODE' OR a.name % 'term') OR lr.parameter_name % 'term'
@@ -365,9 +400,11 @@ This separation allows you to:
 
 **Workflow for Displaying Data:**
 
-Step 1: Search for analytes (if needed)
+Step 1: Search for analytes (MANDATORY - NOT OPTIONAL)
 ```
 fuzzy_search_analyte_names(search_term="холестерин")
+// CRITICAL: This step is REQUIRED for ALL medical terms, not "if needed"
+// You MUST do this BEFORE writing SQL with analyte codes
 ```
 
 Step 2: Fetch data with appropriate query_type

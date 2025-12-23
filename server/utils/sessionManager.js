@@ -69,7 +69,8 @@ class SessionManager {
       patients: [],
       patientCount: 0,
       isProcessing: false,
-      iterationCount: 0 // Track tool-calling loop iterations (safety limit)
+      iterationCount: 0, // Track tool-calling loop iterations (safety limit)
+      currentMessageId: null  // === NEW: Track current assistant message ID ===
     };
 
     this.sessions.set(session.id, session);

@@ -1,7 +1,7 @@
 // server/services/__tests__/MappingApplier.test.js
 // Unit tests for Mapping Applier (PRD v0.9)
 
-const { normalizeLabel } = require('../MappingApplier');
+import { normalizeLabel } from '../MappingApplier.js';
 
 describe('MappingApplier', () => {
   describe('normalizeLabel', () => {

@@ -104,8 +104,38 @@ const getOpenAiClient = () => {
 
 /**
  * Send SSE event
+ * REQUIRES: res.locals.session set by /stream endpoint (see implementation guide section 1)
+ * IMPORTANT: This helper is NOT a generic SSE utility. It requires:
+ *   1. res is the Express response from /stream endpoint (GET /api/chat/stream)
+ *   2. res.locals.session was set in the endpoint (line 107-108)
+ *   3. session.currentMessageId tracks the current turn
+ * Do NOT reuse this function for other endpoints without ensuring these invariants.
+ * If you need SSE elsewhere, create a separate helper or use res.write() directly.
  */
 function streamEvent(res, data) {
+  const session = res.locals?.session || null;
+
+  // Guard 1: Drop events with message_id if message already ended
+  if (data.message_id && session && !session.currentMessageId) {
+    logger.warn('[chatStream] Dropping event after message_end:', {
+      type: data.type,
+      message_id: data.message_id,
+      session_id: session.id
+    });
+    return;
+  }
+
+  // Guard 2: Don't write to closed/destroyed response (prevents "write after end" errors)
+  if (res.writableEnded || res.destroyed) {
+    logger.warn('[chatStream] Dropping event - response already closed:', {
+      type: data.type,
+      message_id: data.message_id || null,
+      session_id: session?.id || null
+    });
+    return;
+  }
+
+  // Write SSE event
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
@@ -196,6 +226,10 @@ router.get('/stream', (req, res) => {
   // Store SSE response object in session for streaming
   session.sseResponse = res;
 
+  // === NEW: Attach session to res.locals for streamEvent guard ===
+  res.locals = res.locals || {};
+  res.locals.session = session;
+
   // Send session_start event
   streamEvent(res, {
     type: 'session_start',
@@ -208,6 +242,8 @@ router.get('/stream', (req, res) => {
 
   // Handle client disconnect
   req.on('close', () => {
+    // CRITICAL: Null out sseResponse to prevent writes after disconnect
+    session.sseResponse = null;
     sessionManager.markDisconnected(session.id);
     logger.info('[chatStream] SSE connection closed:', {
       session_id: session.id
@@ -216,7 +252,10 @@ router.get('/stream', (req, res) => {
 
   // Keep connection alive (send comment every 30 seconds)
   const keepAliveInterval = setInterval(() => {
-    res.write(': keepalive\n\n');
+    // Guard: don't write to closed/destroyed response
+    if (!res.writableEnded && !res.destroyed) {
+      res.write(': keepalive\n\n');
+    }
   }, 30000);
 
   req.on('close', () => {
@@ -318,7 +357,20 @@ async function processMessage(sessionId, userMessage) {
       }
     }
 
-    // Start LLM streaming
+    // === NEW: Create message_id for this assistant turn ===
+    // NOTE: Set unconditionally (even if sseResponse is null) to maintain state consistency
+    // Clearing is also unconditional in all exit paths (normal, error, session deletion)
+    session.currentMessageId = crypto.randomUUID();
+
+    // Emit message_start (conditional - only if SSE connected)
+    if (session.sseResponse) {
+      streamEvent(session.sseResponse, {
+        type: 'message_start',
+        message_id: session.currentMessageId
+      });
+    }
+
+    // Start LLM streaming (may recurse, but reuses same message_id)
     await streamLLMResponse(session);
 
   } catch (error) {
@@ -334,13 +386,30 @@ async function processMessage(sessionId, userMessage) {
 
     // Send error to client if SSE stream is available
     if (session.sseResponse) {
+      // Error event with message_id for correlation
       streamEvent(session.sseResponse, {
         type: 'error',
+        message_id: session.currentMessageId || null,
         code: 'PROCESSING_ERROR',
         message: 'Failed to process message. Please try again.',
         debug: NODE_ENV === 'development' ? error.message : undefined
       });
+
+      // Always finalize the turn after error (if message was started)
+      if (session.currentMessageId) {
+        streamEvent(session.sseResponse, {
+          type: 'message_end',
+          message_id: session.currentMessageId
+        });
+      }
     }
+
+    // CRITICAL: Always clear message ID unconditionally
+    // This prevents state leakage even when:
+    // - SSE connection is lost (sseResponse is null)
+    // - Error occurs before message_start was emitted
+    // - Session is deleted or invalidated mid-turn
+    session.currentMessageId = null;
 
   } finally {
     // Release processing lock
@@ -395,6 +464,29 @@ async function streamLLMResponse(session) {
     logger.warn('[chatStream] Session deleted during processing:', {
       session_id: session.id
     });
+
+    // === FIX: Emit terminal events before returning ===
+    if (session.sseResponse) {
+      // Error event (if message was started)
+      if (session.currentMessageId) {
+        streamEvent(session.sseResponse, {
+          type: 'error',
+          message_id: session.currentMessageId,
+          code: 'SESSION_EXPIRED',
+          message: 'Session expired. Please refresh and try again.',
+          debug: NODE_ENV === 'development' ? 'Session deleted mid-turn' : undefined
+        });
+
+        // Finalize the turn
+        streamEvent(session.sseResponse, {
+          type: 'message_end',
+          message_id: session.currentMessageId
+        });
+      }
+    }
+
+    // Always clear message ID
+    session.currentMessageId = null;
     return;
   }
 
@@ -408,17 +500,26 @@ async function streamLLMResponse(session) {
     });
 
     if (session.sseResponse) {
+      // Error event with message_id
       streamEvent(session.sseResponse, {
         type: 'error',
+        message_id: session.currentMessageId || null,
         code: 'ITERATION_LIMIT_EXCEEDED',
         message: 'Conversation became too complex. Please start a new conversation.',
         debug: NODE_ENV === 'development' ? `Exceeded ${MAX_CONVERSATION_ITERATIONS} iterations` : undefined
       });
 
-      streamEvent(session.sseResponse, {
-        type: 'done'
-      });
+      // Emit message_end if message was started
+      if (session.currentMessageId) {
+        streamEvent(session.sseResponse, {
+          type: 'message_end',
+          message_id: session.currentMessageId
+        });
+      }
     }
+
+    // CRITICAL: Always clear message ID (unconditional)
+    session.currentMessageId = null;
 
     sessionManager.deleteSession(session.id);
     return;
@@ -463,6 +564,7 @@ async function streamLLMResponse(session) {
         if (session.sseResponse) {
           streamEvent(session.sseResponse, {
             type: 'text',
+            message_id: session.currentMessageId,  // ADD
             content: delta.content
           });
         }
@@ -522,35 +624,34 @@ async function streamLLMResponse(session) {
     // Execute tool calls
     if (toolCalls.length > 0) {
       await executeToolCalls(session, toolCalls);
+      // Note: executeToolCalls will call streamLLMResponse recursively
+      // The recursive call will eventually hit toolCalls.length === 0
     } else {
-      // No tool calls - assistant finished speaking, waiting for user
-      if (session.sseResponse && assistantMessage) {
+      // === Turn complete - ALWAYS emit message_end ===
+      if (session.sseResponse && session.currentMessageId) {
         streamEvent(session.sseResponse, {
-          type: 'message_complete'
+          type: 'message_end',
+          message_id: session.currentMessageId
         });
       }
+
+      // CRITICAL: Always clear messageId, even if SSE unavailable
+      // Keeps session state clean for next turn and prevents double emission
+      session.currentMessageId = null;
     }
 
   } catch (error) {
     logger.error('[chatStream] LLM streaming error:', {
       session_id: session.id,
       error: error.message,
-      stack: error.stack,
       error_code: error.code,
       error_type: error.type
     });
 
-    // Send error event with debug info in development
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
-        type: 'error',
-        code: error.code || 'LLM_ERROR',
-        message: 'AI service error. Please try again.',
-        debug: NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
+    // DO NOT emit error event here - processMessage() catch handles all error emission
+    // This avoids duplicate error events when errors propagate up the call stack
 
-    throw error;
+    throw error;  // Re-throw to processMessage() for unified error handling
   }
 }
 
@@ -591,6 +692,7 @@ async function executeToolCalls(session, toolCalls) {
     if (session.sseResponse) {
       streamEvent(session.sseResponse, {
         type: 'tool_start',
+        message_id: session.currentMessageId,  // ADD
         tool: toolName,
         params
       });
@@ -605,6 +707,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
+          message_id: session.currentMessageId,  // ADD
           tool: toolName,
           duration_ms: Date.now() - toolStartTime
         });
@@ -618,6 +721,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
+          message_id: session.currentMessageId,  // ADD
           tool: toolName,
           duration_ms: Date.now() - toolStartTime
         });
@@ -640,6 +744,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
+          message_id: session.currentMessageId,  // ADD
           tool: toolName,
           duration_ms: toolDuration
         });
@@ -664,6 +769,7 @@ async function executeToolCalls(session, toolCalls) {
       if (session.sseResponse) {
         streamEvent(session.sseResponse, {
           type: 'tool_complete',
+          message_id: session.currentMessageId,  // ADD
           tool: toolName,
           duration_ms: Date.now() - toolStartTime,
           error: error.message,
@@ -685,6 +791,29 @@ async function executeToolCalls(session, toolCalls) {
     logger.warn('[chatStream] Session deleted during tool execution:', {
       session_id: session.id
     });
+
+    // === FIX: Emit terminal events before returning ===
+    if (session.sseResponse) {
+      // Error event (if message was started)
+      if (session.currentMessageId) {
+        streamEvent(session.sseResponse, {
+          type: 'error',
+          message_id: session.currentMessageId,
+          code: 'SESSION_EXPIRED',
+          message: 'Session expired. Please refresh and try again.',
+          debug: NODE_ENV === 'development' ? 'Session deleted mid-turn' : undefined
+        });
+
+        // Finalize the turn
+        streamEvent(session.sseResponse, {
+          type: 'message_end',
+          message_id: session.currentMessageId
+        });
+      }
+    }
+
+    // Always clear message ID
+    session.currentMessageId = null;
     return;
   }
 
@@ -761,6 +890,37 @@ async function handleShowPlot(session, params, toolCallId) {
   const { data, plot_title, replace_previous = false, thumbnail: thumbnailConfig } = params;
   const res = session.sseResponse;
 
+  // === NEW: Guard against missing plot_title ===
+  if (!plot_title || typeof plot_title !== 'string' || plot_title.trim() === '') {
+    logger.warn('[handleShowPlot] Missing or invalid plot_title:', {
+      session_id: session.id,
+      plot_title,
+      plot_title_type: typeof plot_title
+    });
+
+    // Emit user-visible error (LLM typically retries with correct parameters)
+    if (session.sseResponse) {
+      streamEvent(session.sseResponse, {
+        type: 'error',
+        message_id: session.currentMessageId || null,
+        code: 'INVALID_TOOL_PARAMS',
+        message: 'Plot generation failed due to missing title. Retrying...',
+        debug: NODE_ENV === 'development' ? 'plot_title is required' : undefined
+      });
+    }
+
+    // Send error to LLM for recovery
+    session.messages.push({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: JSON.stringify({
+        success: false,
+        error: 'plot_title is required and must be a non-empty string'
+      })
+    });
+    return;
+  }
+
   // Step 1: Guard against invalid data type (defensive against schema validation failures)
   if (!Array.isArray(data)) {
     logger.warn('[handleShowPlot] Invalid data type:', {
@@ -773,6 +933,7 @@ async function handleShowPlot(session, params, toolCallId) {
     if (res) {
       streamEvent(res, {
         type: 'plot_result',
+        message_id: session.currentMessageId,  // REQUIRED
         plot_title,
         rows: [],
         replace_previous: true
@@ -782,10 +943,12 @@ async function handleShowPlot(session, params, toolCallId) {
     if (thumbnailConfig && res) {
       streamEvent(res, {
         type: 'thumbnail_update',
+        message_id: session.currentMessageId,  // REQUIRED
         plot_title,
         result_id: crypto.randomUUID(),
-        thumbnail: deriveEmptyThumbnail(plot_title),
-        replace_previous: true
+        thumbnail: deriveEmptyThumbnail(plot_title)
+        // CRITICAL FIX: Remove existing `replace_previous: true` from line 788
+        // The thumbnail_update contract does NOT include replace_previous field
       });
     }
 
@@ -815,6 +978,7 @@ async function handleShowPlot(session, params, toolCallId) {
   if (res) {
     streamEvent(res, {
       type: 'plot_result',
+      message_id: session.currentMessageId,  // ADD
       plot_title,
       rows: rowsWithOutOfRange,
       replace_previous: replace_previous || false
@@ -847,6 +1011,7 @@ async function handleShowPlot(session, params, toolCallId) {
 
       streamEvent(res, {
         type: 'thumbnail_update',
+        message_id: session.currentMessageId,  // ADD
         plot_title,
         result_id: result.resultId,
         thumbnail: result.thumbnail
@@ -923,6 +1088,7 @@ async function handleShowTable(session, params, toolCallId) {
     if (session.sseResponse) {
       streamEvent(session.sseResponse, {
         type: 'table_result',
+        message_id: session.currentMessageId,  // ADD
         table_title,
         rows: data,
         replace_previous
@@ -961,138 +1127,6 @@ async function handleShowTable(session, params, toolCallId) {
       tool_call_id: toolCallId,
       content: JSON.stringify({ success: false, error: error.message })
     });
-  }
-}
-
-/**
- * Handle final query generation
- */
-async function handleFinalQuery(session, params, toolCallId) {
-  const startTime = Date.now();
-
-  // Extract patient_id from LLM response if provided (PRD v3.2)
-  if (params.patient_id) {
-    session.selectedPatientId = params.patient_id;
-    logger.info('[chatStream] LLM identified patient:', {
-      session_id: session.id,
-      patient_id: params.patient_id
-    });
-  }
-
-  // Build session metadata for agenticCore
-  const sessionMetadata = {
-    userIdentifier: 'anonymous', // TODO: Add user identification
-    requestId: session.id,
-    question: session.messages.find(m => m.role === 'user')?.content || '',
-    schemaSnapshotId: null, // TODO: Track schema snapshot
-    selectedPatientId: session.selectedPatientId,
-    patientCount: session.patientCount || 0,
-    sessionId: session.id,
-    iterationLog: [] // Not applicable in conversational mode
-  };
-
-  try {
-    const result = await agenticCore.handleFinalQuery(params, sessionMetadata, startTime);
-
-    if (!result.ok) {
-      // Validation failed - send error but keep session for clarification
-      logger.warn('[chatStream] Final query validation failed:', {
-        session_id: session.id,
-        error: result.error
-      });
-
-      // Send error event to client
-      if (session.sseResponse) {
-        streamEvent(session.sseResponse, {
-          type: 'error',
-          code: result.error.code,
-          message: result.error.message
-        });
-
-        // Send done event
-        streamEvent(session.sseResponse, {
-          type: 'done'
-        });
-      }
-
-      // Keep session alive for user to fix error (PRD v3.2)
-      sessionManager.releaseLock(session.id);
-      return;
-    }
-
-    // Success! Execute query and return results
-    const { sql, query_type, plot_metadata, plot_title } = result;
-
-    logger.info('[chatStream] About to execute query:', {
-      session_id: session.id,
-      query_type,
-      has_plot_metadata: !!plot_metadata,
-      has_plot_title: !!plot_title,
-      sql_preview: sql?.substring(0, 100)
-    });
-
-    // Execute query
-    const queryResult = await pool.query(sql);
-
-    logger.info('[chatStream] Final query successful:', {
-      session_id: session.id,
-      query_type,
-      row_count: queryResult.rowCount,
-      has_rows: queryResult.rows?.length > 0,
-      first_row_keys: queryResult.rows?.[0] ? Object.keys(queryResult.rows[0]) : []
-    });
-
-    // Send final result event
-    if (session.sseResponse) {
-      logger.info('[chatStream] Sending final_result event:', {
-        session_id: session.id,
-        query_type,
-        row_count: queryResult.rows?.length,
-        has_plot_metadata: !!plot_metadata,
-        plot_title
-      });
-
-      streamEvent(session.sseResponse, {
-        type: 'final_result',
-        sql,
-        query_type,
-        rows: queryResult.rows,
-        plot_metadata,
-        plot_title
-      });
-
-      // Send done event
-      streamEvent(session.sseResponse, {
-        type: 'done'
-      });
-    }
-
-    // Keep session alive for follow-up questions (PRD v3.2)
-    // Session will expire via TTL (1 hour idle timeout) in sessionManager
-    sessionManager.releaseLock(session.id);
-
-  } catch (error) {
-    logger.error('[chatStream] Final query error:', {
-      session_id: session.id,
-      error: error.message,
-      stack: error.stack
-    });
-
-    // Send error event
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
-        type: 'error',
-        code: 'INTERNAL_ERROR',
-        message: error.message
-      });
-
-      streamEvent(session.sseResponse, {
-        type: 'done'
-      });
-    }
-
-    // Keep session alive so user can retry (PRD v3.2)
-    sessionManager.releaseLock(session.id);
   }
 }
 

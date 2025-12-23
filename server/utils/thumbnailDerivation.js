@@ -4,6 +4,17 @@
 
 import crypto from 'crypto';
 
+// Simple console logger (same pattern as chatStream.js)
+const logger = {
+  error: (msgOrObj, msg) => {
+    if (typeof msgOrObj === 'string') {
+      console.error(`[ERROR] ${msgOrObj}`, msg !== undefined ? JSON.stringify(msg, null, 2) : '');
+    } else {
+      console.error(`[ERROR] ${msg}`, JSON.stringify(msgOrObj, null, 2));
+    }
+  }
+};
+
 /**
  * Parse timestamp to epoch milliseconds
  * @param {string|number} t - ISO 8601 string, epoch seconds, epoch ms, or numeric string
@@ -296,6 +307,46 @@ function deriveEmptyThumbnail(plotTitle) {
 }
 
 /**
+ * Validate that thumbnail meets required field contract
+ * @param {object} thumbnail - Derived thumbnail object
+ * @returns {{ valid: boolean, errors: string[] }}
+ */
+export function validateThumbnailOutput(thumbnail) {
+  const errors = [];
+
+  // Required fields
+  if (!thumbnail.plot_title || typeof thumbnail.plot_title !== 'string') {
+    errors.push('plot_title is required and must be a non-empty string');
+  }
+
+  const validStatuses = ['normal', 'high', 'low', 'unknown'];
+  if (!validStatuses.includes(thumbnail.status)) {
+    errors.push(`status must be one of: ${validStatuses.join(', ')}`);
+  }
+
+  if (!thumbnail.sparkline?.series || !Array.isArray(thumbnail.sparkline.series)) {
+    errors.push('sparkline.series is required and must be an array');
+  } else if (thumbnail.sparkline.series.length < 1 || thumbnail.sparkline.series.length > 30) {
+    errors.push('sparkline.series must have 1-30 values');
+  } else if (!thumbnail.sparkline.series.every(v => typeof v === 'number' && Number.isFinite(v))) {
+    errors.push('sparkline.series must contain only finite numbers');
+  }
+
+  if (typeof thumbnail.point_count !== 'number' || thumbnail.point_count < 0) {
+    errors.push('point_count is required and must be >= 0');
+  }
+
+  if (typeof thumbnail.series_count !== 'number' || thumbnail.series_count < 0) {
+    errors.push('series_count is required and must be >= 0');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+
+/**
  * Create fallback thumbnail when validation fails
  * @param {string} plotTitle - Plot title
  * @param {Array} data - Raw data array
@@ -337,61 +388,77 @@ function deriveThumbnail(params) {
     return null;
   }
 
-  // Generate ephemeral result_id (no replacement support yet)
+  // Generate ephemeral result_id
   const resultId = crypto.randomUUID();
+  let thumbnail;
+  let codePath; // Track which path for debugging
 
   // Validate config
   const validationResult = validateThumbnailConfig(thumbnailConfig);
   if (!validationResult.valid) {
-    return {
-      thumbnail: deriveFallbackThumbnail(plot_title, rows || []),
-      resultId
+    // FALLBACK RATIONALE: LLM provided malformed thumbnail config (bad JSON, wrong types)
+    // We still have valid rows data, so use deriveFallbackThumbnail() to extract sparkline
+    // This gracefully recovers from LLM mistakes without losing user value
+    thumbnail = deriveFallbackThumbnail(plot_title, rows || []);
+    codePath = 'fallback';
+  } else if (!rows || rows.length === 0) {
+    // Handle empty data
+    thumbnail = deriveEmptyThumbnail(plot_title);
+    codePath = 'empty';
+  } else {
+    // rows are already sanitized (preprocess + normalize + ensureOutOfRange)
+    const focusAnalyteName = thumbnailConfig?.focus_analyte_name || null;
+    const focusSeries = getFocusSeries(rows, focusAnalyteName);
+
+    // Check for mixed units
+    const unitInfo = getUnitInfo(focusSeries.rows);
+    const isMixedUnits = unitInfo.isMixed;
+
+    // Derive all fields
+    const latestValue = focusSeries.rows.length > 0
+      ? focusSeries.rows[focusSeries.rows.length - 1].y
+      : null;
+
+    const llmStatus = thumbnailConfig?.status || 'unknown';
+    const status = deriveStatus(llmStatus, latestValue, focusSeries.rows, isMixedUnits);
+    const deltaPct = deriveDeltaPct(focusSeries.rows, isMixedUnits);
+    const deltaDirection = deriveDeltaDirection(deltaPct);
+    const deltaPeriod = deriveDeltaPeriod(focusSeries.rows, isMixedUnits);
+    const sparkline = { series: downsample(focusSeries.rows.map(r => r.y)) };
+
+    // Assemble thumbnail
+    thumbnail = {
+      plot_title,
+      focus_analyte_name: focusSeries.name,
+      point_count: focusSeries.rows.length,
+      series_count: new Set(rows.map(r => r.parameter_name)).size,
+      latest_value: latestValue,
+      unit_raw: unitInfo.unit_raw,
+      unit_display: unitInfo.unit_display,
+      status,
+      delta_pct: deltaPct,
+      delta_direction: deltaDirection,
+      delta_period: deltaPeriod,
+      sparkline
     };
+    codePath = 'main';
   }
 
-  // Handle empty data
-  if (!rows || rows.length === 0) {
-    return {
-      thumbnail: deriveEmptyThumbnail(plot_title),
-      resultId
-    };
+  // === CRITICAL: Validate output from ALL code paths ===
+  // This catches bugs in main derivation, deriveFallbackThumbnail(), and deriveEmptyThumbnail()
+  // Defensive programming: trust but verify, especially for cross-module contracts
+  const outputValidation = validateThumbnailOutput(thumbnail);
+  if (!outputValidation.valid) {
+    logger.error('[deriveThumbnail] Output validation failed:', {
+      plot_title,
+      code_path: codePath,
+      errors: outputValidation.errors
+    });
+    // FAIL-SAFE: Return null to skip thumbnail emission entirely
+    // The `if (result.thumbnail !== null)` guard in chatStream.js handles this
+    // Better to show no thumbnail than crash frontend with malformed data
+    return null;
   }
-
-  // rows are already sanitized (preprocess + normalize + ensureOutOfRange)
-  const focusAnalyteName = thumbnailConfig?.focus_analyte_name || null;
-  const focusSeries = getFocusSeries(rows, focusAnalyteName);
-
-  // Check for mixed units
-  const unitInfo = getUnitInfo(focusSeries.rows);
-  const isMixedUnits = unitInfo.isMixed;
-
-  // Derive all fields
-  const latestValue = focusSeries.rows.length > 0
-    ? focusSeries.rows[focusSeries.rows.length - 1].y
-    : null;
-
-  const llmStatus = thumbnailConfig?.status || 'unknown';
-  const status = deriveStatus(llmStatus, latestValue, focusSeries.rows, isMixedUnits);
-  const deltaPct = deriveDeltaPct(focusSeries.rows, isMixedUnits);
-  const deltaDirection = deriveDeltaDirection(deltaPct);
-  const deltaPeriod = deriveDeltaPeriod(focusSeries.rows, isMixedUnits);
-  const sparkline = { series: downsample(focusSeries.rows.map(r => r.y)) };
-
-  // Assemble thumbnail
-  const thumbnail = {
-    plot_title,
-    focus_analyte_name: focusSeries.name,
-    point_count: focusSeries.rows.length,
-    series_count: new Set(rows.map(r => r.parameter_name)).size,
-    latest_value: latestValue,
-    unit_raw: unitInfo.unit_raw,
-    unit_display: unitInfo.unit_display,
-    status,
-    delta_pct: deltaPct,
-    delta_direction: deltaDirection,
-    delta_period: deltaPeriod,
-    sparkline
-  };
 
   return {
     thumbnail,

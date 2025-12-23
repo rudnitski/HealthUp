@@ -12,6 +12,7 @@ class ConversationalSQLChat {
     this.charts = new Map(); // Track ALL chart instances by canvas ID
     this.parameterSelectorChangeHandler = null; // Track parameter selector listener
     this.plotCounter = 0; // Counter for unique canvas IDs
+    this.currentMessageId = null;  // Track current assistant message ID
 
     // DOM elements (will be set when UI is initialized)
     this.chatContainer = null;
@@ -92,6 +93,27 @@ class ConversationalSQLChat {
         this.enableInput();
         break;
 
+      case 'message_start':
+        this.currentMessageId = data.message_id;
+        console.log('[Chat] Message started:', data.message_id);
+        break;
+
+      case 'message_end':
+        this.currentMessageId = null;
+        // Clear status indicator (prevents stale "Thinking...") on tool-only/error-only turns)
+        this.hideStatusIndicator();
+        // CRITICAL: Only finalize if we actually streamed text this turn
+        // This guard prevents three failure modes:
+        // 1. Double-finalization on error path (handleError() already calls finalizeAssistantMessage() at chat.js:899)
+        // 2. Clobbering previous messages on tool-only turns (no currentAssistantMessage was created)
+        // 3. Finalizing empty messages on error-only responses (error shown, but no assistant text)
+        if (this.currentAssistantMessage) {
+          this.finalizeAssistantMessage();
+        }
+        this.enableInput();
+        this.isProcessing = false;
+        break;
+
       case 'text':
         this.appendAssistantText(data.content);
         break;
@@ -108,12 +130,6 @@ class ConversationalSQLChat {
         this.showStatusIndicator(data.status, data.message);
         break;
 
-      case 'message_complete':
-        this.finalizeAssistantMessage();
-        this.enableInput();
-        this.isProcessing = false;
-        break;
-
       case 'plot_result':
         this.handlePlotResult(data);
         break;
@@ -123,19 +139,16 @@ class ConversationalSQLChat {
         break;
 
       case 'thumbnail_update':
-        // PRD v4.2.2: Backend now emits thumbnail_update events from show_plot
-        // No UI rendering yet; intentionally ignore to avoid console warnings
-        // Debug logging (optional): console.log('[v4.2.2 DEBUG] thumbnail_update:', data);
+        console.log('[v4.2.3] thumbnail_update:', {
+          message_id: data.message_id,
+          plot_title: data.plot_title,
+          thumbnail: data.thumbnail
+        });
+        // TODO v4.2.4: Actually render thumbnail into message bubble
         break;
 
       case 'error':
         this.handleError(data);
-        break;
-
-      case 'done':
-        console.log('[Chat] Stream done');
-        this.enableInput();
-        this.isProcessing = false;
         break;
 
       default:
