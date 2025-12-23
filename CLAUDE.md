@@ -353,6 +353,10 @@ Feature specs live in `docs/PRD_*.md`:
 - v3.1: Auto-execute data queries
 - v3.2: Conversational SQL assistant (streaming chat with multi-turn dialogue)
 - v3.7: Streaming Gmail Classification Pipeline (parallel Gmail fetch + LLM classification)
+- v4.2: Chat Plot Thumbnails (MVP specification)
+- v4.2.1: LLM Thumbnail & Separated Data Flow (execute_sql → show_plot + show_thumbnail)
+- v4.2.2: Thumbnail Contract Expansion + Backend Derivation (unified show_plot, backend derives sparkline/deltas)
+- v4.2.3: Thumbnail UI Infrastructure (message anchoring with UUIDs, contract finalization)
 
 Consult these when drafting new PRDs or understanding feature history. Prompt templates in `prompts/` define OCR extraction schema and SQL generation instructions.
 
