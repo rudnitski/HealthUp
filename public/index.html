@@ -247,15 +247,35 @@
         <!-- Conversational Assistant Section -->
         <section id="section-assistant" class="content-section" style="display: none;">
           <div id="conversational-chat-container" class="chat-container">
-            <div class="chat-header">
-              <h2>HealthUp Assistant</h2>
-              <p>Ask questions about your lab results in natural language</p>
-            </div>
-            <div class="chat-medical-disclaimer">
-              <strong>Note:</strong> This analysis is based on your lab data and general medical knowledge.
-              Always consult your healthcare provider to interpret results in the context of your complete health history.
-            </div>
             <div class="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
+              <!-- Empty State (shown when no messages) -->
+              <div class="chat-empty-state">
+                <div class="chat-empty-content">
+                  <div class="chat-empty-icon">🩺</div>
+                  <h2 class="chat-empty-title">HealthUp Assistant</h2>
+                  <p class="chat-empty-subtitle">Ask questions about your lab results in natural language</p>
+
+                  <!-- Example Prompts -->
+                  <div class="chat-example-prompts">
+                    <button class="chat-example-prompt" data-prompt="Show me my latest cholesterol results">
+                      <span class="prompt-icon">📊</span>
+                      <span class="prompt-text">Show my latest cholesterol results</span>
+                    </button>
+                    <button class="chat-example-prompt" data-prompt="How has my vitamin D changed over time?">
+                      <span class="prompt-icon">📈</span>
+                      <span class="prompt-text">Track vitamin D over time</span>
+                    </button>
+                    <button class="chat-example-prompt" data-prompt="What tests did I do last month?">
+                      <span class="prompt-icon">📅</span>
+                      <span class="prompt-text">What tests did I do last month?</span>
+                    </button>
+                    <button class="chat-example-prompt" data-prompt="Show all my out-of-range results">
+                      <span class="prompt-icon">⚠️</span>
+                      <span class="prompt-text">Show out-of-range results</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
               <!-- Messages appended dynamically -->
             </div>
             <div class="chat-input-container">
@@ -270,6 +290,10 @@
                 <button class="chat-send-button" type="button" aria-label="Send message" disabled>
                   Send
                 </button>
+              </div>
+              <div class="chat-medical-disclaimer">
+                <strong>Note:</strong> This analysis is based on your lab data and general medical knowledge.
+                Always consult your healthcare provider to interpret results in the context of your complete health history.
               </div>
             </div>
           </div>

@@ -40,8 +40,27 @@ class ConversationalSQLChat {
     this.sendButton.addEventListener('click', this.handleSendMessage);
     this.inputTextarea.addEventListener('keydown', this.handleKeyPress);
 
+    // Attach example prompt click handlers
+    this.attachExamplePromptHandlers();
+
     // Connect to SSE stream
     this.connectSSE();
+  }
+
+  /**
+   * Attach click handlers to example prompts
+   */
+  attachExamplePromptHandlers() {
+    const examplePrompts = this.chatContainer.querySelectorAll('.chat-example-prompt');
+    examplePrompts.forEach(button => {
+      button.addEventListener('click', () => {
+        const prompt = button.dataset.prompt;
+        if (prompt && !this.isProcessing) {
+          this.inputTextarea.value = prompt;
+          this.handleSendMessage();
+        }
+      });
+    });
   }
 
   /**
