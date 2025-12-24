@@ -168,6 +168,8 @@ async function extractPatientId(userResponse, patients) {
   // Try fuzzy name matching (case-insensitive)
   // Only match if BOTH user input and patient name are non-empty and meaningful
   const lowerResponse = textToMatch.toLowerCase();
+
+  // First pass: exact substring matching (original logic)
   for (const patient of patients) {
     const lowerName = (patient.full_name || '').toLowerCase().trim();
     // Skip patients with empty names - prevents false matches on empty string
@@ -176,7 +178,7 @@ async function extractPatientId(userResponse, patients) {
     }
     // Require minimum 2 characters match to avoid false positives
     if (lowerResponse.length >= 2 && (lowerName.includes(lowerResponse) || lowerResponse.includes(lowerName))) {
-      logger.info('[chatStream] Matched patient by name:', {
+      logger.info('[chatStream] Matched patient by name (exact):', {
         user_input: trimmed,
         extracted_text: textToMatch,
         patient_name: patient.full_name,
@@ -184,6 +186,49 @@ async function extractPatientId(userResponse, patients) {
       });
       return patient.id;
     }
+  }
+
+  // Second pass: word-based matching for embedded patient references
+  // e.g., "покажи холестерин для Рудницкий Юрий" should match "Рудницкий Юрий Владимирович"
+  const responseWords = lowerResponse.split(/\s+/).filter(w => w.length >= 3);
+  let bestMatch = null;
+  let bestMatchCount = 0;
+
+  for (const patient of patients) {
+    const lowerName = (patient.full_name || '').toLowerCase().trim();
+    if (!lowerName || lowerName.length < 2) {
+      continue;
+    }
+
+    // Split patient name into words (surname, first name, patronymic)
+    const nameWords = lowerName.split(/\s+/).filter(w => w.length >= 3);
+    if (nameWords.length === 0) {
+      continue;
+    }
+
+    // Count how many name words appear in the user response
+    const matchedWords = nameWords.filter(nameWord =>
+      responseWords.some(respWord => respWord.includes(nameWord) || nameWord.includes(respWord))
+    );
+
+    // Require at least 2 matching words (e.g., surname + first name)
+    // or all words if patient has only 1-2 name parts
+    const minRequired = Math.min(2, nameWords.length);
+    if (matchedWords.length >= minRequired && matchedWords.length > bestMatchCount) {
+      bestMatch = patient;
+      bestMatchCount = matchedWords.length;
+    }
+  }
+
+  if (bestMatch) {
+    logger.info('[chatStream] Matched patient by name (word-based):', {
+      user_input: trimmed,
+      extracted_text: textToMatch,
+      patient_name: bestMatch.full_name,
+      patient_id: bestMatch.id,
+      matched_words: bestMatchCount
+    });
+    return bestMatch.id;
   }
 
   // Try exact UUID match

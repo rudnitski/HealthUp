@@ -7,12 +7,12 @@ class ConversationalSQLChat {
     this.sessionId = null;
     this.eventSource = null;
     this.isProcessing = false;
-    this.currentAssistantMessage = '';
+    // PRD v4.2.4: Per-message text buffers (replaces single currentAssistantMessage)
+    this.messageBuffers = new Map(); // Map<message_id, accumulated_text>
     this.activeTools = new Set(); // Track active tool executions
     this.charts = new Map(); // Track ALL chart instances by canvas ID
     this.parameterSelectorChangeHandler = null; // Track parameter selector listener
     this.plotCounter = 0; // Counter for unique canvas IDs
-    this.currentMessageId = null;  // Track current assistant message ID
 
     // DOM elements (will be set when UI is initialized)
     this.chatContainer = null;
@@ -94,28 +94,29 @@ class ConversationalSQLChat {
         break;
 
       case 'message_start':
-        this.currentMessageId = data.message_id;
         console.log('[Chat] Message started:', data.message_id);
         break;
 
       case 'message_end':
-        this.currentMessageId = null;
-        // Clear status indicator (prevents stale "Thinking...") on tool-only/error-only turns)
+        // PRD v4.2.4: Finalize message by message_id
         this.hideStatusIndicator();
         // CRITICAL: Only finalize if we actually streamed text this turn
-        // This guard prevents three failure modes:
-        // 1. Double-finalization on error path (handleError() already calls finalizeAssistantMessage() at chat.js:899)
-        // 2. Clobbering previous messages on tool-only turns (no currentAssistantMessage was created)
-        // 3. Finalizing empty messages on error-only responses (error shown, but no assistant text)
-        if (this.currentAssistantMessage) {
-          this.finalizeAssistantMessage();
+        // This guard prevents:
+        // 1. Double-finalization on error path
+        // 2. Clobbering previous messages on tool-only turns
+        // 3. Finalizing empty messages on error-only responses
+        if (data.message_id && this.messageBuffers.has(data.message_id)) {
+          this.finalizeAssistantMessage(data.message_id);
         }
+        // Check for thumbnail stack margin adjustment (PRD v4.2.4)
+        this.adjustThumbnailStackMargin(data.message_id);
         this.enableInput();
         this.isProcessing = false;
         break;
 
       case 'text':
-        this.appendAssistantText(data.content);
+        // PRD v4.2.4: Pass message_id for per-message text accumulation
+        this.appendAssistantText(data.message_id, data.content);
         break;
 
       case 'tool_start':
@@ -139,12 +140,13 @@ class ConversationalSQLChat {
         break;
 
       case 'thumbnail_update':
-        console.log('[v4.2.3] thumbnail_update:', {
+        // PRD v4.2.4: Render thumbnail into message bubble
+        console.log('[v4.2.4] thumbnail_update:', {
           message_id: data.message_id,
           plot_title: data.plot_title,
           thumbnail: data.thumbnail
         });
-        // TODO v4.2.4: Actually render thumbnail into message bubble
+        this.renderThumbnail(data.message_id, data.plot_title, data.result_id, data.thumbnail, data.replace_previous);
         break;
 
       case 'error':
@@ -244,46 +246,86 @@ class ConversationalSQLChat {
   }
 
   /**
-   * Append text to current assistant message (streaming)
+   * PRD v4.2.4: Create or get message shell for assistant message
+   * Creates on-demand when first text or thumbnail arrives
+   * @param {string} messageId - UUID for the message
+   * @returns {HTMLElement} - The message shell element
    */
-  appendAssistantText(text) {
-    this.currentAssistantMessage += text;
+  getOrCreateMessageShell(messageId) {
+    // Check if shell already exists (deduplication)
+    let messageShell = this.messagesContainer.querySelector(`[data-message-id="${messageId}"]`);
 
-    // Find or create assistant message element
-    let assistantMessageEl = this.messagesContainer.querySelector('.chat-message-assistant:last-child .chat-bubble');
-
-    if (!assistantMessageEl) {
-      // First text chunk - hide status indicator as LLM is now generating response
-      this.hideStatusIndicator();
-
-      // Create new assistant message
-      const messageDiv = document.createElement('div');
-      messageDiv.className = 'chat-message chat-message-assistant';
+    if (!messageShell) {
+      // Create new message shell with PRD v4.2.4 DOM structure
+      messageShell = document.createElement('div');
+      messageShell.className = 'chat-message chat-message-assistant';
+      messageShell.setAttribute('data-message-id', messageId);
 
       const bubble = document.createElement('div');
-      bubble.className = 'chat-bubble chat-bubble-assistant markdown-content';
+      bubble.className = 'chat-bubble chat-bubble-assistant';
 
-      messageDiv.appendChild(bubble);
-      this.messagesContainer.appendChild(messageDiv);
+      // PRD v4.2.4: Two sibling containers inside bubble
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'chat-bubble-content markdown-content';
 
-      assistantMessageEl = bubble;
+      const thumbnailStack = document.createElement('div');
+      thumbnailStack.className = 'thumbnail-stack';
+
+      bubble.appendChild(contentDiv);
+      bubble.appendChild(thumbnailStack);
+      messageShell.appendChild(bubble);
+      this.messagesContainer.appendChild(messageShell);
+    }
+
+    return messageShell;
+  }
+
+  /**
+   * Append text to assistant message (streaming)
+   * PRD v4.2.4: Uses per-message buffers and message_id-based DOM targeting
+   * @param {string} messageId - UUID for the message
+   * @param {string} text - Text chunk to append
+   */
+  appendAssistantText(messageId, text) {
+    if (!messageId) {
+      console.error('[Chat] appendAssistantText called without message_id');
+      return;
+    }
+
+    // Accumulate text in per-message buffer
+    const buffer = this.messageBuffers.get(messageId) || '';
+    this.messageBuffers.set(messageId, buffer + text);
+
+    // Get or create message shell (on-demand creation)
+    const messageShell = this.getOrCreateMessageShell(messageId);
+
+    // Hide status indicator on first text chunk
+    if (!buffer) {
+      this.hideStatusIndicator();
+    }
+
+    // Find the content container using message_id-based selector (PRD v4.2.4 requirement)
+    const contentEl = messageShell.querySelector('.chat-bubble-content');
+    if (!contentEl) {
+      console.error('[Chat] Could not find .chat-bubble-content in message shell');
+      return;
     }
 
     // Parse markdown and sanitize HTML
-    const rawHtml = marked.parse(this.currentAssistantMessage);
+    const rawHtml = marked.parse(this.messageBuffers.get(messageId));
     const cleanHtml = DOMPurify.sanitize(rawHtml, {
       ADD_TAGS: ['span'],
       ADD_ATTR: ['class']
     });
 
-    // Update content with streaming cursor (add cursor as DOM element to avoid sanitization)
-    assistantMessageEl.innerHTML = cleanHtml;
+    // Update content (targets .chat-bubble-content, preserving .thumbnail-stack)
+    contentEl.innerHTML = cleanHtml;
 
     // Add cursor as a separate element to avoid it being removed by sanitizer
     const cursor = document.createElement('span');
     cursor.className = 'streaming-cursor';
     cursor.textContent = '|';
-    assistantMessageEl.appendChild(cursor);
+    contentEl.appendChild(cursor);
 
     // Only auto-scroll if user is near bottom (within 100px)
     this.scrollToBottomIfNearBottom();
@@ -291,18 +333,419 @@ class ConversationalSQLChat {
 
   /**
    * Finalize assistant message (remove cursor)
+   * PRD v4.2.4: Uses message_id for per-message targeting
+   * @param {string} messageId - UUID for the message to finalize
    */
-  finalizeAssistantMessage() {
-    const assistantMessageEl = this.messagesContainer.querySelector('.chat-message-assistant:last-child .chat-bubble');
-
-    if (assistantMessageEl) {
-      // Parse markdown and sanitize HTML
-      const rawHtml = marked.parse(this.currentAssistantMessage);
-      const cleanHtml = DOMPurify.sanitize(rawHtml);
-      assistantMessageEl.innerHTML = cleanHtml;
+  finalizeAssistantMessage(messageId) {
+    if (!messageId) {
+      console.error('[Chat] finalizeAssistantMessage called without message_id');
+      return;
     }
 
-    this.currentAssistantMessage = '';
+    if (!messageId || !this.messageBuffers.has(messageId)) {
+      return;
+    }
+
+    // Find message element using message_id-based selector (PRD v4.2.4)
+    const messageShell = this.messagesContainer.querySelector(`[data-message-id="${messageId}"]`);
+    const contentEl = messageShell?.querySelector('.chat-bubble-content');
+
+    if (contentEl) {
+      // Parse markdown and sanitize HTML (final render without cursor)
+      const rawHtml = marked.parse(this.messageBuffers.get(messageId));
+      const cleanHtml = DOMPurify.sanitize(rawHtml);
+      contentEl.innerHTML = cleanHtml;
+    }
+
+    // Clear the buffer for this message
+    this.messageBuffers.delete(messageId);
+  }
+
+  /**
+   * PRD v4.2.4: Adjust thumbnail stack margin based on text content presence
+   * Called on message_end to finalize layout
+   * @param {string} messageId - UUID for the message
+   */
+  adjustThumbnailStackMargin(messageId) {
+    if (!messageId) return;
+
+    const messageShell = this.messagesContainer.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageShell) return;
+
+    const contentEl = messageShell.querySelector('.chat-bubble-content');
+    const thumbnailStack = messageShell.querySelector('.thumbnail-stack');
+
+    if (!thumbnailStack || thumbnailStack.children.length === 0) return;
+
+    // Check if text content is empty (after cursor removal)
+    const hasTextContent = contentEl && contentEl.textContent.trim() !== '';
+
+    if (!hasTextContent) {
+      thumbnailStack.classList.add('thumbnail-stack--no-text-above');
+    } else {
+      thumbnailStack.classList.remove('thumbnail-stack--no-text-above');
+    }
+  }
+
+  /**
+   * PRD v4.2.4: Render thumbnail card into assistant message
+   * @param {string} messageId - UUID for the assistant message
+   * @param {string} plotTitle - Authoritative plot title (top-level)
+   * @param {string} resultId - Unique result ID for this thumbnail
+   * @param {object} thumbnail - Thumbnail data from backend
+   * @param {boolean} replacePrevious - If true, remove most recent thumbnail first
+   */
+  renderThumbnail(messageId, plotTitle, resultId, thumbnail, replacePrevious) {
+    if (!messageId || !thumbnail) {
+      console.error('[Chat] renderThumbnail: missing messageId or thumbnail');
+      return;
+    }
+
+    // Validate required fields (PRD v4.2.4 contract)
+    const requiredFields = ['status', 'point_count', 'series_count'];
+    const validStatuses = ['normal', 'high', 'low', 'unknown'];
+
+    for (const field of requiredFields) {
+      if (thumbnail[field] === undefined || thumbnail[field] === null) {
+        console.error(`[Chat] renderThumbnail: missing required field "${field}" (contract violation)`);
+        return;
+      }
+    }
+
+    if (!validStatuses.includes(thumbnail.status)) {
+      console.error(`[Chat] renderThumbnail: invalid status "${thumbnail.status}" (contract violation)`);
+      return;
+    }
+
+    if (!thumbnail.sparkline?.series || !Array.isArray(thumbnail.sparkline.series) || thumbnail.sparkline.series.length === 0) {
+      console.error('[Chat] renderThumbnail: missing or empty sparkline.series (contract violation)');
+      return;
+    }
+
+    // Get or create message shell
+    const messageShell = this.getOrCreateMessageShell(messageId);
+    const thumbnailStack = messageShell.querySelector('.thumbnail-stack');
+
+    if (!thumbnailStack) {
+      console.error('[Chat] renderThumbnail: could not find .thumbnail-stack');
+      return;
+    }
+
+    // Handle replace_previous flag (PRD v4.2.2)
+    if (replacePrevious && thumbnailStack.children.length > 0) {
+      thumbnailStack.removeChild(thumbnailStack.lastChild);
+    }
+
+    // Create thumbnail card
+    const card = document.createElement('div');
+    card.className = 'thumbnail-card';
+    card.setAttribute('data-result-id', resultId || '');
+
+    // === Header section ===
+    const header = document.createElement('div');
+    header.className = 'thumbnail-header';
+
+    const title = document.createElement('div');
+    title.className = 'thumbnail-title';
+    title.textContent = plotTitle || 'Untitled';
+    header.appendChild(title);
+
+    // Optional subtitle (focus_analyte_name)
+    if (thumbnail.focus_analyte_name) {
+      const subtitle = document.createElement('div');
+      subtitle.className = 'thumbnail-subtitle';
+      subtitle.textContent = thumbnail.focus_analyte_name;
+      header.appendChild(subtitle);
+    }
+
+    card.appendChild(header);
+
+    // === Primary value row ===
+    const primary = document.createElement('div');
+    primary.className = 'thumbnail-primary';
+
+    const valueDiv = document.createElement('div');
+    valueDiv.className = 'thumbnail-value';
+
+    // Format latest_value per PRD v4.2.4
+    const formattedValue = this.formatLatestValue(thumbnail.latest_value);
+    if (formattedValue === '—') {
+      valueDiv.textContent = '—';
+    } else {
+      // Concatenate with unit_display (which includes leading space per backend contract)
+      valueDiv.textContent = formattedValue + (thumbnail.unit_display || '');
+    }
+
+    primary.appendChild(valueDiv);
+
+    // Status pill (required field)
+    const statusPill = document.createElement('div');
+    statusPill.className = `thumbnail-status status-${thumbnail.status}`;
+    statusPill.textContent = this.formatStatusLabel(thumbnail.status);
+    primary.appendChild(statusPill);
+
+    card.appendChild(primary);
+
+    // === Delta row (optional) ===
+    if (this.shouldShowDeltaRow(thumbnail)) {
+      const deltaRow = this.createDeltaRow(thumbnail);
+      if (deltaRow) {
+        card.appendChild(deltaRow);
+      }
+    }
+
+    // === Sparkline ===
+    const sparklineContainer = document.createElement('div');
+    sparklineContainer.className = 'thumbnail-sparkline';
+    sparklineContainer.setAttribute('aria-label', `Trend for ${plotTitle || 'data'}`);
+
+    const sparklineSvg = this.createSparklineSvg(thumbnail.sparkline.series);
+    if (sparklineSvg) {
+      sparklineContainer.appendChild(sparklineSvg);
+    }
+
+    card.appendChild(sparklineContainer);
+
+    // === Footer ===
+    const footer = document.createElement('div');
+    footer.className = 'thumbnail-footer';
+
+    // Point count (always show, even if 0)
+    const pointMeta = document.createElement('span');
+    pointMeta.className = 'thumbnail-meta';
+    const pointCount = thumbnail.point_count;
+    pointMeta.textContent = pointCount === 1 ? '1 point' : `${pointCount} points`;
+    footer.appendChild(pointMeta);
+
+    // Series count (show only if > 1)
+    if (thumbnail.series_count > 1) {
+      const seriesMeta = document.createElement('span');
+      seriesMeta.className = 'thumbnail-meta';
+      seriesMeta.textContent = `${thumbnail.series_count} series`;
+      footer.appendChild(seriesMeta);
+    }
+
+    card.appendChild(footer);
+
+    // Append to stack
+    thumbnailStack.appendChild(card);
+
+    // Scroll to show thumbnail if near bottom
+    this.scrollToBottomIfNearBottom();
+  }
+
+  /**
+   * PRD v4.2.4: Format latest_value for display
+   * @param {number|string|null} value - The value to format
+   * @returns {string} - Formatted value or "—" placeholder
+   */
+  formatLatestValue(value) {
+    if (value === null || value === undefined) {
+      return '—';
+    }
+
+    let numValue;
+    if (typeof value === 'number') {
+      numValue = value;
+    } else if (typeof value === 'string') {
+      // Strict parsing per PRD v4.2.4
+      if (value.trim() === '') {
+        return '—';
+      }
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return '—';
+      }
+      numValue = parsed;
+    } else {
+      return '—';
+    }
+
+    if (!Number.isFinite(numValue)) {
+      return '—';
+    }
+
+    // Format with Intl.NumberFormat (automatically trims trailing zeros)
+    const formatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+    return formatter.format(numValue);
+  }
+
+  /**
+   * PRD v4.2.4: Format status enum to display label
+   * @param {string} status - Status enum value
+   * @returns {string} - Display label
+   */
+  formatStatusLabel(status) {
+    const labels = {
+      'normal': 'Normal',
+      'high': 'High',
+      'low': 'Low',
+      'unknown': 'Unknown'
+    };
+    return labels[status] || 'Unknown';
+  }
+
+  /**
+   * PRD v4.2.4: Check if delta row should be shown
+   * Requires all three: delta_pct, delta_direction, delta_period
+   * @param {object} thumbnail - Thumbnail data
+   * @returns {boolean}
+   */
+  shouldShowDeltaRow(thumbnail) {
+    return (
+      thumbnail.delta_pct !== null &&
+      thumbnail.delta_pct !== undefined &&
+      thumbnail.delta_direction !== null &&
+      thumbnail.delta_direction !== undefined &&
+      thumbnail.delta_period !== null &&
+      thumbnail.delta_period !== undefined
+    );
+  }
+
+  /**
+   * PRD v4.2.4: Create delta row element
+   * @param {object} thumbnail - Thumbnail data
+   * @returns {HTMLElement|null} - Delta row element or null if validation fails
+   */
+  createDeltaRow(thumbnail) {
+    const { delta_pct, delta_direction, delta_period } = thumbnail;
+
+    // Defensive validation: sign/direction consistency check
+    const absDelta = Math.abs(delta_pct);
+    const expectedDirection = absDelta <= 0.1 ? 'stable' : delta_pct > 0.1 ? 'up' : 'down';
+
+    if (delta_direction !== expectedDirection) {
+      console.warn(`[Thumbnail] Delta sign/direction mismatch: ${delta_pct} vs ${delta_direction}`);
+      return null; // Contract violation - hide delta row
+    }
+
+    const deltaRow = document.createElement('div');
+    deltaRow.className = 'thumbnail-delta';
+
+    // Delta icon
+    const iconSpan = document.createElement('span');
+    iconSpan.className = `delta-icon delta-${delta_direction}`;
+    switch (delta_direction) {
+      case 'up':
+        iconSpan.textContent = '▲';
+        break;
+      case 'down':
+        iconSpan.textContent = '▼';
+        break;
+      case 'stable':
+      default:
+        iconSpan.textContent = '—';
+        break;
+    }
+    deltaRow.appendChild(iconSpan);
+
+    // Delta value (formatted)
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'delta-value';
+    valueSpan.textContent = this.formatDeltaPct(delta_pct, delta_direction);
+    deltaRow.appendChild(valueSpan);
+
+    // Delta period (expanded)
+    const periodSpan = document.createElement('span');
+    periodSpan.className = 'delta-period';
+    periodSpan.textContent = this.formatDeltaPeriod(delta_period);
+    deltaRow.appendChild(periodSpan);
+
+    return deltaRow;
+  }
+
+  /**
+   * PRD v4.2.4: Format delta percentage
+   * @param {number} deltaPct - Signed percentage value
+   * @param {string} direction - up, down, or stable
+   * @returns {string} - Formatted percentage string
+   */
+  formatDeltaPct(deltaPct, direction) {
+    const absDelta = Math.abs(deltaPct);
+
+    if (direction === 'stable' || absDelta <= 0.1) {
+      return '<0.1%';
+    }
+
+    const formatted = absDelta.toFixed(1);
+    const sign = direction === 'up' ? '+' : direction === 'down' ? '-' : '';
+    return `${sign}${formatted}%`;
+  }
+
+  /**
+   * PRD v4.2.4: Format delta period (expand shorthand)
+   * @param {string} deltaPeriod - Period string (e.g., "3m", "1y", "14d")
+   * @returns {string} - Expanded period (e.g., "over 3 months")
+   */
+  formatDeltaPeriod(deltaPeriod) {
+    if (!deltaPeriod) return '';
+
+    // Strict pattern: digits + lowercase unit letter only
+    const periodPattern = /^(\d+)(y|m|w|d)$/;
+    const match = deltaPeriod.match(periodPattern);
+
+    if (match) {
+      const [, num, unit] = match;
+      const unitMap = { y: 'year', m: 'month', w: 'week', d: 'day' };
+      const unitName = unitMap[unit];
+      const plural = parseInt(num) !== 1 ? 's' : '';
+      return `over ${num} ${unitName}${plural}`;
+    }
+
+    // Render as-is if not shorthand format
+    return deltaPeriod;
+  }
+
+  /**
+   * PRD v4.2.4: Create sparkline SVG using createElementNS (XSS-safe)
+   * @param {number[]} series - Array of 1-30 numeric values
+   * @returns {SVGElement|null} - SVG element or null if invalid
+   */
+  createSparklineSvg(series) {
+    if (!Array.isArray(series)) return null;
+
+    // Slice to max 30 values (defensive)
+    let values = series.slice(0, 30);
+
+    // Filter to finite numbers only
+    values = values.filter(v => Number.isFinite(v));
+
+    if (values.length === 0) return null;
+
+    // Compute min/max
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+
+    let points;
+
+    if (min === max || values.length === 1) {
+      // Flat line at 50% height
+      points = '0,12 100,12';
+    } else {
+      // Map values to viewBox coordinates
+      points = values.map((v, i) => {
+        const x = values.length === 1 ? 50 : (i / (values.length - 1)) * 100;
+        const y = 22 - ((v - min) / (max - min)) * 20; // y in [2, 22] range
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+    }
+
+    // Create SVG using createElementNS (XSS-safe per PRD v4.2.4)
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 100 24');
+    svg.setAttribute('preserveAspectRatio', 'none');
+
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', points);
+    polyline.setAttribute('stroke', 'var(--thumbnail-sparkline)');
+    polyline.setAttribute('stroke-opacity', '0.45');
+    polyline.setAttribute('stroke-width', '1.5');
+    polyline.setAttribute('fill', 'none');
+    polyline.setAttribute('stroke-linecap', 'round');
+    polyline.setAttribute('stroke-linejoin', 'round');
+
+    svg.appendChild(polyline);
+    return svg;
   }
 
   /**
@@ -417,10 +860,10 @@ class ConversationalSQLChat {
   handlePlotResult(data) {
     console.log('[Chat] Plot result received:', data);
 
-    const { plot_title, rows, replace_previous } = data;
+    const { plot_title, rows, replace_previous, message_id } = data;
 
-    // Finalize assistant message if any
-    this.finalizeAssistantMessage();
+    // Finalize assistant message if any (PRD v4.2.4: use message_id)
+    this.finalizeAssistantMessage(message_id);
 
     // Clear all tool indicators (cleanup)
     const indicatorsContainer = this.messagesContainer.querySelector('.tool-indicators');
@@ -456,10 +899,10 @@ class ConversationalSQLChat {
   handleTableResult(data) {
     console.log('[Chat] Table result received:', data);
 
-    const { table_title, rows, replace_previous } = data;
+    const { table_title, rows, replace_previous, message_id } = data;
 
-    // Finalize assistant message if any
-    this.finalizeAssistantMessage();
+    // Finalize assistant message if any (PRD v4.2.4: use message_id)
+    this.finalizeAssistantMessage(message_id);
 
     // Clear all tool indicators (cleanup)
     const indicatorsContainer = this.messagesContainer.querySelector('.tool-indicators');
@@ -909,7 +1352,8 @@ class ConversationalSQLChat {
   handleError(data) {
     console.error('[Chat] Error event:', data);
 
-    this.finalizeAssistantMessage();
+    // PRD v4.2.4: Finalize with message_id if available
+    this.finalizeAssistantMessage(data.message_id);
 
     // Clear all tool indicators (cleanup)
     const indicatorsContainer = this.messagesContainer.querySelector('.tool-indicators');
@@ -977,7 +1421,7 @@ class ConversationalSQLChat {
    */
   clearChat() {
     this.messagesContainer.innerHTML = '';
-    this.currentAssistantMessage = '';
+    this.messageBuffers.clear(); // PRD v4.2.4: Clear per-message buffers
     this.activeTools.clear();
   }
 
