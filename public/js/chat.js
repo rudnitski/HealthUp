@@ -612,7 +612,7 @@ class ConversationalSQLChat {
 
     // Defensive validation: sign/direction consistency check
     const absDelta = Math.abs(delta_pct);
-    const expectedDirection = absDelta <= 0.1 ? 'stable' : delta_pct > 0.1 ? 'up' : 'down';
+    const expectedDirection = absDelta <= 1 ? 'stable' : delta_pct > 1 ? 'up' : 'down';
 
     if (delta_direction !== expectedDirection) {
       console.warn(`[Thumbnail] Delta sign/direction mismatch: ${delta_pct} vs ${delta_direction}`);
@@ -663,10 +663,17 @@ class ConversationalSQLChat {
   formatDeltaPct(deltaPct, direction) {
     const absDelta = Math.abs(deltaPct);
 
-    if (direction === 'stable' || absDelta <= 0.1) {
+    // Very small changes: show <0.1%
+    if (absDelta <= 0.1) {
       return '<0.1%';
     }
 
+    // Stable direction (backend threshold: ≤1%) but >0.1%: show ~0%
+    if (direction === 'stable') {
+      return '~0%';
+    }
+
+    // Significant changes: show actual percentage with sign
     const formatted = absDelta.toFixed(1);
     const sign = direction === 'up' ? '+' : direction === 'down' ? '-' : '';
     return `${sign}${formatted}%`;

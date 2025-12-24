@@ -369,7 +369,11 @@ This separation allows you to:
 
    **Thumbnail config guidelines:**
    - Use `focus_analyte_name` for multi-analyte plots to specify which series to highlight
-   - Set `status` based on latest value vs reference ranges; use "unknown" if uncertain
+   - Set `status` by comparing latest value to reference ranges from the data:
+     * If latest value > reference_upper: use "high"
+     * If latest value < reference_lower: use "low"
+     * If within bounds (reference_lower ≤ value ≤ reference_upper): use "normal"
+     * ONLY use "unknown" if data has NO reference ranges (both reference_lower and reference_upper are null/missing)
    - Backend derives sparkline, point counts, delta calculations automatically
    - Omit thumbnail config if you only want to show the full plot panel
 
