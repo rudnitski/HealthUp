@@ -1,6 +1,7 @@
 // public/js/chat.js
 // Conversational SQL Assistant - Chat UI Component
 // PRD: docs/PRD_v3_2_conversational_sql_assistant.md
+// PRD v4.3: Pre-chat patient selection
 
 class ConversationalSQLChat {
   constructor() {
@@ -14,16 +15,26 @@ class ConversationalSQLChat {
     this.parameterSelectorChangeHandler = null; // Track parameter selector listener
     this.plotCounter = 0; // Counter for unique canvas IDs
 
+    // PRD v4.3: Patient selector state
+    this.patients = []; // Fetched patient list
+    this.selectedPatientId = null; // Currently selected patient
+    this.chipsLocked = false; // Lock chips after first message
+
     // DOM elements (will be set when UI is initialized)
     this.chatContainer = null;
     this.messagesContainer = null;
     this.inputTextarea = null;
     this.sendButton = null;
     this.resultsContainer = null;
+    this.patientChipsContainer = null; // PRD v4.3
+    this.newChatButton = null; // PRD v4.3
+    this.chipsScrollLeft = null; // Scroll arrows
+    this.chipsScrollRight = null;
 
     // Bind methods
     this.handleSendMessage = this.handleSendMessage.bind(this);
     this.handleKeyPress = this.handleKeyPress.bind(this);
+    this.handleNewChat = this.handleNewChat.bind(this); // PRD v4.3
   }
 
   /**
@@ -36,15 +47,283 @@ class ConversationalSQLChat {
     this.sendButton = this.chatContainer.querySelector('.chat-send-button');
     this.resultsContainer = document.getElementById('sqlResults');
 
+    // PRD v4.3: Patient selector elements
+    this.patientChipsContainer = document.getElementById('patient-chips-container');
+    this.newChatButton = document.getElementById('new-chat-button');
+    this.chipsScrollLeft = document.getElementById('chips-scroll-left');
+    this.chipsScrollRight = document.getElementById('chips-scroll-right');
+
     // Attach event listeners
     this.sendButton.addEventListener('click', this.handleSendMessage);
     this.inputTextarea.addEventListener('keydown', this.handleKeyPress);
 
+    // PRD v4.3: New Chat button
+    if (this.newChatButton) {
+      this.newChatButton.addEventListener('click', this.handleNewChat);
+    }
+
+    // Scroll arrow handlers for patient chips
+    this.initChipsScrollHandlers();
+
     // Attach example prompt click handlers
     this.attachExamplePromptHandlers();
 
-    // Connect to SSE stream
-    this.connectSSE();
+    // PRD v4.3: Fetch patients and initialize selector BEFORE connecting SSE
+    this.initPatientSelector();
+  }
+
+  /**
+   * PRD v4.3: Initialize patient selector
+   * Fetches patients sorted by recent activity
+   */
+  async initPatientSelector() {
+    console.log('[Chat] Initializing patient selector...');
+
+    // PRD v4.3: Disable input until session_start event received
+    this.disableInput();
+
+    try {
+      const response = await fetch('/api/reports/patients?sort=recent');
+      if (!response.ok) {
+        throw new Error('Failed to fetch patients');
+      }
+
+      // PRD v4.3: API returns { patients: [...] }
+      const data = await response.json();
+      this.patients = data.patients || [];
+      console.log('[Chat] Fetched patients:', this.patients.length);
+
+      this.renderPatientChips();
+
+      // PRD v4.3: Auto-select first patient by default
+      if (this.patients.length >= 1) {
+        // First patient is preselected (whether single or multiple patients)
+        await this.selectPatient(this.patients[0].id);
+      } else {
+        // No patients - show message and allow chat for schema questions
+        this.patientChipsContainer.innerHTML = '<span class="patient-chips-empty">No patients found. Upload reports first.</span>';
+        // Still allow SSE for schema questions
+        await this.createSessionAndConnect(null);
+      }
+    } catch (error) {
+      console.error('[Chat] Failed to initialize patient selector:', error);
+      this.showError('Failed to load patients. Please refresh.');
+    }
+  }
+
+  /**
+   * PRD v4.3: Render patient chips
+   */
+  renderPatientChips() {
+    if (!this.patientChipsContainer) return;
+
+    this.patientChipsContainer.innerHTML = '';
+
+    // PRD v4.3: Single-patient behavior - chip is non-interactive
+    const isSinglePatient = this.patients.length === 1;
+
+    this.patients.forEach(patient => {
+      const chip = document.createElement('button');
+      chip.className = 'patient-chip';
+      chip.dataset.patientId = patient.id;
+      chip.textContent = patient.display_name || patient.full_name || 'Unknown';
+      chip.title = patient.full_name || '';
+
+      if (patient.id === this.selectedPatientId) {
+        chip.classList.add('patient-chip--selected');
+      }
+
+      if (this.chipsLocked) {
+        chip.classList.add('patient-chip--locked');
+      }
+
+      // PRD v4.3: Single patient - non-interactive with tooltip
+      if (isSinglePatient) {
+        chip.classList.add('patient-chip--single');
+        chip.title = 'Only one patient in system';
+        chip.disabled = true;
+      } else {
+        chip.addEventListener('click', () => {
+          if (!this.chipsLocked && !this.isProcessing) {
+            this.selectPatient(patient.id);
+          }
+        });
+      }
+
+      this.patientChipsContainer.appendChild(chip);
+    });
+
+    // Update scroll arrow visibility after chips are rendered
+    requestAnimationFrame(() => this.updateChipsScrollArrows());
+  }
+
+  /**
+   * Initialize scroll handlers for patient chips
+   */
+  initChipsScrollHandlers() {
+    if (!this.patientChipsContainer) return;
+
+    const scrollAmount = 200; // Pixels to scroll per click
+
+    // Left arrow click
+    if (this.chipsScrollLeft) {
+      this.chipsScrollLeft.addEventListener('click', () => {
+        this.patientChipsContainer.scrollBy({ left: -scrollAmount, behavior: 'smooth' });
+      });
+    }
+
+    // Right arrow click
+    if (this.chipsScrollRight) {
+      this.chipsScrollRight.addEventListener('click', () => {
+        this.patientChipsContainer.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+      });
+    }
+
+    // Update arrows on scroll
+    this.patientChipsContainer.addEventListener('scroll', () => {
+      this.updateChipsScrollArrows();
+    });
+
+    // Update arrows on window resize
+    window.addEventListener('resize', () => {
+      this.updateChipsScrollArrows();
+    });
+  }
+
+  /**
+   * Update scroll arrow visibility based on scroll position
+   */
+  updateChipsScrollArrows() {
+    if (!this.patientChipsContainer || !this.chipsScrollLeft || !this.chipsScrollRight) return;
+
+    const container = this.patientChipsContainer;
+    const scrollLeft = container.scrollLeft;
+    const scrollWidth = container.scrollWidth;
+    const clientWidth = container.clientWidth;
+
+    // Show left arrow if scrolled right
+    const canScrollLeft = scrollLeft > 1;
+    // Show right arrow if more content to the right
+    const canScrollRight = scrollLeft < scrollWidth - clientWidth - 1;
+
+    this.chipsScrollLeft.hidden = !canScrollLeft;
+    this.chipsScrollRight.hidden = !canScrollRight;
+  }
+
+  /**
+   * PRD v4.3: Select patient and create session
+   */
+  async selectPatient(patientId) {
+    if (this.chipsLocked) {
+      console.warn('[Chat] Patient chips are locked');
+      return;
+    }
+
+    console.log('[Chat] Selecting patient:', patientId);
+    this.selectedPatientId = patientId;
+
+    // Update chip UI
+    this.renderPatientChips();
+
+    // Create session with selected patient
+    await this.createSessionAndConnect(patientId);
+  }
+
+  /**
+   * PRD v4.3: Create session and connect SSE
+   */
+  async createSessionAndConnect(patientId) {
+    console.log('[Chat] Creating session with patient:', patientId);
+
+    try {
+      // Step 1: Create session via POST /api/chat/sessions
+      const createResponse = await fetch('/api/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedPatientId: patientId })
+      });
+
+      if (!createResponse.ok) {
+        const error = await createResponse.json();
+        throw new Error(error.error || 'Failed to create session');
+      }
+
+      const { sessionId } = await createResponse.json();
+      this.sessionId = sessionId;
+      console.log('[Chat] Session created:', sessionId);
+
+      // Step 2: Preflight validation via HEAD /api/chat/sessions/:id/validate
+      const validateResponse = await fetch(`/api/chat/sessions/${sessionId}/validate`, {
+        method: 'HEAD'
+      });
+
+      if (!validateResponse.ok) {
+        throw new Error('Session validation failed');
+      }
+
+      // Step 3: Connect SSE with sessionId
+      this.connectSSE(sessionId);
+
+    } catch (error) {
+      console.error('[Chat] Session creation failed:', error);
+      this.showError(`Failed to start chat: ${error.message}`);
+    }
+  }
+
+  /**
+   * PRD v4.3: Handle New Chat button
+   */
+  handleNewChat() {
+    console.log('[Chat] New chat requested');
+
+    // Close existing SSE
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+
+    // Delete current session (fire-and-forget)
+    if (this.sessionId) {
+      fetch(`/api/chat/sessions/${this.sessionId}`, { method: 'DELETE' }).catch(() => { });
+    }
+
+    // Reset state
+    this.sessionId = null;
+    this.selectedPatientId = null;
+    this.chipsLocked = false;
+    this.isProcessing = false;
+    this.messageBuffers.clear();
+    this.activeTools.clear();
+
+    // PRD v4.3: Destroy Chart.js instances to prevent memory leaks
+    this.charts.forEach(chart => {
+      try {
+        chart.destroy();
+      } catch (e) {
+        console.warn('[Chat] Error destroying chart:', e);
+      }
+    });
+    this.charts.clear();
+    this.plotCounter = 0; // Reset plot counter for fresh canvas IDs
+
+    // Clear messages
+    if (this.messagesContainer) {
+      // Keep empty state, remove messages
+      const emptyState = this.messagesContainer.querySelector('.chat-empty-state');
+      this.messagesContainer.innerHTML = '';
+      if (emptyState) {
+        this.messagesContainer.appendChild(emptyState.cloneNode(true));
+      }
+    }
+
+    // Re-render chips (unlocked)
+    this.renderPatientChips();
+
+    // Disable input until patient selected
+    this.disableInput();
+
+    // Re-attach example prompt handlers for restored empty state
+    this.attachExamplePromptHandlers();
   }
 
   /**
@@ -64,17 +343,24 @@ class ConversationalSQLChat {
   }
 
   /**
-   * Connect to SSE stream and create session
+   * Connect to SSE stream
+   * PRD v4.3: Now requires sessionId parameter
    */
-  connectSSE() {
-    console.log('[Chat] Connecting to SSE stream...');
+  connectSSE(sessionId) {
+    if (!sessionId) {
+      console.error('[Chat] Cannot connect SSE without sessionId');
+      return;
+    }
+
+    console.log('[Chat] Connecting to SSE stream for session:', sessionId);
 
     // Close existing connection if any
     if (this.eventSource) {
       this.eventSource.close();
     }
 
-    this.eventSource = new EventSource('/api/chat/stream');
+    // PRD v4.3: Pass sessionId as query parameter
+    this.eventSource = new EventSource(`/api/chat/stream?sessionId=${sessionId}`);
 
     this.eventSource.onopen = () => {
       console.log('[Chat] SSE connection opened');
@@ -129,6 +415,13 @@ class ConversationalSQLChat {
         }
         // Check for thumbnail stack margin adjustment (PRD v4.2.4)
         this.adjustThumbnailStackMargin(data.message_id);
+
+        // PRD v4.3: Lock patient chips after first message exchange
+        if (!this.chipsLocked) {
+          this.chipsLocked = true;
+          this.renderPatientChips();
+        }
+
         this.enableInput();
         this.isProcessing = false;
         break;
@@ -795,7 +1088,7 @@ class ConversationalSQLChat {
     const indicator = document.createElement('div');
     indicator.className = 'tool-indicator';
     indicator.dataset.tool = toolName;
-    indicator.innerHTML = `<span class="tool-spinner">🔄</span> ${this.getToolDisplayName(toolName)}`;
+    indicator.innerHTML = `<span class="tool-spinner"></span> ${this.getToolDisplayName(toolName)}`;
 
     indicatorsContainer.appendChild(indicator);
 
@@ -842,7 +1135,7 @@ class ConversationalSQLChat {
     const indicator = document.createElement('div');
     indicator.className = 'tool-indicator status-indicator';
     indicator.dataset.status = statusType;
-    indicator.innerHTML = `<span class="tool-spinner">🔄</span> ${message}`;
+    indicator.innerHTML = `<span class="tool-spinner"></span> ${message}`;
 
     indicatorsContainer.appendChild(indicator);
 

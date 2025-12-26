@@ -27,7 +27,8 @@ const ReportsBrowser = {
       data.patients.forEach(patient => {
         const option = document.createElement('option');
         option.value = patient.id;
-        option.textContent = patient.full_name || 'Unnamed Patient';
+        // PRD v4.3: Use display_name (computed server-side, handles NULL full_name)
+        option.textContent = patient.display_name || patient.full_name || 'Unnamed Patient';
         select.appendChild(option);
       });
     } catch (error) {

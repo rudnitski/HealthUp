@@ -304,6 +304,11 @@ const schemaStatements = [
   COMMENT ON COLUMN gmail_report_provenance.attachment_checksum IS 'SHA-256 hash of attachment for duplicate detection';
   `,
   // Indexes
+  // PRD v4.3: Index for patient selector sorted by recent activity
+  `
+  CREATE INDEX IF NOT EXISTS idx_patients_last_seen_report_at
+    ON patients (last_seen_report_at DESC NULLS LAST);
+  `,
   `
   CREATE INDEX IF NOT EXISTS idx_patient_reports_patient_recognized
     ON patient_reports (patient_id, recognized_at DESC);

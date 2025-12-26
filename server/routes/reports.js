@@ -192,13 +192,33 @@ router.get('/reports', async (req, res) => {
   }
 });
 
-// GET /api/reports/patients - List all patients for filter dropdown
+// GET /api/reports/patients - List all patients for filter dropdown or chat selector
+// PRD v4.3: Extended with ?sort=recent parameter and computed display_name field
 router.get('/reports/patients', async (req, res) => {
   try {
+    const { sort } = req.query;
+
+    // PRD v4.3: Order by for different use cases
+    // - Default (alpha): alphabetical by full_name for reports browser
+    // - sort=recent: by last_seen_report_at for chat patient selector
+    let orderBy;
+    if (sort === 'recent') {
+      orderBy = 'last_seen_report_at DESC NULLS LAST, full_name ASC NULLS LAST, created_at DESC';
+    } else {
+      orderBy = 'full_name ASC NULLS LAST, created_at DESC';
+    }
+
     const result = await pool.query(`
-      SELECT id, COALESCE(full_name, 'Unnamed Patient') AS full_name
+      SELECT 
+        id,
+        full_name,
+        CASE 
+          WHEN full_name IS NOT NULL AND full_name != '' THEN full_name
+          ELSE 'Patient (' || SUBSTRING(id::text FROM 1 FOR 6) || '...)'
+        END AS display_name,
+        last_seen_report_at
       FROM patients
-      ORDER BY full_name ASC
+      ORDER BY ${orderBy}
     `);
 
     res.json({ patients: result.rows });

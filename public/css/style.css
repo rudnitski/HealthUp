@@ -336,6 +336,8 @@ a:hover {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden; /* Prevent horizontal overflow */
+  max-width: calc(100vw - var(--sidebar-width));
 }
 
 .content-header {
@@ -368,6 +370,8 @@ a:hover {
   max-width: var(--content-max-width);
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden; /* Prevent horizontal overflow */
 }
 
 /* Mobile Menu Toggle */

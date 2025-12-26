@@ -483,7 +483,7 @@ async function validatePlotQueryColumns(sql, queryType) {
           violations: [{
             code: 'PLOT_MISSING_REQUIRED_COLUMNS',
             message: `Plot query missing required columns: ${missingViaRegex.join(', ')}. ` +
-                     `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
+              `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
             missingColumns: missingViaRegex,
           }],
           detectedColumns: outputColumns,
@@ -511,7 +511,7 @@ async function validatePlotQueryColumns(sql, queryType) {
           violations: [{
             code: 'PLOT_MISSING_REQUIRED_COLUMNS',
             message: `Plot query missing required columns: ${stillMissing.join(', ')}. ` +
-                     `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
+              `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
             missingColumns: stillMissing,
             detectedColumns: outputColumns
           }],
@@ -542,7 +542,7 @@ async function validatePlotQueryColumns(sql, queryType) {
         violations: [{
           code: 'PLOT_MISSING_REQUIRED_COLUMNS',
           message: `Plot query missing required columns: ${missingViaRegex.join(', ')}. ` +
-                   `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
+            `Required: t (bigint timestamp), y (numeric value), parameter_name (text), unit (text).`,
           missingColumns: missingViaRegex,
         }],
         detectedColumns: [],
@@ -765,6 +765,7 @@ async function validateSQL(sql, { schemaSnapshotId, queryType } = {}) {
 /**
  * Ensure SQL query includes patient scope filter when multiple patients exist
  * PRD v3.2: Patient safety guardrail for conversational mode
+ * PRD v4.3: Enhanced with exclusivity check to prevent cross-patient data leaks
  *
  * KNOWN LIMITATIONS (acknowledged in PRD):
  * - Regex-based validation catches ~95% of cases, not 100%
@@ -800,6 +801,69 @@ function ensurePatientScope(sql, patientId, patientCount) {
   const lowerSql = sql.toLowerCase();
   const lowerPatientId = patientId.toLowerCase();
 
+  // PRD v4.3: Check for set operations that could bypass scope
+  const setOperationPatterns = [
+    /\bUNION\b/i,
+    /\bINTERSECT\b/i,
+    /\bEXCEPT\b/i
+  ];
+
+  for (const pattern of setOperationPatterns) {
+    if (pattern.test(sql)) {
+      return {
+        valid: false,
+        violation: {
+          code: 'SET_OPERATION_FORBIDDEN',
+          message: `Set operations (UNION/INTERSECT/EXCEPT) are not allowed in patient-scoped queries`
+        }
+      };
+    }
+  }
+
+  // PRD v4.3: Check for negation operators on patient_id (could leak other patients)
+  const negationPatterns = [
+    /patient_id\s*(!|<>)/i,           // patient_id != or patient_id <>
+    /patient_id\s+NOT\s+IN/i,          // patient_id NOT IN
+    /NOT\s+patient_id\s*=/i,           // NOT patient_id =
+    /patient_id\s+IS\s+NOT/i           // patient_id IS NOT
+  ];
+
+  for (const pattern of negationPatterns) {
+    if (pattern.test(sql)) {
+      return {
+        valid: false,
+        violation: {
+          code: 'NEGATION_FORBIDDEN',
+          message: 'Negation operators (!=, NOT IN, <>) on patient_id are forbidden to prevent cross-patient data access'
+        }
+      };
+    }
+  }
+
+  // PRD v4.3: Check for boolean tautologies that could bypass patient filters
+  const tautologyPatterns = [
+    /\bOR\s+1\s*=\s*1\b/i,             // OR 1=1
+    /\bOR\s+TRUE\b/i,                  // OR TRUE
+    /\bOR\s+'1'\s*=\s*'1'/i,           // OR '1'='1'
+    /\bOR\s+1\s*<>\s*0\b/i,            // OR 1<>0
+    /\bOR\s+0\s*=\s*0\b/i,             // OR 0=0
+    /\bOR\s+NOT\s+FALSE\b/i,           // OR NOT FALSE
+    /\bOR\s+1\s*!=\s*0\b/i,            // OR 1!=0
+    /\bOR\s+''\s*=\s*''/i              // OR ''=''
+  ];
+
+  for (const pattern of tautologyPatterns) {
+    if (pattern.test(sql)) {
+      return {
+        valid: false,
+        violation: {
+          code: 'TAUTOLOGY_FORBIDDEN',
+          message: 'Boolean tautologies (e.g., OR 1=1) are forbidden to prevent bypassing patient filters'
+        }
+      };
+    }
+  }
+
   // Check for patient_id = 'uuid' or patient_id IN (...)
   // Use regex to match common patterns
   const patientIdPattern = new RegExp(
@@ -816,6 +880,33 @@ function ensurePatientScope(sql, patientId, patientCount) {
         message: `Query must filter by patient_id = '${patientId}'`
       }
     };
+  }
+
+  // PRD v4.3: Exclusivity check - detect other patient UUIDs in patient_id predicates
+  // Extract all UUIDs from the SQL
+  const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const foundUuids = sql.match(uuidRegex) || [];
+
+  // Check if any UUID other than the selected patient appears in a patient_id context
+  // Look for patient_id predicates and extract UUIDs from them
+  const patientIdPredicatePattern = /patient_id\s*(?:=|IN\s*\()\s*'[^']*'/gi;
+  const patientPredicates = sql.match(patientIdPredicatePattern) || [];
+
+  for (const predicate of patientPredicates) {
+    const uuidsInPredicate = predicate.match(uuidRegex) || [];
+    const foreignUuids = uuidsInPredicate.filter(
+      uuid => uuid.toLowerCase() !== lowerPatientId
+    );
+
+    if (foreignUuids.length > 0) {
+      return {
+        valid: false,
+        violation: {
+          code: 'CROSS_PATIENT_LEAK',
+          message: `Query references unauthorized patient ID(s): ${foreignUuids.join(', ')}. Only ${patientId} is allowed.`
+        }
+      };
+    }
   }
 
   return { valid: true };

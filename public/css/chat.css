@@ -16,6 +16,8 @@
   min-height: 500px;
   overflow: hidden;
   position: relative;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Empty State */
@@ -144,6 +146,7 @@
     opacity: 0;
     transform: translateY(8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -214,8 +217,16 @@
 }
 
 @keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  51%,
+  100% {
+    opacity: 0;
+  }
 }
 
 /* Tool Indicators */
@@ -250,7 +261,9 @@
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Input Area - Compact Design */
@@ -468,10 +481,21 @@
   color: var(--color-slate-900);
 }
 
-.markdown-content h1 { font-size: var(--text-2xl); }
-.markdown-content h2 { font-size: var(--text-xl); }
-.markdown-content h3 { font-size: var(--text-lg); }
-.markdown-content h4 { font-size: var(--text-base); }
+.markdown-content h1 {
+  font-size: var(--text-2xl);
+}
+
+.markdown-content h2 {
+  font-size: var(--text-xl);
+}
+
+.markdown-content h3 {
+  font-size: var(--text-lg);
+}
+
+.markdown-content h4 {
+  font-size: var(--text-base);
+}
 
 .markdown-content h1:first-child,
 .markdown-content h2:first-child,
@@ -742,6 +766,7 @@
 
 /* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
+
   .streaming-cursor,
   .tool-spinner {
     animation: none;
@@ -956,6 +981,210 @@
 
   .thumbnail-stack {
     padding: 0 8px;
+  }
+}
+
+/* ============================================
+   PRD v4.3: Patient Selector Row
+   ============================================ */
+
+.chat-patient-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: linear-gradient(135deg, var(--color-accent-light) 0%, rgba(255, 255, 255, 0.9) 100%);
+  border-bottom: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Visual separator between scroll controls and New Chat */
+.patient-selector-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--color-border);
+}
+
+.patient-selector-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* Scroll buttons - inline in the selector row */
+.patient-chips-scroll-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-accent);
+  background: white;
+  border: 2px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+
+.patient-chips-scroll-btn:hover {
+  background: var(--color-accent);
+  color: white;
+}
+
+.patient-chips-scroll-btn[hidden] {
+  display: none;
+}
+
+.patient-selector-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.patient-chips-container {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  /* Critical for grid/flex to constrain */
+  max-width: 100%;
+  /* Ensure container doesn't overflow grid cell */
+  overflow-x: auto;
+  overflow-y: visible;
+  /* Allow hover elevation to show border */
+  scrollbar-width: none;
+  /* Hide scrollbar, use arrows instead */
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
+  padding: 2px 0;
+  /* Space for hover transform + border */
+  margin: -2px 0;
+  /* Compensate padding to keep alignment */
+}
+
+.patient-chips-container::-webkit-scrollbar {
+  display: none;
+  /* Hide scrollbar for Chrome/Safari */
+}
+
+.patient-chips-loading {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Patient Chip Styles */
+.patient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.patient-chip:hover:not(.patient-chip--selected):not(.patient-chip--locked) {
+  background: var(--color-slate-100);
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
+}
+
+.patient-chip--selected {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
+  box-shadow: var(--shadow-sm);
+}
+
+.patient-chip--locked {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.patient-chip--locked:not(.patient-chip--selected) {
+  display: none;
+  /* Hide non-selected chips when locked */
+}
+
+/* PRD v4.3: Single patient chip - non-interactive */
+.patient-chip--single {
+  cursor: default;
+}
+
+.patient-chip--single:hover {
+  transform: none;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* New Chat Button */
+.new-chat-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-accent);
+  background: white;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.new-chat-button:hover {
+  background: var(--color-accent);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.new-chat-icon {
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+.new-chat-text {
+  white-space: nowrap;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .chat-patient-selector {
+    flex-wrap: wrap;
+  }
+
+  .patient-selector-label {
+    width: 100%;
+    margin-bottom: var(--space-1);
+  }
+
+  .new-chat-text {
+    display: none;
   }
 }
 

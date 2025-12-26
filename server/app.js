@@ -9,7 +9,7 @@ import { healthcheck, pool } from './db/index.js';
 import { ensureSchema } from './db/schema.js';
 import VisionProviderFactory from './services/vision/VisionProviderFactory.js';
 import sqlGeneratorRouter from './routes/sqlGenerator.js';
-import chatStreamRouter from './routes/chatStream.js';
+import chatStreamRouter, { closeSSEConnection } from './routes/chatStream.js';
 import analyzeLabReportRouter from './routes/analyzeLabReport.js';
 import reportsRouter from './routes/reports.js';
 import executeSqlRouter from './routes/executeSql.js';
@@ -18,6 +18,11 @@ import gmailDevRouter from './routes/gmailDev.js';
 import { shutdownSchemaSnapshot } from './services/schemaSnapshot.js';
 import sessionManager from './utils/sessionManager.js';
 import { shutdown as shutdownJobManager } from './utils/jobManager.js';
+
+// PRD v4.3: Wire SSE cleanup hook to sessionManager
+// This ensures SSE connections are closed when their sessions expire
+sessionManager.onSessionExpired = closeSSEConnection;
+sessionManager.startCleanup();
 
 const __dirname = getDirname(import.meta.url);
 

@@ -72,12 +72,16 @@ async function upsertPatient(client, payload) {
     fullName,
     dateOfBirth,
     gender,
-    recognizedAt,
+    // PRD v4.3: recognizedAt no longer used for last_seen_report_at
+    // We use NOW() (ingestion time) instead for consistent sorting
   } = payload;
 
   const normalized = normalizePatientName(fullName);
   const patientId = randomUUID();
 
+  // PRD v4.3: last_seen_report_at = NOW() (ingestion time)
+  // This represents "when the system last processed a report for this patient"
+  // Updated on both INSERT and ON CONFLICT (even for duplicate reports)
   const result = await client.query(
     `
     INSERT INTO patients (
@@ -90,19 +94,14 @@ async function upsertPatient(client, payload) {
       updated_at,
       last_seen_report_at
     )
-    VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
+    VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NOW())
     ON CONFLICT (full_name_normalized) DO UPDATE
       SET
         full_name = COALESCE(EXCLUDED.full_name, patients.full_name),
         date_of_birth = COALESCE(EXCLUDED.date_of_birth, patients.date_of_birth),
         gender = COALESCE(EXCLUDED.gender, patients.gender),
         updated_at = NOW(),
-        last_seen_report_at = CASE
-          WHEN patients.last_seen_report_at IS NULL THEN EXCLUDED.last_seen_report_at
-          WHEN EXCLUDED.last_seen_report_at IS NULL THEN patients.last_seen_report_at
-          WHEN EXCLUDED.last_seen_report_at >= patients.last_seen_report_at THEN EXCLUDED.last_seen_report_at
-          ELSE patients.last_seen_report_at
-        END
+        last_seen_report_at = NOW()
     RETURNING id;
     `,
     [
@@ -111,7 +110,6 @@ async function upsertPatient(client, payload) {
       normalized,
       dateOfBirth ?? null,
       gender ?? null,
-      recognizedAt,
     ],
   );
 

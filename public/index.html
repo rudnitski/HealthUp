@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HealthUp — Lab Report Analysis</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/chat.css">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
 </head>
+
 <body>
   <div class="app-layout">
     <!-- Sidebar Navigation -->
@@ -84,14 +87,9 @@
             </p>
 
             <!-- Hidden file input for multi-file selection -->
-            <input
-              id="multi-file-input"
-              type="file"
-              name="analysisFile"
-              accept="application/pdf,image/png,image/jpeg,image/heic,.pdf,.png,.jpg,.jpeg,.heic"
-              multiple
-              style="display: none;"
-            >
+            <input id="multi-file-input" type="file" name="analysisFile"
+              accept="application/pdf,image/png,image/jpeg,image/heic,.pdf,.png,.jpg,.jpeg,.heic" multiple
+              style="display: none;">
 
             <!-- Upload Queue Table -->
             <section id="upload-queue-section" class="queue-section" hidden>
@@ -195,7 +193,8 @@
               <h3>Processing Complete</h3>
               <div class="results-summary">
                 <span class="summary-stat">✅ Succeeded: <strong id="success-count">0</strong></span>
-                <span class="summary-stat" id="duplicate-stat" hidden>🔄 Duplicates: <strong id="duplicate-count">0</strong></span>
+                <span class="summary-stat" id="duplicate-stat" hidden>🔄 Duplicates: <strong
+                    id="duplicate-count">0</strong></span>
                 <span class="summary-stat">❌ Failed: <strong id="failed-count">0</strong></span>
               </div>
               <div class="table-wrapper">
@@ -223,11 +222,7 @@
 
             <!-- View Original File Button -->
             <div class="action-buttons">
-              <button
-                id="viewOriginalBtn"
-                class="btn btn-secondary"
-                onclick="viewOriginalFile()"
-              >
+              <button id="viewOriginalBtn" class="btn btn-secondary" onclick="viewOriginalFile()">
                 📄 View Original File
               </button>
             </div>
@@ -247,6 +242,25 @@
         <!-- Conversational Assistant Section -->
         <section id="section-assistant" class="content-section" style="display: none;">
           <div id="conversational-chat-container" class="chat-container">
+            <!-- PRD v4.3: Patient Selector Row -->
+            <div class="chat-patient-selector" id="chat-patient-selector">
+              <div class="patient-selector-label">Select patient:</div>
+              <button class="patient-chips-scroll-btn patient-chips-scroll-left" id="chips-scroll-left"
+                aria-label="Scroll left" hidden>‹</button>
+              <div class="patient-chips-container" id="patient-chips-container">
+                <!-- Patient chips populated dynamically -->
+                <div class="patient-chips-loading">Loading patients...</div>
+              </div>
+              <div class="patient-selector-actions">
+                <button class="patient-chips-scroll-btn patient-chips-scroll-right" id="chips-scroll-right"
+                  aria-label="Scroll right" hidden>›</button>
+                <div class="patient-selector-divider" aria-hidden="true"></div>
+                <button class="new-chat-button" id="new-chat-button" title="Start new conversation">
+                  <span class="new-chat-icon">+</span>
+                  <span class="new-chat-text">New Chat</span>
+                </button>
+              </div>
+            </div>
             <div class="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
               <!-- Empty State (shown when no messages) -->
               <div class="chat-empty-state">
@@ -280,20 +294,16 @@
             </div>
             <div class="chat-input-container">
               <div class="chat-input-wrapper">
-                <textarea
-                  class="chat-input-textarea"
-                  placeholder="Ask a question about your lab results..."
-                  rows="2"
-                  aria-label="Chat message input"
-                  disabled
-                ></textarea>
+                <textarea class="chat-input-textarea" placeholder="Ask a question about your lab results..." rows="2"
+                  aria-label="Chat message input" disabled></textarea>
                 <button class="chat-send-button" type="button" aria-label="Send message" disabled>
                   Send
                 </button>
               </div>
               <div class="chat-medical-disclaimer">
                 <strong>Note:</strong> This analysis is based on your lab data and general medical knowledge.
-                Always consult your healthcare provider to interpret results in the context of your complete health history.
+                Always consult your healthcare provider to interpret results in the context of your complete health
+                history.
               </div>
             </div>
           </div>
@@ -354,9 +364,11 @@
 
   <!-- Chart.js and date adapter for time-series plots (must load before our scripts) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <!-- Markdown rendering libraries -->
   <script src="https://cdn.jsdelivr.net/npm/marked@17/lib/marked.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
@@ -369,7 +381,7 @@
 
   <!-- Navigation Script -->
   <script>
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
       const urlParams = new URLSearchParams(window.location.search);
       const hasReportId = Boolean(urlParams.get('reportId'));
       const sidebar = document.getElementById('sidebar');
@@ -433,7 +445,7 @@
 
       // Handle nav clicks
       navItems.forEach(item => {
-        item.addEventListener('click', function(e) {
+        item.addEventListener('click', function (e) {
           e.preventDefault();
           const sectionId = this.dataset.section;
           if (sectionId) {
@@ -451,7 +463,7 @@
       }
 
       // Handle hash changes
-      window.addEventListener('hashchange', function() {
+      window.addEventListener('hashchange', function () {
         const newHash = window.location.hash.slice(1);
         if (newHash && sectionTitles[newHash]) {
           switchSection(newHash);
@@ -479,4 +491,5 @@
     });
   </script>
 </body>
+
 </html>

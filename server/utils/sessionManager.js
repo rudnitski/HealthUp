@@ -43,14 +43,28 @@ class SessionManager {
     this.SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour idle timeout
     this.MESSAGE_LIMIT = 20;
 
-    // Cleanup stale sessions every 10 minutes
-    this.cleanupInterval = setInterval(() => this.cleanupStale(), 10 * 60 * 1000);
+    // PRD v4.3: Callback for SSE cleanup when session expires
+    this.onSessionExpired = null;
+
+    // PRD v4.3: Lazy-start cleanup interval (started via startCleanup())
+    this.cleanupInterval = null;
 
     logger.info('[SessionManager] Initialized with config:', {
       max_sessions: this.MAX_SESSIONS,
       ttl_ms: this.SESSION_TTL_MS,
       message_limit: this.MESSAGE_LIMIT
     });
+  }
+
+  /**
+   * Start the cleanup interval (lazy-start pattern)
+   * PRD v4.3: Called from app.js AFTER SSE cleanup hook is wired
+   */
+  startCleanup() {
+    if (!this.cleanupInterval) {
+      this.cleanupInterval = setInterval(() => this.cleanupStale(), 10 * 60 * 1000);
+      logger.info('[SessionManager] Cleanup interval started');
+    }
   }
 
   /**
@@ -65,12 +79,11 @@ class SessionManager {
       createdAt: new Date(),
       lastActivity: new Date(),
       selectedPatientId: null,
-      awaitingPatientSelection: false,
-      patients: [],
-      patientCount: 0,
+      // PRD v4.3: Removed awaitingPatientSelection, patients, patientCount
+      // These are no longer needed with pre-chat patient selection
       isProcessing: false,
       iterationCount: 0, // Track tool-calling loop iterations (safety limit)
-      currentMessageId: null  // === NEW: Track current assistant message ID ===
+      currentMessageId: null  // Track current assistant message ID
     };
 
     this.sessions.set(session.id, session);
@@ -84,7 +97,7 @@ class SessionManager {
   }
 
   /**
-   * Get a session by ID
+   * Get a session by ID (updates lastActivity for TTL)
    */
   getSession(sessionId) {
     const session = this.sessions.get(sessionId);
@@ -93,6 +106,14 @@ class SessionManager {
       session.lastActivity = new Date();
     }
     return session;
+  }
+
+  /**
+   * Peek at session without updating lastActivity (for read-only operations)
+   * PRD v4.3: Used by HEAD /validate endpoint to avoid extending session lifetime
+   */
+  peekSession(sessionId) {
+    return this.sessions.get(sessionId);
   }
 
   /**
@@ -218,6 +239,7 @@ class SessionManager {
 
   /**
    * Clean up stale sessions (idle > TTL)
+   * PRD v4.3: Calls onSessionExpired hook before deleting to cleanup SSE connections
    */
   cleanupStale() {
     const now = Date.now();
@@ -225,6 +247,11 @@ class SessionManager {
 
     for (const [id, session] of this.sessions.entries()) {
       if (now - session.lastActivity.getTime() > this.SESSION_TTL_MS) {
+        // PRD v4.3: Trigger SSE cleanup hook before deleting session
+        if (this.onSessionExpired) {
+          this.onSessionExpired(id);
+        }
+
         this.sessions.delete(id);
         cleanedCount++;
       }

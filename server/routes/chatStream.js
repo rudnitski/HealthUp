@@ -82,6 +82,64 @@ const KEEP_RECENT_MESSAGES = parseInt(process.env.CHAT_KEEP_RECENT_MESSAGES, 10)
 const MAX_PLOT_ROWS = parseInt(process.env.SQL_VALIDATOR_PLOT_LIMIT, 10) || 10000;
 const MAX_TABLE_ROWS = parseInt(process.env.SQL_VALIDATOR_TABLE_LIMIT, 10) || 50;
 
+// ============================================================================
+// SSE Registry (PRD v4.3)
+// ============================================================================
+// Stores SSE response objects keyed by sessionId
+// Separate from sessionManager to allow clean reconnection (last-writer-wins)
+const sseConnections = new Map(); // sessionId -> { res, session }
+
+/**
+ * Attach SSE connection to a session
+ * PRD v4.3: Last-writer-wins policy for reconnection
+ */
+function attachSSE(sessionId, res, session) {
+  const existing = sseConnections.get(sessionId);
+  if (existing && existing.res && !existing.res.writableEnded) {
+    // Close previous connection (last-writer-wins)
+    logger.info('[chatStream] Closing previous SSE connection:', { session_id: sessionId });
+    try {
+      existing.res.end();
+    } catch (e) {
+      logger.warn('[chatStream] Error closing previous SSE:', { error: e.message });
+    }
+  }
+
+  sseConnections.set(sessionId, { res, session });
+  logger.info('[chatStream] SSE attached:', { session_id: sessionId });
+}
+
+/**
+ * Get SSE connection for a session
+ */
+function getSSEConnection(sessionId) {
+  return sseConnections.get(sessionId);
+}
+
+/**
+ * Close and remove SSE connection for a session
+ * PRD v4.3: Called by sessionManager.onSessionExpired hook
+ */
+function closeSSEConnection(sessionId) {
+  const connection = sseConnections.get(sessionId);
+  if (connection && connection.res) {
+    try {
+      if (!connection.res.writableEnded && !connection.res.destroyed) {
+        // Send session_expired event before closing
+        connection.res.write(`data: ${JSON.stringify({ type: 'session_expired', reason: 'Session timed out' })}\n\n`);
+        connection.res.end();
+      }
+    } catch (e) {
+      logger.warn('[chatStream] Error closing SSE on expiry:', { error: e.message });
+    }
+  }
+  sseConnections.delete(sessionId);
+  logger.info('[chatStream] SSE connection closed:', { session_id: sessionId });
+}
+
+// Export closeSSEConnection for app.js to wire cleanup hook
+export { closeSSEConnection };
+
 let openAiClient;
 
 /**
@@ -104,16 +162,17 @@ const getOpenAiClient = () => {
 
 /**
  * Send SSE event
- * REQUIRES: res.locals.session set by /stream endpoint (see implementation guide section 1)
- * IMPORTANT: This helper is NOT a generic SSE utility. It requires:
- *   1. res is the Express response from /stream endpoint (GET /api/chat/stream)
- *   2. res.locals.session was set in the endpoint (line 107-108)
- *   3. session.currentMessageId tracks the current turn
- * Do NOT reuse this function for other endpoints without ensuring these invariants.
- * If you need SSE elsewhere, create a separate helper or use res.write() directly.
+ * PRD v4.3: Changed signature from streamEvent(res, data) to streamEvent(sessionId, data)
+ * Uses SSE registry to lookup response object
  */
-function streamEvent(res, data) {
-  const session = res.locals?.session || null;
+function streamEvent(sessionId, data) {
+  const connection = sseConnections.get(sessionId);
+  if (!connection) {
+    logger.warn('[chatStream] No SSE connection for session:', { session_id: sessionId });
+    return;
+  }
+
+  const { res, session } = connection;
 
   // Guard 1: Drop events with message_id if message already ended
   if (data.message_id && session && !session.currentMessageId) {
@@ -139,124 +198,104 @@ function streamEvent(res, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+// PRD v4.3: extractPatientId() function REMOVED
+// Patient selection now happens before chat starts via POST /api/chat/sessions
+
 /**
- * Extract patient ID from user response
- * Supports: numbered selection (1, 2, 3), name matching (including in parentheses), or direct UUID
+ * POST /api/chat/sessions
+ * PRD v4.3: Create session with selected patient ID
  */
-async function extractPatientId(userResponse, patients) {
-  const trimmed = userResponse.trim();
+router.post('/sessions', async (req, res) => {
+  const { selectedPatientId } = req.body;
 
-  // Extract text in parentheses first (e.g., "show my results (юра)" -> "юра")
-  const parenthesesMatch = trimmed.match(/\(([^)]+)\)/);
-  const textToMatch = parenthesesMatch ? parenthesesMatch[1].trim() : trimmed;
-
-  // Try numbered selection first (1, 2, 3, etc.)
-  const numberMatch = textToMatch.match(/^\d+$/);
-  if (numberMatch) {
-    const index = parseInt(numberMatch[0], 10) - 1; // Convert to 0-based index
-    if (index >= 0 && index < patients.length) {
-      logger.info('[chatStream] Matched patient by number:', {
-        user_input: trimmed,
-        extracted_text: textToMatch,
-        selected_index: index,
-        patient_id: patients[index].id
+  // Validate patient ID format if provided
+  if (selectedPatientId) {
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidPattern.test(selectedPatientId)) {
+      return res.status(400).json({
+        error: 'Invalid patient ID format',
+        code: 'INVALID_PATIENT_ID'
       });
-      return patients[index].id;
     }
-  }
 
-  // Try fuzzy name matching (case-insensitive)
-  // Only match if BOTH user input and patient name are non-empty and meaningful
-  const lowerResponse = textToMatch.toLowerCase();
-
-  // First pass: exact substring matching (original logic)
-  for (const patient of patients) {
-    const lowerName = (patient.full_name || '').toLowerCase().trim();
-    // Skip patients with empty names - prevents false matches on empty string
-    if (!lowerName || lowerName.length < 2) {
-      continue;
-    }
-    // Require minimum 2 characters match to avoid false positives
-    if (lowerResponse.length >= 2 && (lowerName.includes(lowerResponse) || lowerResponse.includes(lowerName))) {
-      logger.info('[chatStream] Matched patient by name (exact):', {
-        user_input: trimmed,
-        extracted_text: textToMatch,
-        patient_name: patient.full_name,
-        patient_id: patient.id
+    // Verify patient exists in database
+    try {
+      const result = await pool.query('SELECT id FROM patients WHERE id = $1', [selectedPatientId]);
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          error: 'Patient not found',
+          code: 'PATIENT_NOT_FOUND'
+        });
+      }
+    } catch (error) {
+      logger.error('[chatStream] Error verifying patient:', { error: error.message });
+      return res.status(500).json({
+        error: 'Failed to verify patient',
+        code: 'DATABASE_ERROR'
       });
-      return patient.id;
     }
   }
 
-  // Second pass: word-based matching for embedded patient references
-  // e.g., "покажи холестерин для Рудницкий Юрий" should match "Рудницкий Юрий Владимирович"
-  const responseWords = lowerResponse.split(/\s+/).filter(w => w.length >= 3);
-  let bestMatch = null;
-  let bestMatchCount = 0;
+  // Create session
+  const session = sessionManager.createSession();
 
-  for (const patient of patients) {
-    const lowerName = (patient.full_name || '').toLowerCase().trim();
-    if (!lowerName || lowerName.length < 2) {
-      continue;
-    }
-
-    // Split patient name into words (surname, first name, patronymic)
-    const nameWords = lowerName.split(/\s+/).filter(w => w.length >= 3);
-    if (nameWords.length === 0) {
-      continue;
-    }
-
-    // Count how many name words appear in the user response
-    const matchedWords = nameWords.filter(nameWord =>
-      responseWords.some(respWord => respWord.includes(nameWord) || nameWord.includes(respWord))
-    );
-
-    // Require at least 2 matching words (e.g., surname + first name)
-    // or all words if patient has only 1-2 name parts
-    const minRequired = Math.min(2, nameWords.length);
-    if (matchedWords.length >= minRequired && matchedWords.length > bestMatchCount) {
-      bestMatch = patient;
-      bestMatchCount = matchedWords.length;
-    }
+  // Set selected patient
+  if (selectedPatientId) {
+    session.selectedPatientId = selectedPatientId;
   }
 
-  if (bestMatch) {
-    logger.info('[chatStream] Matched patient by name (word-based):', {
-      user_input: trimmed,
-      extracted_text: textToMatch,
-      patient_name: bestMatch.full_name,
-      patient_id: bestMatch.id,
-      matched_words: bestMatchCount
-    });
-    return bestMatch.id;
-  }
-
-  // Try exact UUID match
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidPattern.test(trimmed)) {
-    const patient = patients.find(p => p.id.toLowerCase() === trimmed.toLowerCase());
-    if (patient) {
-      logger.info('[chatStream] Matched patient by UUID:', {
-        user_input: trimmed,
-        patient_id: patient.id
-      });
-      return patient.id;
-    }
-  }
-
-  // No match found
-  logger.warn('[chatStream] Could not match patient:', {
-    user_input: trimmed,
-    available_patients: patients.length
+  logger.info('[chatStream] Session created:', {
+    session_id: session.id,
+    selected_patient_id: selectedPatientId || null
   });
-  return null;
-}
+
+  res.json({
+    sessionId: session.id,
+    selectedPatientId: selectedPatientId || null
+  });
+});
+
+/**
+ * HEAD /api/chat/sessions/:sessionId/validate
+ * PRD v4.3: Preflight validation before SSE connection
+ * Uses peekSession() to avoid extending TTL
+ */
+router.head('/sessions/:sessionId/validate', (req, res) => {
+  const { sessionId } = req.params;
+
+  const session = sessionManager.peekSession(sessionId);
+  if (!session) {
+    return res.status(404).end();
+  }
+
+  res.status(200).end();
+});
 
 /**
  * GET /api/chat/stream
- * Open SSE connection and create session
+ * Open SSE connection to existing session
+ * PRD v4.3: Requires sessionId query parameter (session created via POST /sessions)
  */
 router.get('/stream', (req, res) => {
+  const { sessionId } = req.query;
+
+  // Validate sessionId parameter
+  if (!sessionId) {
+    return res.status(400).json({
+      error: 'sessionId query parameter is required',
+      code: 'INVALID_REQUEST'
+    });
+  }
+
+  // Get existing session
+  const session = sessionManager.getSession(sessionId);
+  if (!session) {
+    return res.status(404).json({
+      error: 'Session not found',
+      code: 'SESSION_NOT_FOUND'
+    });
+  }
+
   // Set SSE headers
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -265,30 +304,25 @@ router.get('/stream', (req, res) => {
     'X-Accel-Buffering': 'no' // Disable nginx buffering
   });
 
-  // Create session
-  const session = sessionManager.createSession();
+  // PRD v4.3: Use SSE registry instead of storing in session
+  attachSSE(sessionId, res, session);
 
-  // Store SSE response object in session for streaming
-  session.sseResponse = res;
-
-  // === NEW: Attach session to res.locals for streamEvent guard ===
-  res.locals = res.locals || {};
-  res.locals.session = session;
-
-  // Send session_start event
-  streamEvent(res, {
+  // Send session_start event (confirms SSE attachment to existing session)
+  streamEvent(sessionId, {
     type: 'session_start',
-    sessionId: session.id
+    sessionId: session.id,
+    selectedPatientId: session.selectedPatientId
   });
 
   logger.info('[chatStream] SSE connection established:', {
-    session_id: session.id
+    session_id: session.id,
+    selected_patient_id: session.selectedPatientId
   });
 
   // Handle client disconnect
   req.on('close', () => {
-    // CRITICAL: Null out sseResponse to prevent writes after disconnect
-    session.sseResponse = null;
+    // PRD v4.3: Clean up SSE registry
+    sseConnections.delete(sessionId);
     sessionManager.markDisconnected(session.id);
     logger.info('[chatStream] SSE connection closed:', {
       session_id: session.id
@@ -351,23 +385,21 @@ router.post('/messages', async (req, res) => {
 /**
  * DELETE /api/chat/sessions/:sessionId
  * Manually clear conversation
+ * PRD v4.3: Idempotent - returns 200 OK even if session doesn't exist
  */
 router.delete('/sessions/:sessionId', (req, res) => {
   const { sessionId } = req.params;
 
+  // PRD v4.3: Also clean up SSE connection
+  closeSSEConnection(sessionId);
+
   const existed = sessionManager.deleteSession(sessionId);
 
-  if (existed) {
-    res.json({
-      ok: true,
-      message: 'Session cleared'
-    });
-  } else {
-    res.status(404).json({
-      error: 'Session not found',
-      code: 'SESSION_NOT_FOUND'
-    });
-  }
+  // PRD v4.3: Idempotent - always return success
+  res.json({
+    ok: true,
+    message: existed ? 'Session cleared' : 'Session not found (already cleared)'
+  });
 });
 
 /**
@@ -381,6 +413,42 @@ async function processMessage(sessionId, userMessage) {
   }
 
   try {
+    // PRD v4.3: Recompute patient count per-message (NOT cached in session)
+    // Security: Prevents data leak if patient is added after session creation
+    const countResult = await pool.query('SELECT COUNT(*) as count FROM patients');
+    const currentPatientCount = parseInt(countResult.rows[0].count, 10);
+
+    // PRD v4.3: Verify selected patient still exists (409 handling)
+    if (session.selectedPatientId) {
+      const patientExists = await pool.query(
+        'SELECT 1 FROM patients WHERE id = $1',
+        [session.selectedPatientId]
+      );
+
+      if (patientExists.rows.length === 0) {
+        logger.warn('[chatStream] Selected patient no longer exists:', {
+          session_id: sessionId,
+          patient_id: session.selectedPatientId
+        });
+
+        // Emit patient_unavailable SSE event
+        streamEvent(session.id, {
+          type: 'patient_unavailable',
+          sessionId: session.id,
+          selectedPatientId: session.selectedPatientId,
+          message: 'Selected patient is no longer available. Start a new chat.'
+        });
+
+        // Close SSE and delete session
+        closeSSEConnection(session.id);
+        sessionManager.deleteSession(session.id);
+
+        // Note: 409 response is handled by POST /messages endpoint, not here
+        // This function is called async, so we just return after cleanup
+        return;
+      }
+    }
+
     // Add user message to conversation
     sessionManager.addMessage(sessionId, 'user', userMessage);
 
@@ -389,34 +457,23 @@ async function processMessage(sessionId, userMessage) {
       await initializeSystemPrompt(session);
     }
 
-    // Check if this looks like a patient selection response
-    if (session.awaitingPatientSelection && !session.selectedPatientId) {
-      const patientId = await extractPatientId(userMessage, session.patients || []);
-      if (patientId) {
-        sessionManager.setSelectedPatient(sessionId, patientId);
-        session.awaitingPatientSelection = false;
-        logger.info('[chatStream] Patient selected:', {
-          session_id: sessionId,
-          patient_id: patientId
-        });
-      }
-    }
+    // PRD v4.3: Patient selection now happens before chat starts (via POST /api/chat/sessions)
+    // No need for runtime patient selection parsing
 
-    // === NEW: Create message_id for this assistant turn ===
+    // Create message_id for this assistant turn
     // NOTE: Set unconditionally (even if sseResponse is null) to maintain state consistency
     // Clearing is also unconditional in all exit paths (normal, error, session deletion)
     session.currentMessageId = crypto.randomUUID();
 
-    // Emit message_start (conditional - only if SSE connected)
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
-        type: 'message_start',
-        message_id: session.currentMessageId
-      });
-    }
+    // Emit message_start (PRD v4.3: streamEvent handles missing connections)
+    streamEvent(session.id, {
+      type: 'message_start',
+      message_id: session.currentMessageId
+    });
 
     // Start LLM streaming (may recurse, but reuses same message_id)
-    await streamLLMResponse(session);
+    // PRD v4.3: Pass currentPatientCount for tool-level scope enforcement
+    await streamLLMResponse(session, currentPatientCount);
 
   } catch (error) {
     // Full error logging for debugging
@@ -429,29 +486,27 @@ async function processMessage(sessionId, userMessage) {
       stack: error.stack
     });
 
-    // Send error to client if SSE stream is available
-    if (session.sseResponse) {
-      // Error event with message_id for correlation
-      streamEvent(session.sseResponse, {
-        type: 'error',
-        message_id: session.currentMessageId || null,
-        code: 'PROCESSING_ERROR',
-        message: 'Failed to process message. Please try again.',
-        debug: NODE_ENV === 'development' ? error.message : undefined
-      });
+    // Send error to client (PRD v4.3: streamEvent handles missing connections)
+    // Error event with message_id for correlation
+    streamEvent(session.id, {
+      type: 'error',
+      message_id: session.currentMessageId || null,
+      code: 'PROCESSING_ERROR',
+      message: 'Failed to process message. Please try again.',
+      debug: NODE_ENV === 'development' ? error.message : undefined
+    });
 
-      // Always finalize the turn after error (if message was started)
-      if (session.currentMessageId) {
-        streamEvent(session.sseResponse, {
-          type: 'message_end',
-          message_id: session.currentMessageId
-        });
-      }
+    // Always finalize the turn after error (if message was started)
+    if (session.currentMessageId) {
+      streamEvent(session.id, {
+        type: 'message_end',
+        message_id: session.currentMessageId
+      });
     }
 
     // CRITICAL: Always clear message ID unconditionally
     // This prevents state leakage even when:
-    // - SSE connection is lost (sseResponse is null)
+    // - SSE connection is lost
     // - Error occurs before message_start was emitted
     // - Session is deleted or invalidated mid-turn
     session.currentMessageId = null;
@@ -466,25 +521,20 @@ async function processMessage(sessionId, userMessage) {
 
 /**
  * Initialize system prompt with schema and patient context
+ * PRD v4.3: Uses chat mode with pre-selected patient ID
  */
 async function initializeSystemPrompt(session) {
   // Get schema snapshot and format it
   const { manifest } = await getSchemaSnapshot();
   const schemaContext = buildSchemaSection(manifest, ''); // Empty question = include all tables
 
-  const { prompt, patientCount, patients } = await agenticCore.buildSystemPrompt(schemaContext, 20); // No iteration limit for conversational mode
-
-  // Store patient info in session
-  session.patientCount = patientCount;
-  session.patients = patients;
-  if (patientCount === 1 && patients.length === 1) {
-    sessionManager.setSelectedPatient(session.id, patients[0].id);
-    session.awaitingPatientSelection = false;
-  } else if (patientCount > 1 && patients.length > 1) {
-    session.awaitingPatientSelection = true;
-  } else {
-    session.awaitingPatientSelection = false;
-  }
+  // PRD v4.3: Use chat mode with selectedPatientId (set by POST /api/chat/sessions)
+  const { prompt } = await agenticCore.buildSystemPrompt(
+    schemaContext,
+    20, // maxIterations
+    'chat', // mode
+    session.selectedPatientId // Pre-selected patient ID (can be null for schema-only queries)
+  );
 
   // Add system message
   session.messages.unshift({
@@ -494,40 +544,38 @@ async function initializeSystemPrompt(session) {
 
   logger.info('[chatStream] System prompt initialized:', {
     session_id: session.id,
-    patient_count: patientCount,
-    patients_count: patients.length
+    selected_patient_id: session.selectedPatientId
   });
 }
 
 /**
  * Stream LLM response with tool calling
  * @param {object} session - Session object with conversation state
+ * @param {number} patientCount - PRD v4.3: Current patient count for scope enforcement
  */
-async function streamLLMResponse(session) {
+async function streamLLMResponse(session, patientCount = 0) {
   // Safety check: verify session still exists (could be deleted by timeout/disconnect)
   if (!sessionManager.getSession(session.id)) {
     logger.warn('[chatStream] Session deleted during processing:', {
       session_id: session.id
     });
 
-    // === FIX: Emit terminal events before returning ===
-    if (session.sseResponse) {
-      // Error event (if message was started)
-      if (session.currentMessageId) {
-        streamEvent(session.sseResponse, {
-          type: 'error',
-          message_id: session.currentMessageId,
-          code: 'SESSION_EXPIRED',
-          message: 'Session expired. Please refresh and try again.',
-          debug: NODE_ENV === 'development' ? 'Session deleted mid-turn' : undefined
-        });
+    // PRD v4.3: Emit terminal events (streamEvent handles missing connections)
+    // Error event (if message was started)
+    if (session.currentMessageId) {
+      streamEvent(session.id, {
+        type: 'error',
+        message_id: session.currentMessageId,
+        code: 'SESSION_EXPIRED',
+        message: 'Session expired. Please refresh and try again.',
+        debug: NODE_ENV === 'development' ? 'Session deleted mid-turn' : undefined
+      });
 
-        // Finalize the turn
-        streamEvent(session.sseResponse, {
-          type: 'message_end',
-          message_id: session.currentMessageId
-        });
-      }
+      // Finalize the turn
+      streamEvent(session.id, {
+        type: 'message_end',
+        message_id: session.currentMessageId
+      });
     }
 
     // Always clear message ID
@@ -544,28 +592,29 @@ async function streamLLMResponse(session) {
       max_iterations: MAX_CONVERSATION_ITERATIONS
     });
 
-    if (session.sseResponse) {
-      // Error event with message_id
-      streamEvent(session.sseResponse, {
-        type: 'error',
-        message_id: session.currentMessageId || null,
-        code: 'ITERATION_LIMIT_EXCEEDED',
-        message: 'Conversation became too complex. Please start a new conversation.',
-        debug: NODE_ENV === 'development' ? `Exceeded ${MAX_CONVERSATION_ITERATIONS} iterations` : undefined
-      });
+    // PRD v4.3: streamEvent handles missing connections
+    // Error event with message_id
+    streamEvent(session.id, {
+      type: 'error',
+      message_id: session.currentMessageId || null,
+      code: 'ITERATION_LIMIT_EXCEEDED',
+      message: 'Conversation became too complex. Please start a new conversation.',
+      debug: NODE_ENV === 'development' ? `Exceeded ${MAX_CONVERSATION_ITERATIONS} iterations` : undefined
+    });
 
-      // Emit message_end if message was started
-      if (session.currentMessageId) {
-        streamEvent(session.sseResponse, {
-          type: 'message_end',
-          message_id: session.currentMessageId
-        });
-      }
+    // Emit message_end if message was started
+    if (session.currentMessageId) {
+      streamEvent(session.id, {
+        type: 'message_end',
+        message_id: session.currentMessageId
+      });
     }
 
     // CRITICAL: Always clear message ID (unconditional)
     session.currentMessageId = null;
 
+    // Close SSE connection before deleting session to avoid dangling connection
+    closeSSEConnection(session.id);
     sessionManager.deleteSession(session.id);
     return;
   }
@@ -575,14 +624,12 @@ async function streamLLMResponse(session) {
   // IMPORTANT: Prune conversation before making API call
   pruneConversationIfNeeded(session);
 
-  // Send status: preparing to call LLM
-  if (session.sseResponse) {
-    streamEvent(session.sseResponse, {
-      type: 'status',
-      status: 'thinking',
-      message: 'Thinking...'
-    });
-  }
+  // Send status: preparing to call LLM (PRD v4.3: streamEvent handles missing connections)
+  streamEvent(session.id, {
+    type: 'status',
+    status: 'thinking',
+    message: 'Thinking...'
+  });
 
   try {
     const stream = await client.chat.completions.create({
@@ -605,14 +652,12 @@ async function streamLLMResponse(session) {
       // Handle text content
       if (delta.content) {
         assistantMessage += delta.content;
-        // Stream text to client
-        if (session.sseResponse) {
-          streamEvent(session.sseResponse, {
-            type: 'text',
-            message_id: session.currentMessageId,
-            content: delta.content
-          });
-        }
+        // Stream text to client (PRD v4.3: streamEvent handles missing connections)
+        streamEvent(session.id, {
+          type: 'text',
+          message_id: session.currentMessageId,
+          content: delta.content
+        });
       }
 
       // Handle tool calls
@@ -668,13 +713,15 @@ async function streamLLMResponse(session) {
 
     // Execute tool calls
     if (toolCalls.length > 0) {
-      await executeToolCalls(session, toolCalls);
+      // PRD v4.3: Pass patientCount for scope enforcement
+      await executeToolCalls(session, toolCalls, patientCount);
       // Note: executeToolCalls will call streamLLMResponse recursively
       // The recursive call will eventually hit toolCalls.length === 0
     } else {
       // === Turn complete - ALWAYS emit message_end ===
-      if (session.sseResponse && session.currentMessageId) {
-        streamEvent(session.sseResponse, {
+      // PRD v4.3: streamEvent handles missing connections
+      if (session.currentMessageId) {
+        streamEvent(session.id, {
           type: 'message_end',
           message_id: session.currentMessageId
         });
@@ -702,8 +749,9 @@ async function streamLLMResponse(session) {
 
 /**
  * Execute tool calls and continue conversation
+ * @param {number} patientCount - PRD v4.3: Current patient count for scope enforcement
  */
-async function executeToolCalls(session, toolCalls) {
+async function executeToolCalls(session, toolCalls, patientCount = 0) {
   for (const toolCall of toolCalls) {
     const toolName = toolCall.function.name;
     const toolCallId = toolCall.id;
@@ -733,15 +781,13 @@ async function executeToolCalls(session, toolCalls) {
       params
     });
 
-    // Send tool_start event
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
-        type: 'tool_start',
-        message_id: session.currentMessageId,
-        tool: toolName,
-        params
-      });
-    }
+    // Send tool_start event (PRD v4.3: streamEvent handles missing connections)
+    streamEvent(session.id, {
+      type: 'tool_start',
+      message_id: session.currentMessageId,
+      tool: toolName,
+      params
+    });
 
     const toolStartTime = Date.now();
 
@@ -749,28 +795,24 @@ async function executeToolCalls(session, toolCalls) {
     if (toolName === 'show_plot') {
       await handleShowPlot(session, params, toolCallId);
       // Send tool_complete event
-      if (session.sseResponse) {
-        streamEvent(session.sseResponse, {
-          type: 'tool_complete',
-          message_id: session.currentMessageId,
-          tool: toolName,
-          duration_ms: Date.now() - toolStartTime
-        });
-      }
+      streamEvent(session.id, {
+        type: 'tool_complete',
+        message_id: session.currentMessageId,
+        tool: toolName,
+        duration_ms: Date.now() - toolStartTime
+      });
       continue; // Continue to next tool or LLM response
     }
 
     if (toolName === 'show_table') {
       await handleShowTable(session, params, toolCallId);
       // Send tool_complete event
-      if (session.sseResponse) {
-        streamEvent(session.sseResponse, {
-          type: 'tool_complete',
-          message_id: session.currentMessageId,
-          tool: toolName,
-          duration_ms: Date.now() - toolStartTime
-        });
-      }
+      streamEvent(session.id, {
+        type: 'tool_complete',
+        message_id: session.currentMessageId,
+        tool: toolName,
+        duration_ms: Date.now() - toolStartTime
+      });
       continue; // Continue to next tool or LLM response
     }
 
@@ -778,22 +820,20 @@ async function executeToolCalls(session, toolCalls) {
     try {
       const result = await agenticCore.executeToolCall(toolName, params, {
         schemaSnapshotId: null, // TODO: track schema snapshot in session
-        // PRD v4.2.2 security fix: pass patient context for scope enforcement
+        // PRD v4.3: Pass patient context for scope enforcement (patientCount from parameter, not session)
         selectedPatientId: session.selectedPatientId || null,
-        patientCount: session.patientCount || 0
+        patientCount: patientCount
       });
 
       const toolDuration = Date.now() - toolStartTime;
 
-      // Send tool_complete event
-      if (session.sseResponse) {
-        streamEvent(session.sseResponse, {
-          type: 'tool_complete',
-          message_id: session.currentMessageId,
-          tool: toolName,
-          duration_ms: toolDuration
-        });
-      }
+      // Send tool_complete event (PRD v4.3: streamEvent handles missing connections)
+      streamEvent(session.id, {
+        type: 'tool_complete',
+        message_id: session.currentMessageId,
+        tool: toolName,
+        duration_ms: toolDuration
+      });
 
       // Add tool result to conversation
       session.messages.push({
@@ -810,17 +850,15 @@ async function executeToolCalls(session, toolCalls) {
         stack: error.stack
       });
 
-      // Send tool_complete with error
-      if (session.sseResponse) {
-        streamEvent(session.sseResponse, {
-          type: 'tool_complete',
-          message_id: session.currentMessageId,
-          tool: toolName,
-          duration_ms: Date.now() - toolStartTime,
-          error: error.message,
-          debug: NODE_ENV === 'development' ? error.stack : undefined
-        });
-      }
+      // Send tool_complete with error (PRD v4.3: streamEvent handles missing connections)
+      streamEvent(session.id, {
+        type: 'tool_complete',
+        message_id: session.currentMessageId,
+        tool: toolName,
+        duration_ms: Date.now() - toolStartTime,
+        error: error.message,
+        debug: NODE_ENV === 'development' ? error.stack : undefined
+      });
 
       session.messages.push({
         role: 'tool',
@@ -837,24 +875,22 @@ async function executeToolCalls(session, toolCalls) {
       session_id: session.id
     });
 
-    // === FIX: Emit terminal events before returning ===
-    if (session.sseResponse) {
-      // Error event (if message was started)
-      if (session.currentMessageId) {
-        streamEvent(session.sseResponse, {
-          type: 'error',
-          message_id: session.currentMessageId,
-          code: 'SESSION_EXPIRED',
-          message: 'Session expired. Please refresh and try again.',
-          debug: NODE_ENV === 'development' ? 'Session deleted mid-turn' : undefined
-        });
+    // PRD v4.3: Emit terminal events (streamEvent handles missing connections)
+    // Error event (if message was started)
+    if (session.currentMessageId) {
+      streamEvent(session.id, {
+        type: 'error',
+        message_id: session.currentMessageId,
+        code: 'SESSION_EXPIRED',
+        message: 'Session expired. Please refresh and try again.',
+        debug: NODE_ENV === 'development' ? 'Session deleted mid-turn' : undefined
+      });
 
-        // Finalize the turn
-        streamEvent(session.sseResponse, {
-          type: 'message_end',
-          message_id: session.currentMessageId
-        });
-      }
+      // Finalize the turn
+      streamEvent(session.id, {
+        type: 'message_end',
+        message_id: session.currentMessageId
+      });
     }
 
     // Always clear message ID
@@ -862,7 +898,8 @@ async function executeToolCalls(session, toolCalls) {
     return;
   }
 
-  await streamLLMResponse(session);
+  // PRD v4.3: Pass patientCount to recursive call
+  await streamLLMResponse(session, patientCount);
 }
 
 /**
@@ -933,9 +970,9 @@ function removeDisplayResults(session) {
  */
 async function handleShowPlot(session, params, toolCallId) {
   const { data, plot_title, replace_previous = false, thumbnail: thumbnailConfig } = params;
-  const res = session.sseResponse;
+  // PRD v4.3: Using session.id for streamEvent calls (SSE registry pattern)
 
-  // === NEW: Guard against missing plot_title ===
+  // Guard against missing plot_title
   if (!plot_title || typeof plot_title !== 'string' || plot_title.trim() === '') {
     logger.warn('[handleShowPlot] Missing or invalid plot_title:', {
       session_id: session.id,
@@ -944,15 +981,13 @@ async function handleShowPlot(session, params, toolCallId) {
     });
 
     // Emit user-visible error (LLM typically retries with correct parameters)
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
-        type: 'error',
-        message_id: session.currentMessageId || null,
-        code: 'INVALID_TOOL_PARAMS',
-        message: 'Plot generation failed due to missing title. Retrying...',
-        debug: NODE_ENV === 'development' ? 'plot_title is required' : undefined
-      });
-    }
+    streamEvent(session.id, {
+      type: 'error',
+      message_id: session.currentMessageId || null,
+      code: 'INVALID_TOOL_PARAMS',
+      message: 'Plot generation failed due to missing title. Retrying...',
+      debug: NODE_ENV === 'development' ? 'plot_title is required' : undefined
+    });
 
     // Send error to LLM for recovery
     session.messages.push({
@@ -975,18 +1010,17 @@ async function handleShowPlot(session, params, toolCallId) {
       data_is_null: data === null
     });
 
-    if (res) {
-      streamEvent(res, {
-        type: 'plot_result',
-        message_id: session.currentMessageId,
-        plot_title,
-        rows: [],
-        replace_previous: true
-      });
-    }
+    // PRD v4.3: streamEvent handles missing connections
+    streamEvent(session.id, {
+      type: 'plot_result',
+      message_id: session.currentMessageId,
+      plot_title,
+      rows: [],
+      replace_previous: true
+    });
 
-    if (thumbnailConfig && res) {
-      streamEvent(res, {
+    if (thumbnailConfig) {
+      streamEvent(session.id, {
         type: 'thumbnail_update',
         message_id: session.currentMessageId,
         plot_title,
@@ -1018,15 +1052,14 @@ async function handleShowPlot(session, params, toolCallId) {
   const rowsWithOutOfRange = ensureOutOfRangeField(normalizedRows);
 
   // Step 5: Emit plot_result (always, even if data is empty after filtering)
-  if (res) {
-    streamEvent(res, {
-      type: 'plot_result',
-      message_id: session.currentMessageId,
-      plot_title,
-      rows: rowsWithOutOfRange,
-      replace_previous: replace_previous || false
-    });
-  }
+  // PRD v4.3: streamEvent handles missing connections
+  streamEvent(session.id, {
+    type: 'plot_result',
+    message_id: session.currentMessageId,
+    plot_title,
+    rows: rowsWithOutOfRange,
+    replace_previous: replace_previous || false
+  });
 
   // Step 6: If thumbnail config provided, derive using the same sanitized rows
   if (thumbnailConfig) {
@@ -1045,14 +1078,15 @@ async function handleShowPlot(session, params, toolCallId) {
       rows: rowsWithOutOfRange
     });
 
-    if (result && res) {
+    if (result) {
       logger.info('[handleShowPlot] Emitting thumbnail_update:', {
         plot_title,
         result_id: result.resultId,
         thumbnail: result.thumbnail
       });
 
-      streamEvent(res, {
+      // PRD v4.3: streamEvent handles missing connections
+      streamEvent(session.id, {
         type: 'thumbnail_update',
         message_id: session.currentMessageId,
         plot_title,
@@ -1127,16 +1161,14 @@ async function handleShowTable(session, params, toolCallId) {
       return;
     }
 
-    // Send data to frontend via SSE
-    if (session.sseResponse) {
-      streamEvent(session.sseResponse, {
-        type: 'table_result',
-        message_id: session.currentMessageId,
-        table_title,
-        rows: data,
-        replace_previous
-      });
-    }
+    // Send data to frontend via SSE (PRD v4.3: streamEvent handles missing connections)
+    streamEvent(session.id, {
+      type: 'table_result',
+      message_id: session.currentMessageId,
+      table_title,
+      rows: data,
+      replace_previous
+    });
 
     // Add result to conversation (confirm success to LLM)
     session.messages.push({

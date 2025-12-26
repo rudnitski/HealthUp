@@ -73,29 +73,75 @@ const createHash = (value) => {
 /**
  * Build system prompt with schema context and patient information
  * PRD v3.2: Pre-loads patient count and list to avoid runtime queries
+ * PRD v4.3: Added mode parameter for chat vs legacy behavior
+ *
+ * @param {string} schemaContext - Schema snapshot formatted as markdown
+ * @param {number} maxIterations - Maximum iteration limit for agentic loop
+ * @param {string} mode - 'chat' (pre-selected patient) or 'legacy' (full patient list)
+ * @param {string|null} selectedPatientId - Patient ID for chat mode (required if mode='chat')
+ * @returns {object} { prompt, patientCount, patients }
  */
-async function buildSystemPrompt(schemaContext, maxIterations) {
+async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', selectedPatientId = null) {
   if (!agenticSystemPromptTemplate) {
     throw new Error('Agentic system prompt template not loaded. Check prompts/agentic_sql_generator_system_prompt.txt');
   }
-
-  // Load patient information from database
-  const patientsResult = await pool.query(
-    'SELECT id, full_name, gender, date_of_birth FROM patients ORDER BY full_name'
-  );
-
-  const patientCount = patientsResult.rows.length;
-  const patientList = patientsResult.rows.map((p, i) =>
-    `${i + 1}. ${p.full_name} (${p.gender || 'Unknown'}, DOB: ${p.date_of_birth || 'Unknown'}, ID: ${p.id})`
-  ).join('\n');
 
   // Replace placeholders in template
   let prompt = agenticSystemPromptTemplate
     .replace(/\{\{MAX_ITERATIONS\}\}/g, maxIterations)
     .replace(/\{\{SCHEMA_CONTEXT\}\}/g, schemaContext);
 
-  // Add patient context section (v3.2)
-  const patientContextSection = `
+  if (mode === 'chat') {
+    // PRD v4.3: Chat mode - inject selected patient ID only
+    if (selectedPatientId) {
+      const patientContextSection = `
+
+## Patient Context (Selected)
+
+Selected Patient ID: ${selectedPatientId}
+
+**CRITICAL**: Use ONLY this patient ID in all queries. Do NOT ask which patient to use.
+All queries MUST filter by patient_id using either \`WHERE patient_id = '${selectedPatientId}'\` or \`WHERE patient_id IN ('${selectedPatientId}')\` syntax.
+`;
+      prompt = prompt + patientContextSection;
+    } else {
+      // No patient selected (schema-only queries when no patients exist)
+      const noPatientSection = `
+
+## Patient Context
+
+No patient is currently selected. You can only answer questions about the database schema.
+If the user asks about lab results or patient data, inform them they need to upload lab reports first.
+`;
+      prompt = prompt + noPatientSection;
+    }
+
+    // Return minimal context (patientCount/patients not needed for chat)
+    return { prompt, patientCount: null, patients: [] };
+
+  } else {
+    // Legacy mode: load full patient list (original behavior)
+    const patientsResult = await pool.query(`
+      SELECT
+        id,
+        full_name,
+        CASE
+          WHEN full_name IS NOT NULL AND full_name != '' THEN full_name
+          ELSE 'Patient (' || SUBSTRING(id::text FROM 1 FOR 6) || '...)'
+        END AS display_name,
+        gender,
+        date_of_birth
+      FROM patients
+      ORDER BY full_name ASC NULLS LAST, created_at DESC
+    `);
+
+    const patientCount = patientsResult.rows.length;
+    // Use display_name to handle NULL full_name properly
+    const patientList = patientsResult.rows.map((p, i) =>
+      `${i + 1}. ${p.display_name} (${p.gender || 'Unknown'}, DOB: ${p.date_of_birth || 'Unknown'}, ID: ${p.id})`
+    ).join('\n');
+
+    const patientContextSection = `
 
 ## Patient Context (Pre-loaded)
 
@@ -108,14 +154,14 @@ ${patientList || 'No patients in database'}
 This information is pre-loaded. Do NOT query \`SELECT COUNT(*) FROM patients\` - use the pre-loaded count above.
 `;
 
-  // Insert patient context section after the schema context
-  prompt = prompt + patientContextSection;
+    prompt = prompt + patientContextSection;
 
-  return {
-    prompt,
-    patientCount,
-    patients: patientsResult.rows
-  };
+    return {
+      prompt,
+      patientCount,
+      patients: patientsResult.rows
+    };
+  }
 }
 
 /**
