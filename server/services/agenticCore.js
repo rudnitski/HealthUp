@@ -92,16 +92,43 @@ async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', 
     .replace(/\{\{SCHEMA_CONTEXT\}\}/g, schemaContext);
 
   if (mode === 'chat') {
-    // PRD v4.3: Chat mode - inject selected patient ID only
+    // PRD v4.3: Chat mode - inject selected patient with demographics
     if (selectedPatientId) {
+      // Fetch patient demographics for context
+      const patientResult = await pool.query(`
+        SELECT
+          full_name,
+          gender,
+          date_of_birth,
+          CASE
+            WHEN date_of_birth IS NOT NULL AND date_of_birth ~ '^\\d{4}-\\d{2}-\\d{2}$'
+            THEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, date_of_birth::date))::int
+            WHEN date_of_birth IS NOT NULL AND date_of_birth ~ '^\\d{2}/\\d{2}/\\d{4}$'
+            THEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE(date_of_birth, 'DD/MM/YYYY')))::int
+            ELSE NULL
+          END AS age
+        FROM patients
+        WHERE id = $1
+      `, [selectedPatientId]);
+
+      const patient = patientResult.rows[0] || {};
+      const ageDisplay = patient.age ? `${patient.age} years` : 'Unknown';
+
       const patientContextSection = `
 
 ## Patient Context (Selected)
 
-Selected Patient ID: ${selectedPatientId}
+Selected Patient: ${patient.full_name || 'Unknown'}
+- **Patient ID**: ${selectedPatientId}
+- **Gender**: ${patient.gender || 'Unknown'}
+- **Date of Birth**: ${patient.date_of_birth || 'Unknown'}
+- **Age**: ${ageDisplay}
 
 **CRITICAL**: Use ONLY this patient ID in all queries. Do NOT ask which patient to use.
 All queries MUST filter by patient_id using either \`WHERE patient_id = '${selectedPatientId}'\` or \`WHERE patient_id IN ('${selectedPatientId}')\` syntax.
+
+**IMPORTANT**: You already have the patient's gender and age above. Do NOT ask the user for this information - use what is provided.
+When interpreting reference ranges that vary by age or gender, use the demographics above.
 `;
       prompt = prompt + patientContextSection;
     } else {
