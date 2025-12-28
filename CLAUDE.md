@@ -8,14 +8,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Start development server (auto-applies schema on boot)
 npm run dev
 
-# Clean restart (kills existing server on port 3000 first)
-npm run dev:clean
+# Clean restart (kills existing server on port 3000 first, then starts dev server)
+lsof -ti:3000 | xargs kill -9 && npm run dev
 
-# Run tests
+# Run all tests
 npm test
+
+# Run specific test file
+npm test path/to/test.js
 
 # Manual agentic SQL regression testing
 node test/manual/test_agentic_sql.js
+
+# Test job manager terminal state guards
+node test/manual/test_job_terminal_state_guard.js
 
 # Verify analyte mapping setup (checks tables/indexes/config)
 node scripts/verify_mapping_setup.js
@@ -375,7 +381,7 @@ Consult these when drafting new PRDs or understanding feature history. Prompt te
 11. **OpenAI Responses API for structured outputs**: ALWAYS use `client.responses.parse()` (Responses API) instead of `client.chat.completions.create()` (Chat Completions API) for structured JSON outputs. Responses API is significantly faster (5-10x) for batch classification tasks. Use payload structure: `{model, input: [{role, content: [{type: 'input_text', text}]}], text: {format: {type: 'json_schema', name, strict: true, schema}}}`. See Step 1/Step 2/Step 2.5 in `gmailDev.js` for reference implementation.
 12. **OpenAI model names**: User has access to latest OpenAI models including `gpt-5-mini` and potentially others beyond Claude's knowledge cutoff. NEVER assume a model doesn't exist or change model names in .env without explicit user approval. When encountering unfamiliar model names, trust the user's configuration and investigate the actual API error instead of assuming the model is invalid.
 13. **Pino logger limitations**: The project uses Pino for structured logging. Pino may not display complex nested objects passed as second parameter to logger methods (e.g., `logger.info('message', {complexObject})`). For debugging payloads or detailed object inspection, use `console.log()` with `JSON.stringify(obj, null, 2)` instead of Pino logger methods. Pino is designed for production performance, not development debugging of complex data structures.
-14. **Background process environment pollution**: When running multiple background processes (e.g., via Claude Code bash sessions), environment variables can persist in old processes and cause unexpected behavior. Old `npm run dev` processes running in background will keep their environment variables (like `GMAIL_MAX_EMAILS=5000`) even after .env is changed. Solution: Use `npm run dev:clean` which kills existing servers on port 3000 before starting. Alternatively, manually kill all node processes with `lsof -ti:3000 | xargs kill -9` before restarting.
+14. **Background process environment pollution**: When running multiple background processes (e.g., via Claude Code bash sessions), environment variables can persist in old processes and cause unexpected behavior. Old `npm run dev` processes running in background will keep their environment variables (like `GMAIL_MAX_EMAILS=5000`) even after .env is changed. Solution: Manually kill all node processes with `lsof -ti:3000 | xargs kill -9` before restarting, or use the clean restart command from Development Commands section.
 15. **Job manager terminal state protection**: `updateJob()` and `updateProgress()` in `jobManager.js` guard against overwriting FAILED/COMPLETED states with non-terminal states (PENDING/PROCESSING). This prevents race conditions where background tasks (e.g., StreamingClassifier callbacks) update job status after the job has already failed. Critical for async operations with concurrent background tasks. Verified by `test/manual/test_job_terminal_state_guard.js`.
 16. **PRD maintenance**: When updating PRDs after peer review, do not keep review history or comments in the PRD document. PRDs must contain only data for development of the feature, not the history of PRD improvement or review discussions.
-- when makeing changes to .env file make sure you update .env.example as well
+17. **Environment file sync**: When making changes to `.env` file, make sure you update `.env.example` as well to keep documentation in sync.
