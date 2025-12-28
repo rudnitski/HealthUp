@@ -397,6 +397,210 @@ const schemaStatements = [
   JOIN patient_reports pr ON pr.id = lr.report_id
   LEFT JOIN analytes a ON a.analyte_id = lr.analyte_id;
   `,
+  // ============================================================
+  // AUTHENTICATION TABLES (Part 1)
+  // ============================================================
+  `
+  CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    display_name TEXT NOT NULL,
+    primary_email CITEXT UNIQUE,
+    avatar_url TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_login_at TIMESTAMPTZ
+  );
+  `,
+  `
+  COMMENT ON TABLE users IS 'User accounts (provider-agnostic)';
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS user_identities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK (provider IN ('google', 'apple', 'email')),
+    provider_subject TEXT NOT NULL,
+    email TEXT,
+    email_verified BOOLEAN DEFAULT FALSE,
+    profile_data JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ,
+    UNIQUE(provider, provider_subject)
+  );
+  `,
+  `
+  COMMENT ON TABLE user_identities IS 'OAuth provider identities linked to user accounts';
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ,
+    ip_address TEXT,
+    user_agent TEXT
+  );
+  `,
+  `
+  COMMENT ON TABLE sessions IS 'Database-backed user sessions';
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id SERIAL PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    resource_type TEXT,
+    resource_id TEXT,
+    ip_address TEXT,
+    user_agent TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  `,
+  `
+  COMMENT ON TABLE audit_logs IS 'Security audit trail for user actions';
+  `,
+  // Add user_id to patients table
+  `
+  ALTER TABLE patients ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+  `,
+  `
+  COMMENT ON COLUMN patients.user_id IS 'Associated user account. NULL for unauthenticated/legacy patients.';
+  `,
+  // RLS Policies (Part 1: created but not forced)
+  `
+  ALTER TABLE patients ENABLE ROW LEVEL SECURITY;
+  `,
+  `
+  ALTER TABLE patient_reports ENABLE ROW LEVEL SECURITY;
+  `,
+  `
+  ALTER TABLE lab_results ENABLE ROW LEVEL SECURITY;
+  `,
+  `
+  DROP POLICY IF EXISTS user_isolation_patients ON patients;
+  `,
+  `
+  DROP POLICY IF EXISTS user_isolation_reports ON patient_reports;
+  `,
+  `
+  DROP POLICY IF EXISTS user_isolation_lab_results ON lab_results;
+  `,
+  `
+  DROP POLICY IF EXISTS audit_logs_admin_only ON audit_logs;
+  `,
+  `
+  DROP POLICY IF EXISTS session_isolation ON sessions;
+  `,
+  `
+  -- RLS Policy Contract (app.current_user_id):
+  -- App layer MUST set either:
+  --   1. Valid UUID string via SET LOCAL app.current_user_id = '<uuid>'
+  --   2. Empty string (default for unset context)
+  -- Malformed UUIDs will error (fail-safe behavior).
+  -- The NULLIF wrapper is defensive but app should validate before setting.
+  COMMENT ON SCHEMA public IS 'RLS policies use app.current_user_id session variable';
+  `,
+  `
+  CREATE POLICY user_isolation_patients ON patients
+    FOR ALL
+    USING (
+      user_id IS NULL
+      OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+    );
+  `,
+  `
+  CREATE POLICY user_isolation_reports ON patient_reports
+    FOR ALL
+    USING (
+      patient_id IN (
+        SELECT id FROM patients
+        WHERE user_id IS NULL
+          OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+      )
+    );
+  `,
+  `
+  CREATE POLICY user_isolation_lab_results ON lab_results
+    FOR ALL
+    USING (
+      report_id IN (
+        SELECT pr.id FROM patient_reports pr
+        JOIN patients p ON pr.patient_id = p.id
+        WHERE p.user_id IS NULL
+          OR p.user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+      )
+    );
+  `,
+  `
+  -- Lock down audit logs (admin-only access via BYPASSRLS role)
+  ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+  `,
+  `
+  CREATE POLICY audit_logs_admin_only ON audit_logs
+    FOR ALL
+    USING (false);
+  `,
+  `
+  COMMENT ON POLICY audit_logs_admin_only ON audit_logs IS 'Block all app access. Only healthup_admin (BYPASSRLS) can query audit logs.';
+  `,
+  `
+  -- Lock down sessions (users can only see their own sessions)
+  ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+  `,
+  `
+  CREATE POLICY session_isolation ON sessions
+    FOR ALL
+    USING (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
+  `,
+  `
+  COMMENT ON POLICY session_isolation ON sessions IS 'Users can only access their own sessions. No NULL escape hatch (sessions always have user_id).';
+  `,
+  // User deletion guard (Part 1-3 only, remove in Part 4)
+  `
+  CREATE OR REPLACE FUNCTION prevent_user_deletion()
+  RETURNS TRIGGER AS $$
+  BEGIN
+    RAISE EXCEPTION 'User deletion is disabled during authentication migration (Parts 1-3). This restriction will be removed in Part 4.';
+  END;
+  $$ LANGUAGE plpgsql;
+  `,
+  `
+  DROP TRIGGER IF EXISTS block_user_deletion ON users;
+  `,
+  `
+  CREATE TRIGGER block_user_deletion
+    BEFORE DELETE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION prevent_user_deletion();
+  `,
+  // Indexes for auth tables
+  `
+  CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at) WHERE revoked_at IS NULL;
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_sessions_revoked_at ON sessions(revoked_at) WHERE revoked_at IS NOT NULL;
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_patients_user_id ON patients(user_id);
+  `,
 ];
 
 const trigramIndexStatements = [
@@ -454,6 +658,16 @@ async function ensureSchema() {
       );
     }
 
+    // Enable citext for case-insensitive email uniqueness (Part 1 authentication)
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS citext;');
+    } catch (extensionError) {
+      console.warn(
+        '[db] citext extension unavailable; case-insensitive email uniqueness may not work.',
+        extensionError
+      );
+    }
+
     await client.query('BEGIN');
     await client.query('SET LOCAL search_path TO public');
     transactionStarted = true;
@@ -494,6 +708,13 @@ async function resetDatabase() {
     console.log('[db] Starting database reset...');
 
     // Drop all tables in dependency order (child tables first)
+    // Part 1: Add auth tables to drop list
+    await client.query('DROP TABLE IF EXISTS audit_logs CASCADE');
+    await client.query('DROP TABLE IF EXISTS sessions CASCADE');
+    await client.query('DROP TABLE IF EXISTS user_identities CASCADE');
+    await client.query('DROP TABLE IF EXISTS users CASCADE');
+
+    // Existing tables
     await client.query('DROP TABLE IF EXISTS admin_actions CASCADE');
     await client.query('DROP TABLE IF EXISTS sql_generation_logs CASCADE');
     await client.query('DROP TABLE IF EXISTS match_reviews CASCADE');
@@ -507,6 +728,9 @@ async function resetDatabase() {
 
     // Drop views
     await client.query('DROP VIEW IF EXISTS v_measurements CASCADE');
+
+    // Drop functions (Part 1: user deletion guard)
+    await client.query('DROP FUNCTION IF EXISTS prevent_user_deletion() CASCADE');
 
     console.log('[db] All tables dropped successfully');
 

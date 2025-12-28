@@ -82,6 +82,7 @@ INSERT INTO analytes (code, name, unit_canonical, category) VALUES
   ('BNP', 'B-type Natriuretic Peptide', 'pg/mL', 'cardiac'),
   ('CK', 'Creatine Kinase', 'U/L', 'cardiac'),
   ('CKMB', 'CK-MB', 'ng/mL', 'cardiac'),
+  ('HOMOCYSTEINE', 'Homocysteine', 'µmol/L', 'cardiac'),
   ('TROP', 'Troponin I', 'ng/mL', 'cardiac'),
 
   -- Inflammation
@@ -315,6 +316,12 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'RDW'), 'rdw', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'RDW'), 'red cell distribution width', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'RDW'), 'ширина распределения эритроцитов', 'ru', 1, 'seed'),
+
+  -- Red Cell Distribution Width SD (RDW_SD)
+  ((SELECT analyte_id FROM analytes WHERE code = 'RDW_SD'), 'rdw-sd', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'RDW_SD'), 'rdw sd', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'RDW_SD'), 'ширина распределения эритроцитов rdw sd', 'ru', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'RDW_SD'), 'ширина распределения эритроцитов sd', 'ru', 1, 'seed'),
 
   -- White Blood Cell Count (WBC)
   ((SELECT analyte_id FROM analytes WHERE code = 'WBC'), 'leukocytes', 'en', 1, 'seed'),
@@ -629,6 +636,11 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
   ((SELECT analyte_id FROM analytes WHERE code = 'TROP'), 'troponin i', 'en', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TROP'), 'тропонин', 'ru', 1, 'seed'),
   ((SELECT analyte_id FROM analytes WHERE code = 'TROP'), 'тропонін', 'uk', 1, 'seed'),
+
+  -- Homocysteine (HOMOCYSTEINE)
+  ((SELECT analyte_id FROM analytes WHERE code = 'HOMOCYSTEINE'), 'homocysteine', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'HOMOCYSTEINE'), 'hcy', 'en', 1, 'seed'),
+  ((SELECT analyte_id FROM analytes WHERE code = 'HOMOCYSTEINE'), 'гомоцистеин', 'ru', 1, 'seed'),
 
   -- C-Reactive Protein (CRP)
   ((SELECT analyte_id FROM analytes WHERE code = 'CRP'), 'c reactive protein', 'en', 1, 'seed'),

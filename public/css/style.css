@@ -1182,6 +1182,12 @@ a:hover {
   color: white;
 }
 
+/* Prevent wrapping in status and action columns */
+.results-table td:nth-child(2),
+.results-table td:nth-child(3) {
+  white-space: nowrap;
+}
+
 /* ============================================
    Help Text
    ============================================ */
