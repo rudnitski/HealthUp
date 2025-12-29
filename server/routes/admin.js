@@ -1,27 +1,35 @@
 // server/routes/admin.js
 // PRD v2.4: Admin API endpoints for pending analytes and ambiguous matches
+// PRD v4.4.2: Protected by authentication + admin authorization middleware
 
 import express from 'express';
-import { pool } from '../db/index.js';
+import { adminPool, queryAsAdmin } from '../db/index.js';
 import { detectLanguage } from '../utils/languageDetection.js';
 import logger from '../utils/logger.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// PRD v4.4.2: Apply authentication + authorization to ALL admin routes
+router.use(requireAuth, requireAdmin);
+
 // Helper function to log admin actions
+// PRD v4.4.2: Now includes admin_user from authenticated user
 async function logAdminAction(actionType, entityType, entityId, changes, req) {
   try {
-    await pool.query(
+    // Use queryAsAdmin to bypass RLS for admin_actions table
+    await queryAsAdmin(
       `INSERT INTO admin_actions
-         (action_type, entity_type, entity_id, changes, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+         (action_type, entity_type, entity_id, changes, ip_address, user_agent, admin_user)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         actionType,
         entityType,
         entityId,
         JSON.stringify(changes),
         req.ip || req.connection.remoteAddress,
-        req.get('user-agent')
+        req.get('user-agent'),
+        req.user?.email || null // PRD v4.4.2: Include authenticated user email
       ]
     );
   } catch (error) {
@@ -42,7 +50,7 @@ router.get('/pending-analytes', async (req, res) => {
       whereClause = 'WHERE status = $1';
     }
 
-    const { rows } = await pool.query(
+    const { rows } = await queryAsAdmin(
       `SELECT
          pending_id,
          proposed_code,
@@ -75,7 +83,7 @@ router.get('/pending-analytes', async (req, res) => {
  * Approve a pending analyte and promote to canonical
  */
 router.post('/approve-analyte', async (req, res) => {
-  const client = await pool.connect();
+  const client = await adminPool.connect();
 
   try {
     const { pending_id } = req.body;
@@ -270,7 +278,7 @@ router.post('/discard-analyte', async (req, res) => {
       return res.status(400).json({ error: 'pending_id is required' });
     }
 
-    const { rows } = await pool.query(
+    const { rows } = await queryAsAdmin(
       `UPDATE pending_analytes
        SET status = 'discarded',
            discarded_at = NOW(),
@@ -317,7 +325,7 @@ router.get('/ambiguous-matches', async (req, res) => {
       whereClause = 'WHERE status = $1';
     }
 
-    const { rows } = await pool.query(
+    const { rows } = await queryAsAdmin(
       `SELECT
          mr.review_id,
          mr.result_id,
@@ -345,7 +353,7 @@ router.get('/ambiguous-matches', async (req, res) => {
  * Resolve an ambiguous match by choosing the correct analyte
  */
 router.post('/resolve-match', async (req, res) => {
-  const client = await pool.connect();
+  const client = await adminPool.connect();
 
   try {
     const { review_id, chosen_analyte_id, create_alias } = req.body;
@@ -420,7 +428,7 @@ router.post('/resolve-match', async (req, res) => {
     await client.query('COMMIT');
 
     // Fetch chosen analyte details
-    const { rows: analyteRows } = await pool.query(
+    const { rows: analyteRows } = await queryAsAdmin(
       'SELECT analyte_id, code, name FROM analytes WHERE analyte_id = $1',
       [chosen_analyte_id]
     );
@@ -467,7 +475,7 @@ router.post('/discard-match', async (req, res) => {
       return res.status(400).json({ error: 'review_id is required' });
     }
 
-    const { rows } = await pool.query(
+    const { rows } = await queryAsAdmin(
       `UPDATE match_reviews
        SET status = 'skipped',
            updated_at = NOW()
@@ -507,7 +515,7 @@ router.get('/pending-analytes/:pendingId/matches', async (req, res) => {
     const { pendingId } = req.params;
 
     // Get pending analyte
-    const { rows: pending } = await pool.query(
+    const { rows: pending } = await queryAsAdmin(
       'SELECT pending_id, proposed_code, proposed_name FROM pending_analytes WHERE pending_id = $1',
       [pendingId]
     );
@@ -519,7 +527,7 @@ router.get('/pending-analytes/:pendingId/matches', async (req, res) => {
     const code = pending[0].proposed_code;
 
     // Find all match_reviews referencing this pending code
-    const { rows: matches } = await pool.query(
+    const { rows: matches } = await queryAsAdmin(
       `SELECT
          mr.review_id,
          mr.result_id,

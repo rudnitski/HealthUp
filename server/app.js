@@ -5,8 +5,12 @@ import path from 'path';
 import { getDirname } from './utils/path-helpers.js';
 import express from 'express';
 import fileUpload from 'express-fileupload';
-import { healthcheck, pool } from './db/index.js';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import { healthcheck, pool, adminPool, validateAdminPool } from './db/index.js';
 import { ensureSchema } from './db/schema.js';
+import { startSessionCleanup, stopSessionCleanup } from './jobs/sessionCleanup.js';
+import authRouter from './routes/auth.js';
 import VisionProviderFactory from './services/vision/VisionProviderFactory.js';
 import sqlGeneratorRouter from './routes/sqlGenerator.js';
 import chatStreamRouter, { closeSSEConnection } from './routes/chatStream.js';
@@ -41,8 +45,14 @@ process.setMaxListeners(20);
     const ok = await healthcheck();
     if (!ok) throw new Error('DB healthcheck failed');
     console.log('[db] Healthcheck OK');
+
+    // PRD v4.4.2: Validate adminPool has BYPASSRLS privilege
+    await validateAdminPool();
+
+    // PRD v4.4.2: Start session cleanup job (runs on startup + hourly)
+    startSessionCleanup();
   } catch (e) {
-    console.error('[db] Healthcheck failed on boot:', e);
+    console.error('[db] Initialization failed on boot:', e);
     process.exit(1);
   }
 })();
@@ -70,6 +80,22 @@ try {
 }
 
 const app = express();
+
+// PRD v4.4.2: Trust proxy for accurate client IPs (required behind Cloudflare, nginx, etc.)
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
+// PRD v4.4.2: Security headers (helmet)
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for now (configure in Part 4)
+  crossOriginEmbedderPolicy: false // Allow external resources (Google Sign-In SDK)
+}));
+
+// PRD v4.4.2: Cookie parsing - REQUIRED for req.cookies to be populated
+// Must be applied BEFORE auth routes
+app.use(cookieParser());
+
 app.use(express.json({ limit: '1mb' }));
 const PORT = process.env.PORT || 3000;
 const publicDir = path.join(__dirname, '..', 'public');
@@ -149,6 +175,9 @@ app.use('/api/analyze-labs', (req, res, next) => {
 
   next();
 });
+
+// PRD v4.4.2: Auth routes (must be before other protected routes)
+app.use('/api/auth', authRouter);
 
 app.use('/api/sql-generator', sqlGeneratorRouter);
 app.use('/api/chat', chatStreamRouter); // v3.2: Conversational SQL assistant
@@ -265,6 +294,13 @@ async function shutdown(code = 0, { skipPool = false } = {}) {
       console.error('[jobManager] Shutdown error:', e);
     }
 
+    // PRD v4.4.2: Stop session cleanup job
+    try {
+      stopSessionCleanup();
+    } catch (e) {
+      console.error('[sessionCleanup] Shutdown error:', e);
+    }
+
     try {
       await shutdownSchemaSnapshot();
     } catch (e) {
@@ -283,6 +319,22 @@ async function shutdown(code = 0, { skipPool = false } = {}) {
         console.log('[db] Pool already closed');
       } else {
         console.error('[db] Error closing pool:', e);
+      }
+    }
+
+    // PRD v4.4.2: Close admin pool
+    try {
+      if (adminPool.ending || adminPool.ended) {
+        console.log('[db:admin] Pool already closing');
+      } else {
+        await adminPool.end();
+        console.log('[db:admin] Pool closed');
+      }
+    } catch (e) {
+      if (String(e?.message || e).includes('Called end on pool more than once')) {
+        console.log('[db:admin] Pool already closed');
+      } else {
+        console.error('[db:admin] Error closing pool:', e);
       }
     }
   }

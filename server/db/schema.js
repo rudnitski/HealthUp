@@ -14,6 +14,7 @@ const schemaStatements = [
     full_name_normalized TEXT UNIQUE,
     date_of_birth TEXT,
     gender TEXT,
+    user_id UUID,  -- Added in Part 1: Associated user account (NULL for shared/unassigned patients)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_report_at TIMESTAMPTZ
@@ -49,13 +50,6 @@ const schemaStatements = [
   `
   COMMENT ON TABLE patient_reports IS 'Lab report documents parsed from PDFs';
   `,
-  // v3.4: Add file storage columns for existing tables
-  `
-  ALTER TABLE patient_reports ADD COLUMN IF NOT EXISTS file_path TEXT;
-  `,
-  `
-  ALTER TABLE patient_reports ADD COLUMN IF NOT EXISTS file_mimetype TEXT;
-  `,
   `
   COMMENT ON COLUMN patient_reports.test_date_text IS 'Test date as text extracted from lab report (e.g., "2024-03-15"). May be NULL if not found. Parse to timestamp for time-series queries.';
   `,
@@ -64,11 +58,11 @@ const schemaStatements = [
   `,
   `
   COMMENT ON COLUMN patient_reports.file_path IS
-    'Relative path to original uploaded file in filesystem (e.g., patient_uuid/report_uuid.pdf). NULL for reports uploaded before v3.4.';
+    'Relative path to original uploaded file in filesystem (e.g., patient_uuid/report_uuid.pdf).';
   `,
   `
   COMMENT ON COLUMN patient_reports.file_mimetype IS
-    'MIME type of uploaded file (e.g., application/pdf, image/jpeg). Used for Content-Type header in retrieval API. NULL for legacy reports.';
+    'MIME type of uploaded file (e.g., application/pdf, image/jpeg). Used for Content-Type header in retrieval API.';
   `,
   `
   CREATE TABLE IF NOT EXISTS analytes (
@@ -137,10 +131,6 @@ const schemaStatements = [
     mapping_source TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
-  `,
-  // v3.8: Add specimen_type column for blood/urine filtering
-  `
-  ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS specimen_type TEXT;
   `,
   `
   COMMENT ON COLUMN lab_results.specimen_type IS 'Specimen type: blood or urine. Used to distinguish overlapping analytes (e.g., creatinine in blood vs urine).';
@@ -270,10 +260,6 @@ const schemaStatements = [
   `,
   `
   COMMENT ON TABLE sql_generation_logs IS 'LLM-based SQL generation audit trail';
-  `,
-  // v3.2: Add session_id to existing tables
-  `
-  ALTER TABLE sql_generation_logs ADD COLUMN IF NOT EXISTS session_id TEXT;
   `,
   // Gmail Integration Step 3: Attachment Provenance
   `
@@ -462,14 +448,22 @@ const schemaStatements = [
   `
   COMMENT ON TABLE audit_logs IS 'Security audit trail for user actions';
   `,
-  // Add user_id to patients table
   `
-  ALTER TABLE patients ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+  COMMENT ON COLUMN patients.user_id IS 'Associated user account. NULL for shared/unassigned patients.';
   `,
+  // Add foreign key constraint for patients.user_id (column defined in CREATE TABLE)
   `
-  COMMENT ON COLUMN patients.user_id IS 'Associated user account. NULL for unauthenticated/legacy patients.';
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'patients_user_id_fkey'
+    ) THEN
+      ALTER TABLE patients ADD CONSTRAINT patients_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+  END $$;
   `,
-  // RLS Policies (Part 1: created but not forced)
+  // RLS Policies
   `
   ALTER TABLE patients ENABLE ROW LEVEL SECURITY;
   `,
@@ -557,24 +551,6 @@ const schemaStatements = [
   `,
   `
   COMMENT ON POLICY session_isolation ON sessions IS 'Users can only access their own sessions. No NULL escape hatch (sessions always have user_id).';
-  `,
-  // User deletion guard (Part 1-3 only, remove in Part 4)
-  `
-  CREATE OR REPLACE FUNCTION prevent_user_deletion()
-  RETURNS TRIGGER AS $$
-  BEGIN
-    RAISE EXCEPTION 'User deletion is disabled during authentication migration (Parts 1-3). This restriction will be removed in Part 4.';
-  END;
-  $$ LANGUAGE plpgsql;
-  `,
-  `
-  DROP TRIGGER IF EXISTS block_user_deletion ON users;
-  `,
-  `
-  CREATE TRIGGER block_user_deletion
-    BEFORE DELETE ON users
-    FOR EACH ROW
-    EXECUTE FUNCTION prevent_user_deletion();
   `,
   // Indexes for auth tables
   `
@@ -728,9 +704,6 @@ async function resetDatabase() {
 
     // Drop views
     await client.query('DROP VIEW IF EXISTS v_measurements CASCADE');
-
-    // Drop functions (Part 1: user deletion guard)
-    await client.query('DROP FUNCTION IF EXISTS prevent_user_deletion() CASCADE');
 
     console.log('[db] All tables dropped successfully');
 
