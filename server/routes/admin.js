@@ -136,25 +136,36 @@ router.post('/approve-analyte', async (req, res) => {
 
     const newAnalyteId = newAnalyteRows[0].analyte_id;
 
-    // Insert aliases from parameter variations
+    // Insert aliases from parameter variations (batch INSERT to avoid N+1 queries)
     let aliasesCreated = 0;
     if (pending.parameter_variations && Array.isArray(pending.parameter_variations)) {
-      for (const variation of pending.parameter_variations) {
-        const lang = variation.lang || detectLanguage(variation.raw);
+      const values = [];
+      const placeholders = [];
 
-        await client.query(
-          `INSERT INTO analyte_aliases (analyte_id, alias, alias_display, lang, confidence, source)
-           VALUES ($1, $2, $3, $4, 1.0, 'evidence_auto')
-           ON CONFLICT (analyte_id, alias) DO NOTHING`,
-          [
-            newAnalyteId,
-            variation.normalized || variation.raw.toLowerCase(),
-            variation.raw,
-            lang
-          ]
+      pending.parameter_variations.forEach((variation, idx) => {
+        const lang = variation.lang || detectLanguage(variation.raw);
+        const baseIdx = idx * 4;  // 4 params per row
+
+        placeholders.push(
+          `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, 1.0, 'evidence_auto')`
         );
 
-        aliasesCreated++;
+        values.push(
+          newAnalyteId,
+          variation.normalized || variation.raw.toLowerCase(),
+          variation.raw,
+          lang
+        );
+      });
+
+      if (placeholders.length > 0) {
+        await client.query(
+          `INSERT INTO analyte_aliases (analyte_id, alias, alias_display, lang, confidence, source)
+           VALUES ${placeholders.join(', ')}
+           ON CONFLICT (analyte_id, alias) DO NOTHING`,
+          values
+        );
+        aliasesCreated = pending.parameter_variations.length;
       }
     }
 

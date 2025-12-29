@@ -625,20 +625,19 @@ async function processRow(row, hasPgTrgm, analyteSuggestions) {
     }
     // Case 4: Low-confidence fuzzy candidates (below 0.60) → pass to LLM for semantic check
     else if (fuzzyMatch.candidates && fuzzyMatch.candidates.length > 0) {
-      // Hydrate candidates with analyte details for LLM context
-      const hydratedCandidates = [];
-      for (const candidate of fuzzyMatch.candidates) {
-        const analyte = await getAnalyteById(candidate.analyte_id);
-        if (analyte) {
-          hydratedCandidates.push({
-            analyte_id: analyte.analyte_id,
-            code: analyte.code,
-            name: analyte.name,
-            alias: candidate.alias,
-            similarity: candidate.sim,
-          });
-        }
-      }
+      // Map 'sim' field to 'similarity' for hydration function
+      const candidatesForHydration = fuzzyMatch.candidates.map(c => ({
+        analyte_id: c.analyte_id,
+        alias: c.alias,
+        similarity: c.sim
+      }));
+
+      // Batch hydrate candidates using existing function (avoids N+1 queries)
+      const hydratedCandidates = await hydrateFuzzyCandidates(
+        candidatesForHydration,
+        'fuzzy'
+      );
+
       if (hydratedCandidates.length > 0) {
         result.tiers.fuzzy = {
           matched: false,
