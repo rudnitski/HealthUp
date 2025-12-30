@@ -52,12 +52,13 @@ function isValidAttachment(filename, mimeType, allowedMimes) {
 /**
  * Start batch ingestion of selected attachments
  * @param {Array} selections - Array of { messageId, attachmentId, filename, mimeType, size }
+ * @param {string} userId - PRD v4.4.3: User ID for RLS context and ownership tracking
  * @returns {Object} - { batchId, count }
  */
-async function startBatchIngestion(selections) {
+async function startBatchIngestion(selections, userId) {
   const batchId = `batch_${Date.now()}`; // e.g., "batch_1730900000000"
 
-  logger.info(`[gmailAttachmentIngest] Starting batch ${batchId} with ${selections.length} attachments`);
+  logger.info(`[gmailAttachmentIngest] Starting batch ${batchId} with ${selections.length} attachments for user ${userId}`);
 
   // Ensure Gmail tokens are fresh (triggers auto-refresh if needed)
   // This is critical for long-running workflows where user may return hours later
@@ -83,10 +84,12 @@ async function startBatchIngestion(selections) {
   });
 
   // Initialize tracking for each attachment
+  // PRD v4.4.3: Include userId for ownership tracking
   validSelections.forEach(sel => {
     const trackingId = `${sel.messageId}_${sel.attachmentId}`;
     attachmentJobs.set(trackingId, {
       batchId,
+      userId, // PRD v4.4.3: Track user ownership
       messageId: sel.messageId,
       attachmentId: sel.attachmentId,
       filename: sel.filename,
@@ -104,7 +107,8 @@ async function startBatchIngestion(selections) {
   });
 
   // Start processing with controlled concurrency
-  processAttachmentsWithConcurrency(validSelections, batchId);
+  // PRD v4.4.3: Pass userId for RLS context
+  processAttachmentsWithConcurrency(validSelections, batchId, userId);
 
   return { batchId, count: validSelections.length };
 }
@@ -112,13 +116,15 @@ async function startBatchIngestion(selections) {
 /**
  * Process attachments with concurrency
  * Note: Gmail API rate limiting now handled inside downloadAttachmentWithRetry (wraps only the API call)
+ * PRD v4.4.3: Added userId for RLS context
  */
-async function processAttachmentsWithConcurrency(selections, batchId) {
+async function processAttachmentsWithConcurrency(selections, batchId, userId) {
   logger.info(`[gmailAttachmentIngest] Processing batch ${batchId} (${selections.length} attachments)`);
 
   // No limiter wrapper here - each ingestAttachment will rate-limit only its Gmail API call
+  // PRD v4.4.3: Pass userId for RLS context
   const promises = selections.map(sel =>
-    ingestAttachment(sel, batchId)
+    ingestAttachment(sel, batchId, userId)
   );
 
   await Promise.allSettled(promises);
@@ -127,8 +133,9 @@ async function processAttachmentsWithConcurrency(selections, batchId) {
 
 /**
  * Ingest a single attachment through the full pipeline
+ * PRD v4.4.3: Added userId for RLS context
  */
-async function ingestAttachment(selection, batchId) {
+async function ingestAttachment(selection, batchId, userId) {
   const trackingId = `${selection.messageId}_${selection.attachmentId}`;
   const tracking = attachmentJobs.get(trackingId);
 
@@ -170,8 +177,10 @@ async function ingestAttachment(selection, batchId) {
     }
 
     // Step 4: Create job in jobManager for labReportProcessor
+    // PRD v4.4.3: Create job with user ownership
     updateStatus(trackingId, 'processing', 40, 'Starting OCR extraction...');
-    const jobId = jobManager.createJob('gmail-attachment', {
+    const jobId = jobManager.createJob(userId, {
+      type: 'gmail-attachment',
       filename: selection.filename,
       messageId: selection.messageId,
       attachmentId: selection.attachmentId
@@ -196,12 +205,14 @@ async function ingestAttachment(selection, batchId) {
     }
 
     // Step 5: Process via labReportProcessor
+    // PRD v4.4.3: Pass userId for RLS context
     await processLabReport({
       jobId,
       fileBuffer: buffer,
       mimetype: normalizedMimeType,
       filename: selection.filename,
-      fileSize: buffer.length
+      fileSize: buffer.length,
+      userId
     });
 
     // Step 6: Get result from jobManager
@@ -418,10 +429,14 @@ function updateStatus(trackingId, status, progress, progressMessage) {
 
 /**
  * Get current status of all attachments in a batch
+ * PRD v4.4.3: Returns userId for ownership validation
  */
 function getBatchSummary(batchId) {
   const attachments = Array.from(attachmentJobs.values())
     .filter(job => job.batchId === batchId);
+
+  // PRD v4.4.3: Get userId from first attachment (all attachments in batch have same userId)
+  const batchUserId = attachments.length > 0 ? attachments[0].userId : null;
 
   // Terminal states: attachment processing is complete (successfully or not)
   const TERMINAL_STATES = ['completed', 'updated', 'failed', 'duplicate'];
@@ -439,6 +454,7 @@ function getBatchSummary(batchId) {
     : 'processing';
 
   return {
+    userId: batchUserId, // PRD v4.4.3: For ownership validation
     attachments: attachments.map(a => ({
       messageId: a.messageId,
       attachmentId: a.attachmentId,

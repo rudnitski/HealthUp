@@ -1,6 +1,7 @@
 import express from 'express';
-import { createJob, getJobStatus, createBatch, getBatchStatus } from '../utils/jobManager.js';
+import { createJob, getJob, getJobStatus, createBatch, getBatch, getBatchStatus } from '../utils/jobManager.js';
 import { processLabReport } from '../services/labReportProcessor.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -17,7 +18,8 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 // Job polling endpoint - Get job status
-router.get('/jobs/:jobId', (req, res) => {
+// PRD v4.4.3: Add requireAuth and ownership check
+router.get('/jobs/:jobId', requireAuth, (req, res) => {
   const { jobId } = req.params;
 
   console.log(`[analyzeLabReport] Job status requested: ${jobId}`);
@@ -28,11 +30,19 @@ router.get('/jobs/:jobId', (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
 
+  // PRD v4.4.3: Verify job ownership
+  // Return 404 (not 403) to prevent job enumeration attacks
+  const job = getJob(jobId);
+  if (job && job.userId !== req.user.id) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
   return res.status(200).json(jobStatus);
 });
 
 // Main upload endpoint - Create async job
-router.post('/', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.post('/', requireAuth, async (req, res) => {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
   console.log(`[analyzeLabReport:${requestId}] Request started`);
@@ -73,15 +83,15 @@ router.post('/', async (req, res) => {
     return res.status(413).json({ error: 'File is too large. Maximum size is 10MB.' });
   }
 
-  // Create job
-  const jobId = createJob('anonymous', {
+  // PRD v4.4.3: Create job with authenticated user ID
+  const jobId = createJob(req.user.id, {
     filename: name,
     mimetype,
     size,
     requestId
   });
 
-  console.log(`[analyzeLabReport:${requestId}] Job created: ${jobId}`);
+  console.log(`[analyzeLabReport:${requestId}] Job created: ${jobId} for user: ${req.user.id}`);
 
   // Start processing in background (don't await)
   setImmediate(async () => {
@@ -91,7 +101,8 @@ router.post('/', async (req, res) => {
         fileBuffer,
         mimetype,
         filename: name,
-        fileSize: size
+        fileSize: size,
+        userId: req.user.id, // PRD v4.4.3: Pass userId for RLS context
       });
     } catch (error) {
       console.error(`[analyzeLabReport:${requestId}] Background processing failed:`, {
@@ -113,8 +124,9 @@ router.post('/', async (req, res) => {
 /**
  * Batch upload endpoint - Process multiple files
  * POST /api/analyze-labs/batch
+ * PRD v4.4.3: Add requireAuth for user-scoped data
  */
-router.post('/batch', async (req, res) => {
+router.post('/batch', requireAuth, async (req, res) => {
   const requestId = `batch_req_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
   console.log(`[analyzeLabReportBatch:${requestId}] Request started`);
@@ -181,14 +193,14 @@ router.post('/batch', async (req, res) => {
     });
   }
 
-  // Create batch
-  const { batchId, jobs, files: filesWithJobIds } = createBatch('anonymous', filesArray);
+  // PRD v4.4.3: Create batch with authenticated user ID
+  const { batchId, jobs, files: filesWithJobIds } = createBatch(req.user.id, filesArray);
 
-  console.log(`[analyzeLabReportBatch:${requestId}] Batch created: ${batchId} with ${jobs.length} jobs`);
+  console.log(`[analyzeLabReportBatch:${requestId}] Batch created: ${batchId} with ${jobs.length} jobs for user: ${req.user.id}`);
 
   // Queue processing in background (don't await!)
   setImmediate(async () => {
-    await processBatchFiles(filesWithJobIds, batchId, requestId);
+    await processBatchFiles(filesWithJobIds, batchId, requestId, req.user.id);
   });
 
   // Return 202 immediately
@@ -202,8 +214,9 @@ router.post('/batch', async (req, res) => {
 
 /**
  * Background worker function to process batch files with throttled concurrency
+ * PRD v4.4.3: Added userId parameter for RLS context
  */
-async function processBatchFiles(files, batchId, requestId) {
+async function processBatchFiles(files, batchId, requestId, userId) {
   const CONCURRENCY = 3; // Process 3 files at a time
 
   console.log(`[analyzeLabReportBatch:${requestId}] Starting batch processing for ${files.length} files (concurrency: ${CONCURRENCY})`);
@@ -224,7 +237,8 @@ async function processBatchFiles(files, batchId, requestId) {
         fileBuffer,
         mimetype,
         filename: name,
-        fileSize: size
+        fileSize: size,
+        userId, // PRD v4.4.3: Pass userId for RLS context
       })
         .then(() => {
           console.log(`[analyzeLabReportBatch:${requestId}] Job ${jobId} completed for file: ${name}`);
@@ -249,8 +263,9 @@ async function processBatchFiles(files, batchId, requestId) {
 /**
  * Batch status endpoint - Get batch progress
  * GET /api/analyze-labs/batches/:batchId
+ * PRD v4.4.3: Add requireAuth and ownership check
  */
-router.get('/batches/:batchId', (req, res) => {
+router.get('/batches/:batchId', requireAuth, (req, res) => {
   const { batchId } = req.params;
 
   console.log(`[analyzeLabReportBatch] Batch status requested: ${batchId}`);
@@ -258,6 +273,13 @@ router.get('/batches/:batchId', (req, res) => {
   const batchStatus = getBatchStatus(batchId);
 
   if (!batchStatus) {
+    return res.status(404).json({ error: 'Batch not found' });
+  }
+
+  // PRD v4.4.3: Verify batch ownership
+  // Return 404 (not 403) to prevent batch enumeration attacks
+  const batch = getBatch(batchId);
+  if (batch && batch.userId !== req.user.id) {
     return res.status(404).json({ error: 'Batch not found' });
   }
 

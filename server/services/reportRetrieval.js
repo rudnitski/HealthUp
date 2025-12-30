@@ -1,4 +1,4 @@
-import { pool } from '../db/index.js';
+import { pool, withUserTransaction } from '../db/index.js';
 
 const toIsoString = (value) => {
   if (!value) {
@@ -31,13 +31,20 @@ const coerceOffset = (value) => {
   return Math.max(Math.trunc(numeric), 0);
 };
 
-async function getPatientReports(patientId, options = {}) {
+/**
+ * Get patient with their reports
+ * PRD v4.4.3: Added userId parameter for RLS context
+ * @param {string} patientId - Patient UUID
+ * @param {object} options - Pagination options (limit, offset)
+ * @param {string} userId - User ID for RLS context
+ */
+async function getPatientReports(patientId, options = {}, userId) {
   const limit = coerceLimit(options.limit);
   const offset = coerceOffset(options.offset);
 
-  const client = await pool.connect();
-
-  try {
+  // PRD v4.4.3: Use withUserTransaction for multi-query flow with RLS context
+  return await withUserTransaction(userId, async (client) => {
+    // Query 1: Check patient exists and belongs to user (RLS auto-filters)
     const patientResult = await client.query(
       `
       SELECT
@@ -55,9 +62,10 @@ async function getPatientReports(patientId, options = {}) {
     );
 
     if (patientResult.rowCount === 0) {
-      return null;
+      return null; // Patient doesn't exist OR doesn't belong to user
     }
 
+    // Query 2: Fetch reports (RLS auto-filters)
     const reportsResult = await client.query(
       `
       SELECT
@@ -83,6 +91,7 @@ async function getPatientReports(patientId, options = {}) {
       [patientId, limit, offset],
     );
 
+    // Query 3: Count total reports
     const countResult = await client.query(
       'SELECT COUNT(*)::INT AS total FROM patient_reports WHERE patient_id = $1',
       [patientId],
@@ -122,9 +131,7 @@ async function getPatientReports(patientId, options = {}) {
         offset,
       },
     };
-  } finally {
-    client.release();
-  }
+  });
 }
 
 const toNumber = (value) => {
@@ -157,10 +164,15 @@ const normalizeMissingData = (value) => {
   return [];
 };
 
-async function getReportDetail(reportId) {
-  const client = await pool.connect();
-
-  try {
+/**
+ * Get detailed report with lab results
+ * PRD v4.4.3: Added userId parameter for RLS context
+ * @param {string} reportId - Report UUID
+ * @param {string} userId - User ID for RLS context
+ */
+async function getReportDetail(reportId, userId) {
+  // PRD v4.4.3: Use withUserTransaction for multi-query flow with RLS context
+  return await withUserTransaction(userId, async (client) => {
     const reportResult = await client.query(
       `
       SELECT
@@ -196,7 +208,7 @@ async function getReportDetail(reportId) {
     );
 
     if (reportResult.rowCount === 0) {
-      return null;
+      return null; // Report doesn't exist OR doesn't belong to user
     }
 
     const details = reportResult.rows[0];
@@ -260,9 +272,7 @@ async function getReportDetail(reportId) {
         specimen_type: row.specimen_type,
       })),
     };
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export {

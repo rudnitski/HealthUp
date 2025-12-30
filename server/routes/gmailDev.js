@@ -20,6 +20,7 @@ import { classifyEmails } from '../services/emailClassifier.js';
 import { classifyEmailBodies } from '../services/bodyClassifier.js';
 import * as gmailAttachmentIngest from '../services/gmailAttachmentIngest.js';
 import logger from '../utils/logger.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -207,8 +208,9 @@ router.use(featureFlagGuard);
 /**
  * GET /api/dev-gmail/auth-url
  * Generate OAuth authorization URL
+ * PRD v4.4.3: Requires authentication
  */
-router.get('/auth-url', async (req, res) => {
+router.get('/auth-url', requireAuth, async (req, res) => {
   try {
     logger.info('[gmailDev] Auth URL requested');
 
@@ -338,8 +340,9 @@ router.get('/oauth-callback', async (req, res) => {
 /**
  * POST /api/dev-gmail/fetch
  * Create job to fetch and classify emails (Step-1 → Step-2 sequential)
+ * PRD v4.4.3: Requires authentication
  */
-router.post('/fetch', async (req, res) => {
+router.post('/fetch', requireAuth, async (req, res) => {
   try {
     logger.info('[gmailDev] Fetch request received (Step-1 → Step-2 sequential)');
 
@@ -353,7 +356,9 @@ router.post('/fetch', async (req, res) => {
       });
     }
 
-    const jobId = createJob('dev-gmail-step1-step2', {
+    // PRD v4.4.3: Create job with user ownership
+    const jobId = createJob(req.user.id, {
+      type: 'dev-gmail-step1-step2',
       emailCount: parseInt(process.env.GMAIL_MAX_EMAILS) || 200
     });
 
@@ -715,8 +720,9 @@ router.post('/fetch', async (req, res) => {
  * GET /api/dev-gmail/jobs/summary
  * Get batch progress for Step 3 attachment ingestion
  * NOTE: This route must come BEFORE /jobs/:jobId to avoid matching "summary" as a jobId
+ * PRD v4.4.3: Requires authentication + ownership check
  */
-router.get('/jobs/summary', async (req, res) => {
+router.get('/jobs/summary', requireAuth, async (req, res) => {
   try {
     const { batchId } = req.query;
 
@@ -730,6 +736,14 @@ router.get('/jobs/summary', async (req, res) => {
     logger.info(`[gmailDev] Batch summary requested: ${batchId}`);
 
     const summary = gmailAttachmentIngest.getBatchSummary(batchId);
+
+    // PRD v4.4.3: Verify batch ownership (return 404 to prevent enumeration)
+    if (summary && summary.userId && summary.userId !== req.user.id) {
+      return res.status(404).json({
+        success: false,
+        error: 'Batch not found'
+      });
+    }
 
     // Also update progress from jobManager for attachments currently being processed
     for (const attachment of summary.attachments) {
@@ -756,18 +770,25 @@ router.get('/jobs/summary', async (req, res) => {
 /**
  * GET /api/dev-gmail/jobs/:jobId
  * Get job status and results
+ * PRD v4.4.3: Requires authentication + ownership check
  */
-router.get('/jobs/:jobId', (req, res) => {
+router.get('/jobs/:jobId', requireAuth, (req, res) => {
   const { jobId } = req.params;
 
   // Removed noisy polling log - frontend polls every 2 seconds
-  const jobStatus = getJobStatus(jobId);
+  const job = getJob(jobId);
 
-  if (!jobStatus) {
+  if (!job) {
     logger.warn(`[gmailDev] Job not found: ${jobId}`);
     return res.status(404).json({ error: 'Job not found' });
   }
 
+  // PRD v4.4.3: Verify job ownership (return 404 to prevent enumeration)
+  if (job.userId !== req.user.id) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  const jobStatus = getJobStatus(jobId);
   return res.status(200).json(jobStatus);
 });
 
@@ -801,8 +822,9 @@ function isValidAttachment(filename, mimeType, allowedMimes) {
 /**
  * POST /api/dev-gmail/ingest
  * Start batch ingestion of selected attachments (Step 3)
+ * PRD v4.4.3: Requires authentication + threads userId to processing pipeline
  */
-router.post('/ingest', async (req, res) => {
+router.post('/ingest', requireAuth, async (req, res) => {
   if (!process.env.GMAIL_ATTACHMENT_INGEST_ENABLED) {
     return res.status(403).json({
       success: false,
@@ -813,10 +835,10 @@ router.post('/ingest', async (req, res) => {
   try {
     logger.info('[gmailDev] Attachment ingestion requested');
 
-    // Check authentication status
+    // Check Gmail OAuth authentication status (separate from app auth)
     const authenticated = await isAuthenticated();
     if (!authenticated) {
-      logger.warn('[gmailDev] Ingest failed - not authenticated');
+      logger.warn('[gmailDev] Ingest failed - Gmail not authenticated');
       return res.status(401).json({
         success: false,
         error: 'Gmail authentication required'
@@ -871,10 +893,10 @@ router.post('/ingest', async (req, res) => {
       }
     }
 
-    // Start batch ingestion
-    const result = await gmailAttachmentIngest.startBatchIngestion(selections);
+    // PRD v4.4.3: Start batch ingestion with user ownership
+    const result = await gmailAttachmentIngest.startBatchIngestion(selections, req.user.id);
 
-    logger.info(`[gmailDev] Batch ingestion started: ${result.batchId} (${result.count} attachments)`);
+    logger.info(`[gmailDev] Batch ingestion started: ${result.batchId} (${result.count} attachments) for user ${req.user.id}`);
 
     res.json({
       success: true,

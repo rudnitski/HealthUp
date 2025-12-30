@@ -1,7 +1,8 @@
 import express from 'express';
 import { getPatientReports, getReportDetail } from '../services/reportRetrieval.js';
-import { pool } from '../db/index.js';
+import { pool, queryWithUser, withUserTransaction } from '../db/index.js';
 import { readFile } from '../services/fileStorage.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -75,7 +76,8 @@ function buildContentDispositionHeader(filename, disposition = 'inline') {
 }
 
 
-router.get('/patients/:patientId/reports', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.get('/patients/:patientId/reports', requireAuth, async (req, res) => {
   const { patientId } = req.params;
 
   if (!isUuid(patientId)) {
@@ -83,10 +85,11 @@ router.get('/patients/:patientId/reports', async (req, res) => {
   }
 
   try {
+    // PRD v4.4.3: Pass userId for RLS context
     const result = await getPatientReports(patientId, {
       limit: req.query.limit,
       offset: req.query.offset,
-    });
+    }, req.user.id);
 
     if (!result) {
       return res.status(404).json({ error: 'Patient not found' });
@@ -102,7 +105,8 @@ router.get('/patients/:patientId/reports', async (req, res) => {
 
 // GET /api/reports - List all reports with optional filters
 // Query params: ?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD&patientId=uuid
-router.get('/reports', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.get('/reports', requireAuth, async (req, res) => {
   const { fromDate, toDate, patientId } = req.query;
 
   // Validate date parameters (must be valid ISO format YYYY-MM-DD)
@@ -179,7 +183,8 @@ router.get('/reports', async (req, res) => {
         pr.id DESC
     `;
 
-    const result = await pool.query(query, params);
+    // PRD v4.4.3: Use queryWithUser for RLS-scoped access
+    const result = await queryWithUser(query, params, req.user.id);
 
     res.json({
       reports: result.rows,
@@ -194,7 +199,8 @@ router.get('/reports', async (req, res) => {
 
 // GET /api/reports/patients - List all patients for filter dropdown or chat selector
 // PRD v4.3: Extended with ?sort=recent parameter and computed display_name field
-router.get('/reports/patients', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.get('/reports/patients', requireAuth, async (req, res) => {
   try {
     const { sort } = req.query;
 
@@ -208,18 +214,19 @@ router.get('/reports/patients', async (req, res) => {
       orderBy = 'full_name ASC NULLS LAST, created_at DESC';
     }
 
-    const result = await pool.query(`
-      SELECT 
+    // PRD v4.4.3: Use queryWithUser for RLS-scoped access
+    const result = await queryWithUser(`
+      SELECT
         id,
         full_name,
-        CASE 
+        CASE
           WHEN full_name IS NOT NULL AND full_name != '' THEN full_name
           ELSE 'Patient (' || SUBSTRING(id::text FROM 1 FOR 6) || '...)'
         END AS display_name,
         last_seen_report_at
       FROM patients
       ORDER BY ${orderBy}
-    `);
+    `, [], req.user.id);
 
     res.json({ patients: result.rows });
   } catch (error) {
@@ -229,7 +236,8 @@ router.get('/reports/patients', async (req, res) => {
   }
 });
 
-router.get('/reports/:reportId', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.get('/reports/:reportId', requireAuth, async (req, res) => {
   const { reportId } = req.params;
 
   if (!isUuid(reportId)) {
@@ -237,7 +245,8 @@ router.get('/reports/:reportId', async (req, res) => {
   }
 
   try {
-    const result = await getReportDetail(reportId);
+    // PRD v4.4.3: Pass userId for RLS context
+    const result = await getReportDetail(reportId, req.user.id);
 
     if (!result) {
       return res.status(404).json({ error: 'Report not found' });
@@ -251,22 +260,22 @@ router.get('/reports/:reportId', async (req, res) => {
   }
 });
 
-router.get('/reports/:reportId/original-file', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.get('/reports/:reportId/original-file', requireAuth, async (req, res) => {
   const { reportId } = req.params;
 
   if (!isUuid(reportId)) {
     return res.status(400).json({ error: 'Invalid report id' });
   }
 
-  // Phase 1: No auth checks (single-user development mode)
-  // TODO: Add authentication + authorization before production deployment
-
   try {
-    const result = await pool.query(
+    // PRD v4.4.3: Use queryWithUser for RLS-scoped access
+    const result = await queryWithUser(
       `SELECT file_path, source_filename, file_mimetype, recognized_at
        FROM patient_reports
        WHERE id = $1`,
-      [reportId]
+      [reportId],
+      req.user.id
     );
 
     if (result.rows.length === 0) {

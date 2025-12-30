@@ -82,6 +82,10 @@ async function upsertPatient(client, payload) {
   // PRD v4.3: last_seen_report_at = NOW() (ingestion time)
   // This represents "when the system last processed a report for this patient"
   // Updated on both INSERT and ON CONFLICT (even for duplicate reports)
+  //
+  // PRD v4.4.3: user_id is set from RLS context (app.current_user_id session variable)
+  // This ensures patients are always associated with the authenticated user who uploaded the report.
+  // Conflict target changed to composite (user_id, full_name_normalized) for user-scoped uniqueness.
   const result = await client.query(
     `
     INSERT INTO patients (
@@ -90,12 +94,13 @@ async function upsertPatient(client, payload) {
       full_name_normalized,
       date_of_birth,
       gender,
+      user_id,
       created_at,
       updated_at,
       last_seen_report_at
     )
-    VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NOW())
-    ON CONFLICT (full_name_normalized) DO UPDATE
+    VALUES ($1, $2, $3, $4, $5, current_setting('app.current_user_id', true)::uuid, NOW(), NOW(), NOW())
+    ON CONFLICT (user_id, full_name_normalized) DO UPDATE
       SET
         full_name = COALESCE(EXCLUDED.full_name, patients.full_name),
         date_of_birth = COALESCE(EXCLUDED.date_of_birth, patients.date_of_birth),
@@ -182,9 +187,15 @@ async function persistLabReport({
   parserVersion,
   processedAt,
   coreResult,
+  userId, // PRD v4.4.3: Required for RLS context
 }) {
   if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
     throw new Error('File buffer is required for persistence');
+  }
+
+  // PRD v4.4.3: userId is required for RLS-scoped data access
+  if (!userId) {
+    throw new Error('userId is required for persistence (RLS context)');
   }
 
   const checksum = createHash('sha256').update(fileBuffer).digest('hex');
@@ -209,6 +220,13 @@ async function persistLabReport({
 
   try {
     await client.query('BEGIN');
+
+    // PRD v4.4.3: Set RLS context for entire transaction
+    // This enables user-scoped data isolation for patients, reports, and lab_results
+    await client.query(
+      "SELECT set_config('app.current_user_id', $1, true)",
+      [userId]
+    );
 
     patientId = await upsertPatient(client, {
       fullName: patientName,

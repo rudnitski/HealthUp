@@ -20,8 +20,9 @@
 import express from 'express';
 import OpenAI from 'openai';
 import crypto from 'crypto';
-import { pool } from '../db/index.js';
+import { pool, queryWithUser } from '../db/index.js';
 import sessionManager from '../utils/sessionManager.js';
+import { requireAuth } from '../middleware/auth.js';
 import * as agenticCore from '../services/agenticCore.js';
 import { TOOL_DEFINITIONS } from '../services/agenticTools.js';
 import { getSchemaSnapshot } from '../services/schemaSnapshot.js';
@@ -204,8 +205,9 @@ function streamEvent(sessionId, data) {
 /**
  * POST /api/chat/sessions
  * PRD v4.3: Create session with selected patient ID
+ * PRD v4.4.3: Add requireAuth and store userId for session ownership
  */
-router.post('/sessions', async (req, res) => {
+router.post('/sessions', requireAuth, async (req, res) => {
   const { selectedPatientId } = req.body;
 
   // Validate patient ID format if provided
@@ -218,9 +220,13 @@ router.post('/sessions', async (req, res) => {
       });
     }
 
-    // Verify patient exists in database
+    // PRD v4.4.3: Verify patient exists AND belongs to user (RLS auto-filters)
     try {
-      const result = await pool.query('SELECT id FROM patients WHERE id = $1', [selectedPatientId]);
+      const result = await queryWithUser(
+        'SELECT id FROM patients WHERE id = $1',
+        [selectedPatientId],
+        req.user.id
+      );
       if (result.rows.length === 0) {
         return res.status(404).json({
           error: 'Patient not found',
@@ -239,6 +245,9 @@ router.post('/sessions', async (req, res) => {
   // Create session
   const session = sessionManager.createSession();
 
+  // PRD v4.4.3: Store user ID for session ownership validation
+  session.userId = req.user.id;
+
   // Set selected patient
   if (selectedPatientId) {
     session.selectedPatientId = selectedPatientId;
@@ -246,6 +255,7 @@ router.post('/sessions', async (req, res) => {
 
   logger.info('[chatStream] Session created:', {
     session_id: session.id,
+    user_id: req.user.id,
     selected_patient_id: selectedPatientId || null
   });
 
@@ -258,14 +268,20 @@ router.post('/sessions', async (req, res) => {
 /**
  * HEAD /api/chat/sessions/:sessionId/validate
  * PRD v4.3: Preflight validation before SSE connection
+ * PRD v4.4.3: Add requireAuth and session ownership check
  * Uses peekSession() to avoid extending TTL
  */
-router.head('/sessions/:sessionId/validate', (req, res) => {
+router.head('/sessions/:sessionId/validate', requireAuth, (req, res) => {
   const { sessionId } = req.params;
 
   const session = sessionManager.peekSession(sessionId);
   if (!session) {
     return res.status(404).end();
+  }
+
+  // PRD v4.4.3: Verify session ownership
+  if (session.userId !== req.user.id) {
+    return res.status(404).end(); // 404 to prevent enumeration
   }
 
   res.status(200).end();
@@ -275,8 +291,9 @@ router.head('/sessions/:sessionId/validate', (req, res) => {
  * GET /api/chat/stream
  * Open SSE connection to existing session
  * PRD v4.3: Requires sessionId query parameter (session created via POST /sessions)
+ * PRD v4.4.3: Add requireAuth and session ownership check
  */
-router.get('/stream', (req, res) => {
+router.get('/stream', requireAuth, (req, res) => {
   const { sessionId } = req.query;
 
   // Validate sessionId parameter
@@ -290,6 +307,14 @@ router.get('/stream', (req, res) => {
   // Get existing session
   const session = sessionManager.getSession(sessionId);
   if (!session) {
+    return res.status(404).json({
+      error: 'Session not found',
+      code: 'SESSION_NOT_FOUND'
+    });
+  }
+
+  // PRD v4.4.3: Verify session ownership
+  if (session.userId !== req.user.id) {
     return res.status(404).json({
       error: 'Session not found',
       code: 'SESSION_NOT_FOUND'
@@ -345,8 +370,9 @@ router.get('/stream', (req, res) => {
 /**
  * POST /api/chat/messages
  * Submit user message to session
+ * PRD v4.4.3: Add requireAuth and session ownership check
  */
-router.post('/messages', async (req, res) => {
+router.post('/messages', requireAuth, async (req, res) => {
   const { sessionId, message } = req.body;
 
   if (!sessionId || !message) {
@@ -359,6 +385,14 @@ router.post('/messages', async (req, res) => {
   // Get session
   const session = sessionManager.getSession(sessionId);
   if (!session) {
+    return res.status(404).json({
+      error: 'Session not found',
+      code: 'SESSION_NOT_FOUND'
+    });
+  }
+
+  // PRD v4.4.3: Verify session ownership
+  if (session.userId !== req.user.id) {
     return res.status(404).json({
       error: 'Session not found',
       code: 'SESSION_NOT_FOUND'
@@ -386,9 +420,21 @@ router.post('/messages', async (req, res) => {
  * DELETE /api/chat/sessions/:sessionId
  * Manually clear conversation
  * PRD v4.3: Idempotent - returns 200 OK even if session doesn't exist
+ * PRD v4.4.3: Add requireAuth and session ownership check
  */
-router.delete('/sessions/:sessionId', (req, res) => {
+router.delete('/sessions/:sessionId', requireAuth, (req, res) => {
   const { sessionId } = req.params;
+
+  // PRD v4.4.3: Verify session ownership before deletion
+  const session = sessionManager.peekSession(sessionId);
+  if (session && session.userId !== req.user.id) {
+    // Session exists but doesn't belong to user - return idempotent success
+    // This prevents enumeration while maintaining idempotent behavior
+    return res.json({
+      ok: true,
+      message: 'Session not found (already cleared)'
+    });
+  }
 
   // PRD v4.3: Also clean up SSE connection
   closeSSEConnection(sessionId);
@@ -414,15 +460,22 @@ async function processMessage(sessionId, userMessage) {
 
   try {
     // PRD v4.3: Recompute patient count per-message (NOT cached in session)
+    // PRD v4.4.3: Use queryWithUser for RLS-scoped count
     // Security: Prevents data leak if patient is added after session creation
-    const countResult = await pool.query('SELECT COUNT(*) as count FROM patients');
+    const countResult = await queryWithUser(
+      'SELECT COUNT(*) as count FROM patients',
+      [],
+      session.userId
+    );
     const currentPatientCount = parseInt(countResult.rows[0].count, 10);
 
     // PRD v4.3: Verify selected patient still exists (409 handling)
+    // PRD v4.4.3: Use queryWithUser for RLS-scoped verification
     if (session.selectedPatientId) {
-      const patientExists = await pool.query(
+      const patientExists = await queryWithUser(
         'SELECT 1 FROM patients WHERE id = $1',
-        [session.selectedPatientId]
+        [session.selectedPatientId],
+        session.userId
       );
 
       if (patientExists.rows.length === 0) {
@@ -522,6 +575,7 @@ async function processMessage(sessionId, userMessage) {
 /**
  * Initialize system prompt with schema and patient context
  * PRD v4.3: Uses chat mode with pre-selected patient ID
+ * PRD v4.4.3: Pass userId for RLS context
  */
 async function initializeSystemPrompt(session) {
   // Get schema snapshot and format it
@@ -529,11 +583,13 @@ async function initializeSystemPrompt(session) {
   const schemaContext = buildSchemaSection(manifest, ''); // Empty question = include all tables
 
   // PRD v4.3: Use chat mode with selectedPatientId (set by POST /api/chat/sessions)
+  // PRD v4.4.3: Pass userId for RLS context
   const { prompt } = await agenticCore.buildSystemPrompt(
     schemaContext,
     20, // maxIterations
     'chat', // mode
-    session.selectedPatientId // Pre-selected patient ID (can be null for schema-only queries)
+    session.selectedPatientId, // Pre-selected patient ID (can be null for schema-only queries)
+    session.userId // PRD v4.4.3: User ID for RLS context
   );
 
   // Add system message
@@ -818,11 +874,13 @@ async function executeToolCalls(session, toolCalls, patientCount = 0) {
 
     // Execute other tools (fuzzy search, exploratory SQL)
     try {
+      // PRD v4.4.3: Pass userId for RLS context
       const result = await agenticCore.executeToolCall(toolName, params, {
         schemaSnapshotId: null, // TODO: track schema snapshot in session
         // PRD v4.3: Pass patient context for scope enforcement (patientCount from parameter, not session)
         selectedPatientId: session.selectedPatientId || null,
-        patientCount: patientCount
+        patientCount: patientCount,
+        userId: session.userId // PRD v4.4.3: User ID for RLS context
       });
 
       const toolDuration = Date.now() - toolStartTime;

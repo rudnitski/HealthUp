@@ -139,18 +139,19 @@ async function validateAdminPool() {
 }
 
 /**
- * queryWithUser - Execute query with RLS context set
+ * queryWithUser - Execute single query with RLS context set
  *
  * @param {string} text - SQL query
  * @param {array} params - Query parameters
  * @param {string} userId - User ID for RLS context
+ * @param {number|null} statementTimeoutMs - Optional statement timeout in milliseconds
  * @returns {Promise<QueryResult>}
  *
  * IMPORTANT: Wraps set_config + query in explicit transaction.
  * Without BEGIN/COMMIT, set_config(..., true) creates one implicit transaction,
  * then the data query creates a separate transaction where the config is lost.
  */
-async function queryWithUser(text, params, userId) {
+async function queryWithUser(text, params, userId, statementTimeoutMs = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -161,8 +162,58 @@ async function queryWithUser(text, params, userId) {
       [userId]
     );
 
+    // Set statement timeout if provided (for agentic SQL queries)
+    // NOTE: SET LOCAL cannot use $1 bind parameter - PostgreSQL requires literal values
+    // We validate as integer to prevent SQL injection
+    if (statementTimeoutMs !== null && statementTimeoutMs > 0) {
+      const timeoutValue = parseInt(statementTimeoutMs, 10);
+      if (!Number.isFinite(timeoutValue) || timeoutValue <= 0) {
+        throw new Error('statementTimeoutMs must be a positive integer');
+      }
+      await client.query(`SET LOCAL statement_timeout = ${timeoutValue}`);
+    }
+
     // Execute query (RLS policies automatically filter based on app.current_user_id)
     const result = await client.query(text, params);
+
+    await client.query('COMMIT');
+    return result;
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * withUserTransaction - Execute multiple queries with RLS context in single transaction
+ *
+ * @param {string} userId - User ID for RLS context
+ * @param {Function} callback - async (client) => { ... } function
+ * @returns {Promise<any>} Result from callback
+ *
+ * Use this for multi-query operations like:
+ * - Report retrieval (patient + reports in one transaction)
+ * - Any business logic requiring multiple queries
+ * - Operations needing atomicity across queries
+ *
+ * IMPORTANT: Do NOT nest these helpers. If already inside withUserTransaction(),
+ * use client.query() directly (RLS context is already set).
+ */
+async function withUserTransaction(userId, callback) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Set RLS context (local to this transaction)
+    await client.query(
+      "SELECT set_config('app.current_user_id', $1, true)",
+      [userId]
+    );
+
+    const result = await callback(client);
 
     await client.query('COMMIT');
     return result;
@@ -186,4 +237,4 @@ async function queryAsAdmin(text, params) {
   return adminPool.query(text, params);
 }
 
-export { pool, adminPool, healthcheck, validateAdminPool, queryWithUser, queryAsAdmin };
+export { pool, adminPool, healthcheck, validateAdminPool, queryWithUser, withUserTransaction, queryAsAdmin };

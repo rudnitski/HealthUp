@@ -11,7 +11,7 @@ const schemaStatements = [
   CREATE TABLE IF NOT EXISTS patients (
     id UUID PRIMARY KEY,
     full_name TEXT,
-    full_name_normalized TEXT UNIQUE,
+    full_name_normalized TEXT,
     date_of_birth TEXT,
     gender TEXT,
     user_id UUID,  -- Added in Part 1: Associated user account (NULL for shared/unassigned patients)
@@ -500,10 +500,7 @@ const schemaStatements = [
   `
   CREATE POLICY user_isolation_patients ON patients
     FOR ALL
-    USING (
-      user_id IS NULL
-      OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
-    );
+    USING (user_id = current_setting('app.current_user_id', true)::uuid);
   `,
   `
   CREATE POLICY user_isolation_reports ON patient_reports
@@ -511,8 +508,7 @@ const schemaStatements = [
     USING (
       patient_id IN (
         SELECT id FROM patients
-        WHERE user_id IS NULL
-          OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+        WHERE user_id = current_setting('app.current_user_id', true)::uuid
       )
     );
   `,
@@ -523,8 +519,7 @@ const schemaStatements = [
       report_id IN (
         SELECT pr.id FROM patient_reports pr
         JOIN patients p ON pr.patient_id = p.id
-        WHERE p.user_id IS NULL
-          OR p.user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+        WHERE p.user_id = current_setting('app.current_user_id', true)::uuid
       )
     );
   `,
@@ -576,6 +571,37 @@ const schemaStatements = [
   `,
   `
   CREATE INDEX IF NOT EXISTS idx_patients_user_id ON patients(user_id);
+  `,
+  // ============================================================
+  // Part 3: RLS-Scoped Data Access (PRD v4.4.3)
+  // ============================================================
+  // 1. Drop global unique constraint on full_name_normalized
+  `
+  ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_full_name_normalized_key;
+  `,
+  // 2. Add composite unique constraint scoped by user_id
+  // CRITICAL: Use a full unique constraint (not a partial index) to ensure ON CONFLICT clause works reliably.
+  // PostgreSQL's ON CONFLICT inference does not work with partial indexes (WHERE clauses).
+  `
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'patients_user_name_unique'
+    ) THEN
+      ALTER TABLE patients ADD CONSTRAINT patients_user_name_unique
+        UNIQUE (user_id, full_name_normalized);
+    END IF;
+  END $$;
+  `,
+  // 3. Apply FORCE ROW LEVEL SECURITY (even table owners must respect RLS)
+  `
+  ALTER TABLE patients FORCE ROW LEVEL SECURITY;
+  `,
+  `
+  ALTER TABLE patient_reports FORCE ROW LEVEL SECURITY;
+  `,
+  `
+  ALTER TABLE lab_results FORCE ROW LEVEL SECURITY;
   `,
 ];
 

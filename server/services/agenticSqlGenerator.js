@@ -365,6 +365,7 @@ function formatErrorResponse(errorCode, iterationLog, iterationsCompleted, start
 
 /**
  * Main agentic SQL generation loop
+ * PRD v4.4.3: Added userId parameter for RLS context
  */
 async function generateSqlWithAgenticLoop({
   question,
@@ -372,7 +373,8 @@ async function generateSqlWithAgenticLoop({
   model,
   schemaContext,
   schemaSnapshotId,
-  maxIterations = AGENTIC_MAX_ITERATIONS
+  maxIterations = AGENTIC_MAX_ITERATIONS,
+  userId = null, // PRD v4.4.3: User ID for RLS context
 }) {
   const startTime = Date.now();
   const requestId = crypto.randomUUID();
@@ -519,7 +521,8 @@ async function generateSqlWithAgenticLoop({
 
         // Execute tool based on name
         if (toolName === 'fuzzy_search_parameter_names') {
-          result = await fuzzySearchParameterNames(params.search_term, params.limit);
+          // PRD v4.4.3: Pass userId for RLS context (lab_results has RLS)
+          result = await fuzzySearchParameterNames(params.search_term, params.limit, userId);
           const toolDuration = Date.now() - toolCallStart;
 
           iterationLog.push({
@@ -582,9 +585,11 @@ async function generateSqlWithAgenticLoop({
 
         } else if (toolName === 'execute_sql' || toolName === 'execute_exploratory_sql') {
           // PRD v4.2.2: execute_sql with query_type parameter (backward compatible with execute_exploratory_sql)
+          // PRD v4.4.3: Pass userId for RLS context
           result = await executeExploratorySql(params.sql, params.reasoning, {
             schemaSnapshotId,
-            query_type: params.query_type || 'explore'
+            query_type: params.query_type || 'explore',
+            userId,
           });
           const toolDuration = Date.now() - toolCallStart;
 

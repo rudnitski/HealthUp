@@ -9,6 +9,7 @@
 import express from 'express';
 import { pool } from '../db/index.js';
 import logger from '../utils/logger.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -31,7 +32,8 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
  *   "fields": ["col1", "col2"]
  * }
  */
-router.post('/', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.post('/', requireAuth, async (req, res) => {
   const startTime = Date.now();
 
   try {
@@ -88,14 +90,26 @@ router.post('/', async (req, res) => {
       sql_preview: trimmedSql.substring(0, 100)
     }, '[executeSql] Executing SQL query');
 
-    // Execute query with timeout
+    // Execute query with timeout in a transaction for RLS context
     const client = await pool.connect();
     try {
-      // Set statement timeout to 30 seconds
+      // PRD v4.4.3: Begin transaction for RLS context and SET LOCAL
+      await client.query('BEGIN');
+
+      // PRD v4.4.3: Set RLS context for user-scoped data access
+      await client.query(
+        "SELECT set_config('app.current_user_id', $1, true)",
+        [req.user.id]
+      );
+
+      // Set statement timeout to 30 seconds (requires transaction for SET LOCAL)
       await client.query('SET LOCAL statement_timeout = 30000');
 
       // Execute the query
       const result = await client.query(trimmedSql);
+
+      // Commit the read-only transaction
+      await client.query('COMMIT');
 
       const durationMs = Date.now() - startTime;
 
@@ -116,6 +130,10 @@ router.post('/', async (req, res) => {
         }
       });
 
+    } catch (txError) {
+      // Rollback on any error within the transaction
+      await client.query('ROLLBACK').catch(() => {});
+      throw txError;
     } finally {
       client.release();
     }

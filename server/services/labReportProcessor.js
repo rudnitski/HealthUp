@@ -589,9 +589,10 @@ const convertPdfToImageDataUrls = async (buffer, pageCount, filenameHint = 'uplo
  * @param {string} params.mimetype - File MIME type
  * @param {string} params.filename - Original filename
  * @param {number} params.fileSize - File size in bytes
+ * @param {string} params.userId - User ID for RLS context (PRD v4.4.3)
  * @returns {Promise<object>} Processing result
  */
-async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSize }) {
+async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSize, userId }) {
   const logPrefix = `[labReportProcessor:${jobId}]`;
 
   try {
@@ -733,6 +734,7 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
         parserVersion: `${OCR_PROVIDER}:${provider.model}`,
         processedAt,
         coreResult,
+        userId, // PRD v4.4.3: Pass userId for RLS context
       });
 
       updateProgress(jobId, 85, 'Results saved');
@@ -781,7 +783,7 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       report_id: persistenceResult.reportId,
       patient_id: persistenceResult.patientId,
       checksum: persistenceResult.checksum,
-      user_id: null,
+      user_id: userId, // PRD v4.4.3: Include userId in result
       processed_at: processedAt.toISOString(),
       ...coreResult,
     };

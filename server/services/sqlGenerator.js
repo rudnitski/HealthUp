@@ -85,8 +85,10 @@ async function auditLog({ userHash, requestId, question, sql, sqlHash, validatio
 
 /**
  * Generate SQL query
+ * PRD v4.4.3: Added userId parameter for RLS context
  */
-const generateSqlQuery = async ({ question, userIdentifier, model }) => {
+const generateSqlQuery = async (params) => {
+  const { question, userIdentifier, model, userId } = params;
   const startedAt = Date.now();
   const requestId = crypto.randomUUID();
   const normalizedQuestion = normalizeQuestion(question);
@@ -120,12 +122,14 @@ const generateSqlQuery = async ({ question, userIdentifier, model }) => {
   if (AGENTIC_SQL_ENABLED) {
     logger.info({ request_id: requestId, mode: 'agentic' }, '[sqlGenerator] Using agentic mode');
 
+    // PRD v4.4.3: Pass userId for RLS context in agentic SQL
     return await generateSqlWithAgenticLoop({
       question: normalizedQuestion,
       userIdentifier,
       model: ALLOW_MODEL_OVERRIDE && model ? model : DEFAULT_MODEL,
       schemaContext: schemaSummary,
       schemaSnapshotId,
+      userId: params.userId, // PRD v4.4.3: Pass userId from params
     });
   }
 

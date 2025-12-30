@@ -2,7 +2,7 @@
 // Agentic SQL Generation - Tool Implementations
 // PRD: docs/PRD_v2_0_agentic_sql_generation_mvp.md
 
-import { pool } from '../db/index.js';
+import { pool, queryWithUser } from '../db/index.js';
 import { validateSQL, ensurePatientScope } from './sqlValidator.js';
 
 // Simple console logger (replacing pino for full visibility)
@@ -55,11 +55,14 @@ const QUERY_TYPE_LIMITS = {
  * This is a PRIVILEGED tool - uses parameterized queries, bypasses validator
  * Handles multilingual queries, typos, abbreviations, and mixed scripts automatically
  *
+ * PRD v4.4.3: Added userId parameter for RLS context (lab_results has RLS)
+ *
  * @param {string} searchTerm - Term to search for (any language, any script)
  * @param {number} limit - Maximum number of results (default from env)
+ * @param {string} userId - User ID for RLS context
  * @returns {Object} Search results with similarity scores
  */
-async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_LIMIT) {
+async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_LIMIT, userId = null) {
   if (!searchTerm || typeof searchTerm !== 'string') {
     throw new Error('search_term is required and must be a string');
   }
@@ -79,6 +82,14 @@ async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARC
   try {
     // Begin transaction - required for SET LOCAL
     await client.query('BEGIN');
+
+    // PRD v4.4.3: Set RLS context for user-scoped data access
+    if (userId) {
+      await client.query(
+        "SELECT set_config('app.current_user_id', $1, true)",
+        [userId]
+      );
+    }
 
     // Set similarity threshold within transaction
     await client.query(`SET LOCAL pg_trgm.similarity_threshold = ${similarityThreshold}`);
@@ -231,13 +242,16 @@ async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_
  * Used for data exploration AND data retrieval for display tools
  *
  * PRD v4.2.2: Separation of concerns - this tool FETCHES data, display tools SHOW data
+ * PRD v4.4.3: Added userId in options for RLS context
  *
  * @param {string} sql - Read-only SELECT query
  * @param {string} reasoning - Why this query is needed (for logging)
- * @param {Object} options - Additional options (schemaSnapshotId, query_type, etc.)
+ * @param {Object} options - Additional options (schemaSnapshotId, query_type, userId, etc.)
  * @returns {Object} Query results with metadata
  */
 async function executeExploratorySql(sql, reasoning, options = {}) {
+  // PRD v4.4.3: Extract userId for RLS context
+  const { userId } = options;
   if (!sql || typeof sql !== 'string') {
     throw new Error('sql is required and must be a string');
   }
@@ -330,7 +344,14 @@ async function executeExploratorySql(sql, reasoning, options = {}) {
     }
 
     // Step 4: Execute query
-    const result = await pool.query(safeSql);
+    // PRD v4.4.3: Use RLS context if userId is provided
+    let result;
+    if (userId) {
+      result = await queryWithUser(safeSql, [], userId);
+    } else {
+      // Fallback for cases where userId is not available (shouldn't happen in production)
+      result = await pool.query(safeSql);
+    }
 
     const response = {
       rows: result.rows,

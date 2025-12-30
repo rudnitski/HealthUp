@@ -5,7 +5,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { pool } from '../db/index.js';
+import { pool, queryWithUser } from '../db/index.js';
 import { validateSQL, ensurePatientScope } from './sqlValidator.js';
 import { updateMRU } from './schemaSnapshot.js';
 import {
@@ -74,14 +74,16 @@ const createHash = (value) => {
  * Build system prompt with schema context and patient information
  * PRD v3.2: Pre-loads patient count and list to avoid runtime queries
  * PRD v4.3: Added mode parameter for chat vs legacy behavior
+ * PRD v4.4.3: Added userId parameter for RLS context
  *
  * @param {string} schemaContext - Schema snapshot formatted as markdown
  * @param {number} maxIterations - Maximum iteration limit for agentic loop
  * @param {string} mode - 'chat' (pre-selected patient) or 'legacy' (full patient list)
  * @param {string|null} selectedPatientId - Patient ID for chat mode (required if mode='chat')
+ * @param {string|null} userId - User ID for RLS context
  * @returns {object} { prompt, patientCount, patients }
  */
-async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', selectedPatientId = null) {
+async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', selectedPatientId = null, userId = null) {
   if (!agenticSystemPromptTemplate) {
     throw new Error('Agentic system prompt template not loaded. Check prompts/agentic_sql_generator_system_prompt.txt');
   }
@@ -94,8 +96,8 @@ async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', 
   if (mode === 'chat') {
     // PRD v4.3: Chat mode - inject selected patient with demographics
     if (selectedPatientId) {
-      // Fetch patient demographics for context
-      const patientResult = await pool.query(`
+      // PRD v4.4.3: Use queryWithUser for RLS-scoped access
+      const patientQuery = `
         SELECT
           full_name,
           gender,
@@ -109,7 +111,10 @@ async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', 
           END AS age
         FROM patients
         WHERE id = $1
-      `, [selectedPatientId]);
+      `;
+      const patientResult = userId
+        ? await queryWithUser(patientQuery, [selectedPatientId], userId)
+        : await pool.query(patientQuery, [selectedPatientId]);
 
       const patient = patientResult.rows[0] || {};
       const ageDisplay = patient.age ? `${patient.age} years` : 'Unknown';
@@ -148,7 +153,8 @@ If the user asks about lab results or patient data, inform them they need to upl
 
   } else {
     // Legacy mode: load full patient list (original behavior)
-    const patientsResult = await pool.query(`
+    // PRD v4.4.3: Use queryWithUser for RLS-scoped access
+    const patientsQuery = `
       SELECT
         id,
         full_name,
@@ -160,7 +166,10 @@ If the user asks about lab results or patient data, inform them they need to upl
         date_of_birth
       FROM patients
       ORDER BY full_name ASC NULLS LAST, created_at DESC
-    `);
+    `;
+    const patientsResult = userId
+      ? await queryWithUser(patientsQuery, [], userId)
+      : await pool.query(patientsQuery);
 
     const patientCount = patientsResult.rows.length;
     // Use display_name to handle NULL full_name properly
@@ -194,13 +203,19 @@ This information is pre-loaded. Do NOT query \`SELECT COUNT(*) FROM patients\` -
 /**
  * Execute a tool call by name
  * PRD v4.2.2: execute_sql replaces execute_exploratory_sql with query_type parameter
+ * PRD v4.4.3: Added userId in options for RLS context
  */
 async function executeToolCall(toolName, params, options = {}) {
+  // PRD v4.4.3: Extract userId for RLS context
+  const { userId } = options;
+
   switch (toolName) {
     case 'fuzzy_search_parameter_names':
-      return await fuzzySearchParameterNames(params.search_term, params.limit);
+      // PRD v4.4.3: Pass userId for RLS context (lab_results has RLS)
+      return await fuzzySearchParameterNames(params.search_term, params.limit, userId);
 
     case 'fuzzy_search_analyte_names':
+      // Note: analyte_aliases is a shared catalog, no RLS needed
       return await fuzzySearchAnalyteNames(params.search_term, params.limit);
 
     // PRD v4.2.2: New unified execute_sql tool with query_type parameter

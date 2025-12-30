@@ -69,6 +69,7 @@ class SessionManager {
 
   /**
    * Create a new session
+   * PRD v4.4.3: Added userId field for session ownership validation
    */
   createSession() {
     this.enforceSessionLimit();
@@ -83,7 +84,8 @@ class SessionManager {
       // These are no longer needed with pre-chat patient selection
       isProcessing: false,
       iterationCount: 0, // Track tool-calling loop iterations (safety limit)
-      currentMessageId: null  // Track current assistant message ID
+      currentMessageId: null,  // Track current assistant message ID
+      userId: null // PRD v4.4.3: Set by caller after createSession()
     };
 
     this.sessions.set(session.id, session);

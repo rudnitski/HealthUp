@@ -2,24 +2,34 @@ import express from 'express';
 import { handleGeneration, SqlGeneratorError } from '../services/sqlGenerator.js';
 import { bustCache } from '../services/schemaSnapshot.js';
 import { reloadSchemaAliases } from '../services/promptBuilder.js';
-import { createJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus } from '../utils/jobManager.js';
+import { createJob, getJob, getJobStatus, updateJob, setJobResult, setJobError, JobStatus } from '../utils/jobManager.js';
 import { validateSQL } from '../services/sqlValidator.js';
 import { pool } from '../db/index.js';
+import { requireAuth } from '../middleware/auth.js';
 const logger = console;
 
 const router = express.Router();
 
 /**
  * Execute a data query (already validated SQL with LIMIT)
+ * PRD v4.4.3: Added userId parameter for RLS context
  * @param {string} sqlWithLimit - Validated SQL with LIMIT clause already enforced
  * @param {string} userIdentifier - User identifier for logging
+ * @param {string} userId - User ID for RLS context
  * @returns {Promise<{rows: Array, rowCount: number, fields: Array}>}
  */
-async function executeDataQuery(sqlWithLimit, userIdentifier) {
+async function executeDataQuery(sqlWithLimit, userIdentifier, userId) {
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
+
+    // PRD v4.4.3: Set RLS context for user-scoped data access
+    await client.query(
+      "SELECT set_config('app.current_user_id', $1, true)",
+      [userId]
+    );
+
     await client.query('SET LOCAL statement_timeout = 30000'); // Scoped to this transaction only
 
     // Execute query (SQL already validated and has LIMIT)
@@ -42,11 +52,13 @@ async function executeDataQuery(sqlWithLimit, userIdentifier) {
 
 /**
  * Count total rows available (before LIMIT) for pagination info
+ * PRD v4.4.3: Added userId parameter for RLS context
  * @param {string} sqlWithLimit - Validated SQL with LIMIT clause already enforced
  * @param {string} userIdentifier - User identifier for logging
+ * @param {string} userId - User ID for RLS context
  * @returns {Promise<number|null>} Total row count or null if count fails
  */
-async function countTotalRows(sqlWithLimit, userIdentifier) {
+async function countTotalRows(sqlWithLimit, userIdentifier, userId) {
   // Strip LIMIT clause from validated SQL to count total available rows
   // IMPORTANT: This SQL has already been validated by validateSQL(), so it's safe to manipulate
 
@@ -65,6 +77,13 @@ async function countTotalRows(sqlWithLimit, userIdentifier) {
 
   try {
     await client.query('BEGIN');
+
+    // PRD v4.4.3: Set RLS context for user-scoped data access
+    await client.query(
+      "SELECT set_config('app.current_user_id', $1, true)",
+      [userId]
+    );
+
     await client.query('SET LOCAL statement_timeout = 5000');
 
     const result = await client.query(countSql);
@@ -101,7 +120,8 @@ const getUserIdentifier = (req) => {
 };
 
 // GET /api/sql-generator/jobs/:jobId - Get job status
-router.get('/jobs/:jobId', (req, res) => {
+// PRD v4.4.3: Add requireAuth and ownership check
+router.get('/jobs/:jobId', requireAuth, (req, res) => {
   const { jobId } = req.params;
 
   console.log(`[sqlGenerator] Job status requested: ${jobId}`);
@@ -112,15 +132,24 @@ router.get('/jobs/:jobId', (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
 
+  // PRD v4.4.3: Verify job ownership
+  // Return 404 (not 403) to prevent job enumeration attacks
+  const job = getJob(jobId);
+  if (job && job.userId !== req.user.id) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
   return res.status(200).json(jobStatus);
 });
 
 // POST /api/sql-generator - Generate SQL (async job-based)
-router.post('/', async (req, res) => {
+// PRD v4.4.3: Add requireAuth for user-scoped data
+router.post('/', requireAuth, async (req, res) => {
   const question = req?.body?.question;
   const model = req?.body?.model; // Optional model override
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const userIdentifier = getUserIdentifier(req);
+  const userId = req.user.id; // PRD v4.4.3: Get authenticated user ID
 
   // Guard log to handle non-string questions gracefully
   const questionPreview = typeof question === 'string'
@@ -139,8 +168,8 @@ router.post('/', async (req, res) => {
     });
   }
 
-  // Create job
-  const jobId = createJob(userIdentifier, {
+  // PRD v4.4.3: Create job with authenticated user ID
+  const jobId = createJob(userId, {
     question,
     model,
     requestId
@@ -156,10 +185,12 @@ router.post('/', async (req, res) => {
       // Update job to processing
       updateJob(jobId, JobStatus.PROCESSING);
 
+      // PRD v4.4.3: Pass userId for RLS context in agentic SQL
       const sqlGenerationResult = await handleGeneration({
         question,
         userIdentifier,
         model,
+        userId,
       });
 
       // Check if generation failed
@@ -215,9 +246,10 @@ router.post('/', async (req, res) => {
       }
 
       // Execute validated SQL and count total rows
+      // PRD v4.4.3: Pass userId for RLS context
       const [executionResult, totalRowCount] = await Promise.all([
-        executeDataQuery(validation.sqlWithLimit, userIdentifier),
-        countTotalRows(validation.sqlWithLimit, userIdentifier)
+        executeDataQuery(validation.sqlWithLimit, userIdentifier, userId),
+        countTotalRows(validation.sqlWithLimit, userIdentifier, userId)
       ]);
 
       // Combine non-SQL metadata + execution results
