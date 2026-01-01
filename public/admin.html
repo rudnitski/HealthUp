@@ -231,7 +231,11 @@
     </div>
   </div>
 
-  <script src="/js/admin.js"></script>
+  <!-- Load auth client first with defer -->
+  <script src="/js/auth.js" defer></script>
+
+  <!-- Existing admin script with defer -->
+  <script src="/js/admin.js" defer></script>
 
   <!-- Navigation Script -->
   <script>

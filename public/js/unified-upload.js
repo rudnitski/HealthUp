@@ -3,7 +3,15 @@
  * PRD v3.0: Handles both manual multi-file uploads and Gmail import
  */
 
-(() => {
+(async () => {
+  // ==================== AUTH CHECK (MUST BE FIRST) ====================
+  // Wait for auth.js to complete authentication check before any initialization
+  const isAuthenticated = await window.authReady;
+  if (!isAuthenticated) {
+    // Not authenticated - auth.js already redirected to login
+    return;
+  }
+
   // Check if we're viewing a specific report (reportId in URL)
   // If so, show report viewing UI and exit early - app.js will handle the report loading
   const urlParams = new URLSearchParams(window.location.search);

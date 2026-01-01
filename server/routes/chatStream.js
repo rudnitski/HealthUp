@@ -900,6 +900,11 @@ async function executeToolCalls(session, toolCalls, patientCount = 0) {
         content: JSON.stringify(result)
       });
 
+      // Cache last execute_sql result for display tool fallbacks
+      if (toolName === 'execute_sql' && result && Array.isArray(result.rows)) {
+        session.lastExecuteSqlResult = result;
+      }
+
     } catch (error) {
       logger.error('[chatStream] Tool execution failed:', {
         session_id: session.id,
@@ -1028,6 +1033,12 @@ function removeDisplayResults(session) {
  */
 async function handleShowPlot(session, params, toolCallId) {
   const { data, plot_title, replace_previous = false, thumbnail: thumbnailConfig } = params;
+  const fallbackRows = Array.isArray(session?.lastExecuteSqlResult?.rows)
+    ? session.lastExecuteSqlResult.rows
+    : [];
+  const effectiveData = Array.isArray(data) && data.length > 0
+    ? data
+    : fallbackRows;
   // PRD v4.3: Using session.id for streamEvent calls (SSE registry pattern)
 
   // Guard against missing plot_title
@@ -1060,12 +1071,12 @@ async function handleShowPlot(session, params, toolCallId) {
   }
 
   // Step 1: Guard against invalid data type (defensive against schema validation failures)
-  if (!Array.isArray(data)) {
+  if (!Array.isArray(effectiveData)) {
     logger.warn('[handleShowPlot] Invalid data type:', {
       session_id: session.id,
       plot_title,
-      data_type: typeof data,
-      data_is_null: data === null
+      data_type: typeof effectiveData,
+      data_is_null: effectiveData === null
     });
 
     // PRD v4.3: streamEvent handles missing connections
@@ -1101,7 +1112,7 @@ async function handleShowPlot(session, params, toolCallId) {
   }
 
   // Step 2: Validate and preprocess data (filters invalid rows, sorts by timestamp)
-  const preprocessed = preprocessData(data);
+  const preprocessed = preprocessData(effectiveData);
 
   // Step 3: Normalize timestamps to epoch ms
   const normalizedRows = normalizeRowsForFrontend(preprocessed);
@@ -1163,14 +1174,14 @@ async function handleShowPlot(session, params, toolCallId) {
       display_type: 'plot',
       plot_title,
       row_count: preprocessed.length,
-      message: preprocessed.length > 0 ? 'Plot displayed successfully' : 'Empty result displayed'
-    })
+    message: preprocessed.length > 0 ? 'Plot displayed successfully' : 'Empty result displayed'
+  })
   });
 
   logger.info('[handleShowPlot] completed:', {
     session_id: session.id,
     plot_title,
-    raw_count: data.length,
+    raw_count: effectiveData.length,
     preprocessed_count: preprocessed.length,
     has_thumbnail: !!thumbnailConfig
   });
@@ -1185,17 +1196,23 @@ async function handleShowPlot(session, params, toolCallId) {
 async function handleShowTable(session, params, toolCallId) {
   const { data, table_title, replace_previous = false } = params;
   const startTime = Date.now();
+  const fallbackRows = Array.isArray(session?.lastExecuteSqlResult?.rows)
+    ? session.lastExecuteSqlResult.rows
+    : [];
+  const effectiveData = Array.isArray(data) && data.length > 0
+    ? data
+    : fallbackRows;
 
   logger.info('[chatStream] show_table called:', {
     session_id: session.id,
     table_title,
     replace_previous,
-    data_count: data?.length || 0
+    data_count: effectiveData?.length || 0
   });
 
   try {
     // Validate data array
-    if (!data || !Array.isArray(data)) {
+    if (!effectiveData || !Array.isArray(effectiveData)) {
       session.messages.push({
         role: 'tool',
         tool_call_id: toolCallId,
@@ -1207,7 +1224,7 @@ async function handleShowTable(session, params, toolCallId) {
       return;
     }
 
-    if (data.length === 0) {
+    if (effectiveData.length === 0) {
       session.messages.push({
         role: 'tool',
         tool_call_id: toolCallId,
@@ -1224,7 +1241,7 @@ async function handleShowTable(session, params, toolCallId) {
       type: 'table_result',
       message_id: session.currentMessageId,
       table_title,
-      rows: data,
+      rows: effectiveData,
       replace_previous
     });
 
@@ -1236,7 +1253,7 @@ async function handleShowTable(session, params, toolCallId) {
         success: true,
         display_type: 'table',
         table_title,
-        row_count: data.length
+        row_count: effectiveData.length
       })
     });
 
@@ -1244,7 +1261,7 @@ async function handleShowTable(session, params, toolCallId) {
     logger.info('[chatStream] show_table completed:', {
       session_id: session.id,
       table_title,
-      row_count: data.length,
+      row_count: effectiveData.length,
       duration_ms: Date.now() - startTime
     });
 

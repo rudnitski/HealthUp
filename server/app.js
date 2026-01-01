@@ -89,7 +89,8 @@ if (process.env.NODE_ENV === 'production') {
 // PRD v4.4.2: Security headers (helmet)
 app.use(helmet({
   contentSecurityPolicy: false, // Disable CSP for now (configure in Part 4)
-  crossOriginEmbedderPolicy: false // Allow external resources (Google Sign-In SDK)
+  crossOriginEmbedderPolicy: false, // Allow external resources (Google Sign-In SDK)
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } // Allow Google OAuth popup to message opener
 }));
 
 // PRD v4.4.2: Cookie parsing - REQUIRED for req.cookies to be populated

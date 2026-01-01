@@ -53,10 +53,23 @@ function parseTimestamp(t) {
  * @param {Array} data - Raw data array
  * @returns {Array} - Filtered valid rows
  */
+function coerceNumeric(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().replace(',', '.');
+    if (normalized === '') return null;
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
 function filterValidRows(data) {
   return data.filter(row => {
     const t = parseTimestamp(row.t);
-    const y = row.y;
+    const y = coerceNumeric(row.y);
 
     // Must have valid timestamp
     if (t === null) return false;
@@ -89,7 +102,16 @@ function sortByTimestamp(data) {
  * @returns {Array} - Preprocessed rows
  */
 function preprocessData(data) {
-  const filtered = filterValidRows(data);
+  const normalized = data.map(row => {
+    const t = parseTimestamp(row.t);
+    const y = coerceNumeric(row.y);
+    return {
+      ...row,
+      t: t ?? row.t,
+      y: y ?? row.y
+    };
+  });
+  const filtered = filterValidRows(normalized);
   const sorted = sortByTimestamp(filtered);
   return sorted;
 }

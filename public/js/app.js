@@ -1,4 +1,68 @@
-(() => {
+// ==================== AUTH CHECK (MUST BE FIRST) ====================
+// CRITICAL: Make the entire IIFE async to block initialization until auth completes
+// This prevents race conditions where DOM operations run before auth check finishes
+(async () => {
+  // Wait for auth.js to complete authentication check
+  // RACE CONDITION FIX: auth.js calls requireAuth() immediately when loaded,
+  // and exposes window.authReady promise that resolves when auth completes.
+  // All app scripts await this promise to prevent API calls before auth verification.
+  const isAuthenticated = await window.authReady;
+  if (!isAuthenticated) {
+    // Not authenticated - auth.js already redirected to login
+    // Stop all app execution
+    return;
+  }
+
+  // User is authenticated - display user info in header
+  const user = authClient.getUser();
+  console.log('[app] Logged in as:', user.display_name);
+  displayUserInfo(user);
+
+  // ==================== APP INITIALIZATION (AUTH-GATED) ====================
+  // ALL existing code runs here AFTER auth check succeeds
+  // This ensures no UI flash or API calls happen before authentication
+
+  function displayUserInfo(user) {
+    // Add user menu to header using safe DOM methods (prevents XSS)
+    const header = document.querySelector('.content-header-inner');
+    if (!header) {
+      console.warn('[app] Header element not found for user menu');
+      return;
+    }
+
+    const userMenu = document.createElement('div');
+    userMenu.className = 'user-menu';
+
+    // Create avatar image with fallback for missing avatar_url
+    const avatar = document.createElement('img');
+    // Google OAuth always provides picture, but use fallback for defensive coding
+    avatar.src = user.avatar_url || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23999"%3E%3Cpath d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/%3E%3C/svg%3E';
+    avatar.alt = user.display_name;
+    avatar.className = 'user-avatar';
+    avatar.onerror = function() {
+      // Fallback if avatar_url fails to load
+      this.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23999"%3E%3Cpath d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/%3E%3C/svg%3E';
+    };
+
+    // Create user name span
+    const userName = document.createElement('span');
+    userName.className = 'user-name';
+    userName.textContent = user.display_name; // textContent auto-escapes HTML
+
+    // Create logout button
+    const logoutBtn = document.createElement('button');
+    logoutBtn.id = 'logout-btn';
+    logoutBtn.className = 'btn-logout';
+    logoutBtn.textContent = 'Logout';
+    logoutBtn.addEventListener('click', () => authClient.logout());
+
+    // Assemble user menu
+    userMenu.appendChild(avatar);
+    userMenu.appendChild(userName);
+    userMenu.appendChild(logoutBtn);
+    header.appendChild(userMenu);
+  }
+
   // Report viewing elements (shown when ?reportId= parameter is present)
   const fileMessageEl = document.querySelector('#file-message');
   const resultEl = document.querySelector('#analysis-result');

@@ -338,7 +338,19 @@ router.get('/me', requireAuth, async (req, res) => {
     });
   }
 
-  res.json({ user: result.rows[0] });
+  const user = result.rows[0];
+
+  // Compute admin status from ADMIN_EMAIL_ALLOWLIST
+  // PRD v4.4.4: Required for frontend admin panel access control
+  const adminEmails = (process.env.ADMIN_EMAIL_ALLOWLIST || '')
+    .split(',')
+    .map(email => email.trim().toLowerCase())
+    .filter(email => email.length > 0);
+
+  user.is_admin = adminEmails.includes(user.email.toLowerCase());
+  user.admin_configured = adminEmails.length > 0;
+
+  res.json({ user });
 });
 
 export default router;

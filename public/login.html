@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In - HealthUp</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/login.css">
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body class="login-page">
+  <div class="login-container">
+    <div class="login-card">
+      <div class="login-header">
+        <h1>Welcome to HealthUp</h1>
+        <p>Sign in to access your lab reports</p>
+      </div>
+
+      <div class="login-body">
+        <!-- Google Sign-In Button Container -->
+        <!-- Note: We use JS initialize() method instead of data attributes to avoid double initialization -->
+        <!-- The client_id is fetched from /api/auth/config dynamically -->
+        <div id="google-signin-button"></div>
+
+        <!-- Error Message -->
+        <div id="error-message" class="error-message hidden">
+          <span class="error-icon">⚠️</span>
+          <span id="error-text"></span>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading-message" class="loading-message hidden">
+          <div class="spinner"></div>
+          <span>Signing in...</span>
+        </div>
+      </div>
+
+      <div class="login-footer">
+        <p class="privacy-notice">
+          HealthUp Lab Report Analysis
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/login.js" defer></script>
+
+  <!-- IMPORTANT: Do NOT load auth.js on login page -->
+  <!-- auth.js calls requireAuth() which would create an infinite redirect loop -->
+  <!-- This page is intentionally unauthenticated to allow users to sign in -->
+</body>
+</html>

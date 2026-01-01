@@ -275,6 +275,7 @@ class ConversationalSQLChat {
    */
   handleNewChat() {
     console.log('[Chat] New chat requested');
+    const lastSelectedPatientId = this.selectedPatientId;
 
     // Close existing SSE
     if (this.eventSource) {
@@ -324,6 +325,17 @@ class ConversationalSQLChat {
 
     // Re-attach example prompt handlers for restored empty state
     this.attachExamplePromptHandlers();
+
+    // Auto-start a fresh session with the previously selected (or first) patient
+    const nextPatientId = this.patients.find(p => p.id === lastSelectedPatientId)?.id
+      || this.patients[0]?.id
+      || null;
+    if (nextPatientId) {
+      this.selectPatient(nextPatientId);
+    } else {
+      // No patients yet - allow schema questions without a patient context
+      this.createSessionAndConnect(null);
+    }
   }
 
   /**
@@ -360,7 +372,8 @@ class ConversationalSQLChat {
     }
 
     // PRD v4.3: Pass sessionId as query parameter
-    this.eventSource = new EventSource(`/api/chat/stream?sessionId=${sessionId}`);
+    // PRD v4.4.4: Use auth-aware EventSource for 401 handling
+    this.eventSource = window.createAuthAwareEventSource(`/api/chat/stream?sessionId=${sessionId}`);
 
     this.eventSource.onopen = () => {
       console.log('[Chat] SSE connection opened');

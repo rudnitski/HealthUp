@@ -500,7 +500,7 @@ const schemaStatements = [
   `
   CREATE POLICY user_isolation_patients ON patients
     FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
   `,
   `
   CREATE POLICY user_isolation_reports ON patient_reports
@@ -508,7 +508,7 @@ const schemaStatements = [
     USING (
       patient_id IN (
         SELECT id FROM patients
-        WHERE user_id = current_setting('app.current_user_id', true)::uuid
+        WHERE user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
       )
     );
   `,
@@ -519,7 +519,7 @@ const schemaStatements = [
       report_id IN (
         SELECT pr.id FROM patient_reports pr
         JOIN patients p ON pr.patient_id = p.id
-        WHERE p.user_id = current_setting('app.current_user_id', true)::uuid
+        WHERE p.user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
       )
     );
   `,

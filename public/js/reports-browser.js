@@ -3,6 +3,14 @@ const ReportsBrowser = {
   initialized: false,
 
   async init() {
+    // ==================== AUTH CHECK (MUST BE FIRST) ====================
+    // Wait for auth.js to complete authentication check before any API calls
+    const isAuthenticated = await window.authReady;
+    if (!isAuthenticated) {
+      // Not authenticated - auth.js already redirected to login
+      return;
+    }
+
     this.bindEvents();
     await this.loadPatients();
     await this.loadReports();
