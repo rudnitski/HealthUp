@@ -70,7 +70,6 @@ const schemaStatements = [
     code TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     unit_canonical TEXT,
-    category TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
@@ -177,7 +176,6 @@ const schemaStatements = [
     proposed_code TEXT UNIQUE NOT NULL,
     proposed_name TEXT NOT NULL,
     unit_canonical TEXT,
-    category TEXT,
     evidence JSONB,
     parameter_variations JSONB,
     confidence REAL,

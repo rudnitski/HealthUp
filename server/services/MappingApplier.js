@@ -255,12 +255,12 @@ async function autoCreateAlias(analyteId, aliasText, lang = 'ru') {
  * Fetch all analytes from database for LLM schema
  * Includes both approved analytes and pending analytes to prevent duplicates
  *
- * @returns {Promise<Array>} - Array of { code, name, category, status, pending_id? }
+ * @returns {Promise<Array>} - Array of { code, name, status, pending_id? }
  */
 async function getAnalyteSchema() {
   // Fetch approved analytes
   const { rows: approved } = await pool.query(
-    `SELECT code, name, category, 'approved' as status, NULL as pending_id
+    `SELECT code, name, 'approved' as status, NULL as pending_id
      FROM analytes
      ORDER BY code`
   );
@@ -269,7 +269,6 @@ async function getAnalyteSchema() {
   const { rows: pending } = await pool.query(
     `SELECT proposed_code AS code,
             proposed_name AS name,
-            category,
             'pending' as status,
             pending_id
      FROM pending_analytes
@@ -1106,8 +1105,8 @@ async function queueNewAnalyte(rowResult) {
   try {
     await pool.query(
       `INSERT INTO pending_analytes
-         (proposed_code, proposed_name, unit_canonical, category, confidence, evidence, status, parameter_variations)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+         (proposed_code, proposed_name, unit_canonical, confidence, evidence, status, parameter_variations)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
        ON CONFLICT (proposed_code) DO UPDATE SET
          confidence = GREATEST(pending_analytes.confidence, EXCLUDED.confidence),
          evidence = CASE
@@ -1132,7 +1131,6 @@ async function queueNewAnalyte(rowResult) {
         llm.code,
         llm.name,
         unit,
-        llm.category || 'uncategorized',
         llm.confidence,
         JSON.stringify(evidence),
         JSON.stringify(parameterVariations)

@@ -56,7 +56,6 @@ router.get('/pending-analytes', async (req, res) => {
          proposed_code,
          proposed_name,
          unit_canonical,
-         category,
          confidence,
          evidence,
          parameter_variations,
@@ -123,14 +122,13 @@ router.post('/approve-analyte', async (req, res) => {
 
     // Insert into analytes table
     const { rows: newAnalyteRows } = await client.query(
-      `INSERT INTO analytes (code, name, unit_canonical, category)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO analytes (code, name, unit_canonical)
+       VALUES ($1, $2, $3)
        RETURNING analyte_id`,
       [
         pending.proposed_code,
         pending.proposed_name,
-        pending.unit_canonical,
-        pending.category || 'uncategorized'
+        pending.unit_canonical
       ]
     );
 

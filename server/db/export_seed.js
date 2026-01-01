@@ -33,28 +33,11 @@ async function exportSeed() {
   try {
     console.log('[export] Starting seed export...');
 
-    // Get all analytes with category grouping
+    // Get all analytes ordered by code
     const { rows: analytes } = await client.query(`
-      SELECT code, name, unit_canonical, category
+      SELECT code, name, unit_canonical
       FROM analytes
-      ORDER BY
-        CASE category
-          WHEN 'hematology' THEN 1
-          WHEN 'liver' THEN 2
-          WHEN 'kidney' THEN 3
-          WHEN 'lipid' THEN 4
-          WHEN 'glucose' THEN 5
-          WHEN 'thyroid' THEN 6
-          WHEN 'electrolyte' THEN 7
-          WHEN 'vitamin' THEN 8
-          WHEN 'iron' THEN 9
-          WHEN 'cardiac' THEN 10
-          WHEN 'inflammation' THEN 11
-          WHEN 'enzyme' THEN 12
-          WHEN 'tumor_marker' THEN 13
-          ELSE 99
-        END,
-        code
+      ORDER BY code
     `);
 
     // Get all aliases grouped by analyte
@@ -80,64 +63,16 @@ async function exportSeed() {
 -- ANALYTES (Canonical Tests)
 -- ============================================================================
 
-INSERT INTO analytes (code, name, unit_canonical, category) VALUES\n`;
+INSERT INTO analytes (code, name, unit_canonical) VALUES\n`;
 
-    // Group analytes by category
-    const categories = {
-      hematology: [],
-      liver: [],
-      kidney: [],
-      lipid: [],
-      glucose: [],
-      thyroid: [],
-      electrolyte: [],
-      vitamin: [],
-      iron: [],
-      cardiac: [],
-      inflammation: [],
-      enzyme: [],
-      tumor_marker: [],
-      other: []
-    };
-
-    analytes.forEach(a => {
-      const cat = a.category || 'other';
-      if (!categories[cat]) categories[cat] = [];
-      categories[cat].push(a);
+    // Build flat list of analytes
+    const lines = analytes.map((a, i) => {
+      const comma = i < analytes.length - 1 ? ',' : '';
+      return `  ('${a.code}', '${a.name.replace(/'/g, "''")}', '${a.unit_canonical || ''}')${comma}`;
     });
 
-    const lines = [];
-    const categoryLabels = {
-      hematology: 'Hematology',
-      liver: 'Liver Function',
-      kidney: 'Kidney Function',
-      lipid: 'Lipids',
-      glucose: 'Glucose & Diabetes',
-      thyroid: 'Thyroid',
-      electrolyte: 'Electrolytes',
-      vitamin: 'Vitamins & Minerals',
-      iron: 'Iron Studies',
-      cardiac: 'Cardiac',
-      inflammation: 'Inflammation',
-      enzyme: 'Enzymes',
-      tumor_marker: 'Tumor Markers',
-      other: 'Other'
-    };
-
-    for (const [cat, items] of Object.entries(categories)) {
-      if (items.length === 0) continue;
-
-      lines.push(`  -- ${categoryLabels[cat]}`);
-      items.forEach((a, i) => {
-        const comma = (cat === 'other' && i === items.length - 1) &&
-                      Object.entries(categories).every(([c, its]) => c <= cat || its.length === 0) ? '' : ',';
-        lines.push(`  ('${a.code}', '${a.name.replace(/'/g, "''")}', '${a.unit_canonical || ''}', '${a.category || 'uncategorized'}')${comma}`);
-      });
-      lines.push('');
-    }
-
     sql += lines.join('\n');
-    sql += `ON CONFLICT (code) DO NOTHING;\n\n`;
+    sql += `\nON CONFLICT (code) DO NOTHING;\n\n`;
 
     // Aliases section
     sql += `-- ============================================================================
