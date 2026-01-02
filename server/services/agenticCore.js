@@ -5,7 +5,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { pool, queryWithUser } from '../db/index.js';
+import { pool, queryWithUser, queryAsAdmin } from '../db/index.js';
 import { validateSQL, ensurePatientScope } from './sqlValidator.js';
 import { updateMRU } from './schemaSnapshot.js';
 import {
@@ -75,15 +75,17 @@ const createHash = (value) => {
  * PRD v3.2: Pre-loads patient count and list to avoid runtime queries
  * PRD v4.3: Added mode parameter for chat vs legacy behavior
  * PRD v4.4.3: Added userId parameter for RLS context
+ * PRD v4.4.6: Added isAdmin parameter for admin mode (bypasses RLS)
  *
  * @param {string} schemaContext - Schema snapshot formatted as markdown
  * @param {number} maxIterations - Maximum iteration limit for agentic loop
  * @param {string} mode - 'chat' (pre-selected patient) or 'legacy' (full patient list)
  * @param {string|null} selectedPatientId - Patient ID for chat mode (required if mode='chat')
  * @param {string|null} userId - User ID for RLS context
+ * @param {boolean} isAdmin - Whether to use admin mode (bypasses RLS)
  * @returns {object} { prompt, patientCount, patients }
  */
-async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', selectedPatientId = null, userId = null) {
+async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', selectedPatientId = null, userId = null, isAdmin = false) {
   if (!agenticSystemPromptTemplate) {
     throw new Error('Agentic system prompt template not loaded. Check prompts/agentic_sql_generator_system_prompt.txt');
   }
@@ -96,7 +98,7 @@ async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', 
   if (mode === 'chat') {
     // PRD v4.3: Chat mode - inject selected patient with demographics
     if (selectedPatientId) {
-      // PRD v4.4.3: Use queryWithUser for RLS-scoped access
+      // PRD v4.4.6: Use queryAsAdmin for admin mode, queryWithUser for regular users
       const patientQuery = `
         SELECT
           full_name,
@@ -112,9 +114,14 @@ async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', 
         FROM patients
         WHERE id = $1
       `;
-      const patientResult = userId
-        ? await queryWithUser(patientQuery, [selectedPatientId], userId)
-        : await pool.query(patientQuery, [selectedPatientId]);
+      let patientResult;
+      if (isAdmin) {
+        patientResult = await queryAsAdmin(patientQuery, [selectedPatientId]);
+      } else if (userId) {
+        patientResult = await queryWithUser(patientQuery, [selectedPatientId], userId);
+      } else {
+        patientResult = await pool.query(patientQuery, [selectedPatientId]);
+      }
 
       const patient = patientResult.rows[0] || {};
       const ageDisplay = patient.age ? `${patient.age} years` : 'Unknown';
@@ -153,7 +160,7 @@ If the user asks about lab results or patient data, inform them they need to upl
 
   } else {
     // Legacy mode: load full patient list (original behavior)
-    // PRD v4.4.3: Use queryWithUser for RLS-scoped access
+    // PRD v4.4.6: Use queryAsAdmin for admin mode, queryWithUser for regular users
     const patientsQuery = `
       SELECT
         id,
@@ -167,9 +174,14 @@ If the user asks about lab results or patient data, inform them they need to upl
       FROM patients
       ORDER BY full_name ASC NULLS LAST, created_at DESC
     `;
-    const patientsResult = userId
-      ? await queryWithUser(patientsQuery, [], userId)
-      : await pool.query(patientsQuery);
+    let patientsResult;
+    if (isAdmin) {
+      patientsResult = await queryAsAdmin(patientsQuery, []);
+    } else if (userId) {
+      patientsResult = await queryWithUser(patientsQuery, [], userId);
+    } else {
+      patientsResult = await pool.query(patientsQuery);
+    }
 
     const patientCount = patientsResult.rows.length;
     // Use display_name to handle NULL full_name properly
@@ -204,19 +216,23 @@ This information is pre-loaded. Do NOT query \`SELECT COUNT(*) FROM patients\` -
  * Execute a tool call by name
  * PRD v4.2.2: execute_sql replaces execute_exploratory_sql with query_type parameter
  * PRD v4.4.3: Added userId in options for RLS context
+ * PRD v4.4.6: Added isAdmin in options for admin mode (bypasses RLS)
  */
 async function executeToolCall(toolName, params, options = {}) {
   // PRD v4.4.3: Extract userId for RLS context
-  const { userId } = options;
+  // PRD v4.4.6: Extract isAdmin for admin mode (bypasses RLS)
+  const { userId, isAdmin } = options;
 
   switch (toolName) {
     case 'fuzzy_search_parameter_names':
       // PRD v4.4.3: Pass userId for RLS context (lab_results has RLS)
-      return await fuzzySearchParameterNames(params.search_term, params.limit, userId);
+      // PRD v4.4.6: Pass isAdmin for admin mode (bypasses RLS)
+      return await fuzzySearchParameterNames(params.search_term, params.limit, userId, isAdmin);
 
     case 'fuzzy_search_analyte_names':
       // Note: analyte_aliases is a shared catalog, no RLS needed
-      return await fuzzySearchAnalyteNames(params.search_term, params.limit);
+      // PRD v4.4.6: Pass isAdmin for admin mode (uses adminPool for SET LOCAL)
+      return await fuzzySearchAnalyteNames(params.search_term, params.limit, isAdmin);
 
     // PRD v4.2.2: New unified execute_sql tool with query_type parameter
     case 'execute_sql':

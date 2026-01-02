@@ -433,7 +433,8 @@
 
         // Add View Original File button
         const viewOriginalLink = document.createElement('a');
-        viewOriginalLink.href = `/api/reports/${job.report_id}/original-file`;
+        // PRD v4.4.6: Use endpoint resolver for admin access pattern
+        viewOriginalLink.href = window.getReportsEndpoint('/' + job.report_id + '/original-file');
         viewOriginalLink.target = '_blank';
         viewOriginalLink.className = 'view-button secondary-button';
         viewOriginalLink.textContent = '📄 View Original';
@@ -1190,7 +1191,8 @@
 
         // Add View Original File button
         const viewOriginalLink = document.createElement('a');
-        viewOriginalLink.href = `/api/reports/${att.reportId}/original-file`;
+        // PRD v4.4.6: Use endpoint resolver for admin access pattern
+        viewOriginalLink.href = window.getReportsEndpoint('/' + att.reportId + '/original-file');
         viewOriginalLink.target = '_blank';
         viewOriginalLink.className = 'view-button secondary-button';
         viewOriginalLink.textContent = '📄 View Original';

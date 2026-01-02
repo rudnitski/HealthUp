@@ -20,7 +20,7 @@
 import express from 'express';
 import OpenAI from 'openai';
 import crypto from 'crypto';
-import { pool, queryWithUser } from '../db/index.js';
+import { pool, queryWithUser, queryAsAdmin } from '../db/index.js';
 import sessionManager from '../utils/sessionManager.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as agenticCore from '../services/agenticCore.js';
@@ -220,12 +220,16 @@ router.post('/sessions', requireAuth, async (req, res) => {
       });
     }
 
-    // PRD v4.4.3: Verify patient exists AND belongs to user (RLS auto-filters)
+    // PRD v4.4.6: Use conditional query function based on admin status
+    // Admin users can access any patient; regular users are RLS-filtered
+    const queryFn = req.user.is_admin
+      ? (sql, params) => queryAsAdmin(sql, params)
+      : (sql, params) => queryWithUser(sql, params, req.user.id);
+
     try {
-      const result = await queryWithUser(
+      const result = await queryFn(
         'SELECT id FROM patients WHERE id = $1',
-        [selectedPatientId],
-        req.user.id
+        [selectedPatientId]
       );
       if (result.rows.length === 0) {
         return res.status(404).json({
@@ -248,6 +252,9 @@ router.post('/sessions', requireAuth, async (req, res) => {
   // PRD v4.4.3: Store user ID for session ownership validation
   session.userId = req.user.id;
 
+  // PRD v4.4.6: Store admin status for tool executions
+  session.isAdmin = req.user.is_admin || false;
+
   // Set selected patient
   if (selectedPatientId) {
     session.selectedPatientId = selectedPatientId;
@@ -256,6 +263,7 @@ router.post('/sessions', requireAuth, async (req, res) => {
   logger.info('[chatStream] Session created:', {
     session_id: session.id,
     user_id: req.user.id,
+    is_admin: session.isAdmin,
     selected_patient_id: selectedPatientId || null
   });
 
@@ -459,23 +467,25 @@ async function processMessage(sessionId, userMessage) {
   }
 
   try {
+    // PRD v4.4.6: Use conditional query function based on admin status stored in session
+    const isAdmin = session.isAdmin || false;
+    const queryFn = isAdmin
+      ? (sql, params) => queryAsAdmin(sql, params)
+      : (sql, params) => queryWithUser(sql, params, session.userId);
+
     // PRD v4.3: Recompute patient count per-message (NOT cached in session)
-    // PRD v4.4.3: Use queryWithUser for RLS-scoped count
     // Security: Prevents data leak if patient is added after session creation
-    const countResult = await queryWithUser(
+    const countResult = await queryFn(
       'SELECT COUNT(*) as count FROM patients',
-      [],
-      session.userId
+      []
     );
     const currentPatientCount = parseInt(countResult.rows[0].count, 10);
 
     // PRD v4.3: Verify selected patient still exists (409 handling)
-    // PRD v4.4.3: Use queryWithUser for RLS-scoped verification
     if (session.selectedPatientId) {
-      const patientExists = await queryWithUser(
+      const patientExists = await queryFn(
         'SELECT 1 FROM patients WHERE id = $1',
-        [session.selectedPatientId],
-        session.userId
+        [session.selectedPatientId]
       );
 
       if (patientExists.rows.length === 0) {
@@ -576,6 +586,7 @@ async function processMessage(sessionId, userMessage) {
  * Initialize system prompt with schema and patient context
  * PRD v4.3: Uses chat mode with pre-selected patient ID
  * PRD v4.4.3: Pass userId for RLS context
+ * PRD v4.4.6: Pass isAdmin for admin mode support
  */
 async function initializeSystemPrompt(session) {
   // Get schema snapshot and format it
@@ -584,12 +595,14 @@ async function initializeSystemPrompt(session) {
 
   // PRD v4.3: Use chat mode with selectedPatientId (set by POST /api/chat/sessions)
   // PRD v4.4.3: Pass userId for RLS context
+  // PRD v4.4.6: Pass isAdmin for admin mode
   const { prompt } = await agenticCore.buildSystemPrompt(
     schemaContext,
     20, // maxIterations
     'chat', // mode
     session.selectedPatientId, // Pre-selected patient ID (can be null for schema-only queries)
-    session.userId // PRD v4.4.3: User ID for RLS context
+    session.userId, // PRD v4.4.3: User ID for RLS context
+    session.isAdmin || false // PRD v4.4.6: Admin mode flag
   );
 
   // Add system message
@@ -875,12 +888,14 @@ async function executeToolCalls(session, toolCalls, patientCount = 0) {
     // Execute other tools (fuzzy search, exploratory SQL)
     try {
       // PRD v4.4.3: Pass userId for RLS context
+      // PRD v4.4.6: Pass isAdmin for admin mode support
       const result = await agenticCore.executeToolCall(toolName, params, {
         schemaSnapshotId: null, // TODO: track schema snapshot in session
         // PRD v4.3: Pass patient context for scope enforcement (patientCount from parameter, not session)
         selectedPatientId: session.selectedPatientId || null,
         patientCount: patientCount,
-        userId: session.userId // PRD v4.4.3: User ID for RLS context
+        userId: session.userId, // PRD v4.4.3: User ID for RLS context
+        isAdmin: session.isAdmin || false // PRD v4.4.6: Admin mode flag
       });
 
       const toolDuration = Date.now() - toolStartTime;

@@ -1,12 +1,16 @@
 // server/routes/admin.js
 // PRD v2.4: Admin API endpoints for pending analytes and ambiguous matches
 // PRD v4.4.2: Protected by authentication + admin authorization middleware
+// PRD v4.4.6: Admin read access endpoints for patients/reports
 
 import express from 'express';
 import { adminPool, queryAsAdmin } from '../db/index.js';
 import { detectLanguage } from '../utils/languageDetection.js';
 import logger from '../utils/logger.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { getPatientReports, getReportDetail } from '../services/reportRetrieval.js';
+import { EFFECTIVE_DATE_EXPR, isUuid, isIsoDate } from '../services/reportQueries.js';
+import { streamOriginalFile } from '../services/fileDownload.js';
 
 const router = express.Router();
 
@@ -604,6 +608,185 @@ router.post('/reset-database', async (req, res) => {
       message: error.message
     });
   }
+});
+
+// ========================================================================
+// PRD v4.4.6: Admin Read Access Endpoints
+// All endpoints below use BYPASSRLS to allow admin access to all patients
+// ========================================================================
+
+/**
+ * GET /api/admin/patients
+ * List all patients (bypasses RLS)
+ * Query params: ?sort=recent
+ */
+router.get('/patients', async (req, res) => {
+  try {
+    const { sort } = req.query;
+
+    // PRD v4.4.6: Same ordering as /api/reports/patients
+    let orderBy;
+    if (sort === 'recent') {
+      // Primary: last_seen_report_at DESC, tie-breakers: full_name ASC, created_at DESC
+      orderBy = 'last_seen_report_at DESC NULLS LAST, full_name ASC NULLS LAST, created_at DESC';
+    } else {
+      // Default: alphabetical by full_name
+      orderBy = 'full_name ASC NULLS LAST, created_at DESC';
+    }
+
+    const { rows } = await queryAsAdmin(`
+      SELECT
+        id,
+        full_name,
+        CASE
+          WHEN full_name IS NOT NULL AND full_name != '' THEN full_name
+          ELSE 'Patient (' || SUBSTRING(id::text FROM 1 FOR 6) || '...)'
+        END AS display_name,
+        last_seen_report_at
+      FROM patients
+      ORDER BY ${orderBy}
+    `);
+
+    res.json({ patients: rows });
+  } catch (error) {
+    logger.error({ error: error.message }, '[admin] Failed to list patients');
+    res.status(500).json({ error: 'Failed to fetch patients' });
+  }
+});
+
+/**
+ * GET /api/admin/reports
+ * List all reports with optional filters (bypasses RLS)
+ * Query params: ?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD&patientId=uuid
+ */
+router.get('/reports', async (req, res) => {
+  const { fromDate, toDate, patientId } = req.query;
+
+  // Validate date parameters
+  if (fromDate && !isIsoDate(fromDate)) {
+    return res.status(400).json({ error: 'fromDate must be valid YYYY-MM-DD format' });
+  }
+  if (toDate && !isIsoDate(toDate)) {
+    return res.status(400).json({ error: 'toDate must be valid YYYY-MM-DD format' });
+  }
+  if (patientId && !isUuid(patientId)) {
+    return res.status(400).json({ error: 'patientId must be valid UUID' });
+  }
+
+  try {
+    // PRD v4.4.6: Same query structure as /api/reports
+    let query = `
+      SELECT
+        pr.id AS report_id,
+        ${EFFECTIVE_DATE_EXPR} AS effective_date,
+        p.id AS patient_id,
+        COALESCE(pr.patient_name_snapshot, p.full_name, 'Unnamed Patient') AS patient_name,
+        (pr.file_path IS NOT NULL) AS has_file
+      FROM patient_reports pr
+      JOIN patients p ON pr.patient_id = p.id
+      WHERE pr.status = 'completed'
+    `;
+
+    const params = [];
+    let paramIndex = 1;
+
+    if (fromDate) {
+      query += ` AND ${EFFECTIVE_DATE_EXPR} >= $${paramIndex}`;
+      params.push(fromDate);
+      paramIndex++;
+    }
+
+    if (toDate) {
+      query += ` AND ${EFFECTIVE_DATE_EXPR} <= $${paramIndex}`;
+      params.push(toDate);
+      paramIndex++;
+    }
+
+    if (patientId) {
+      query += ` AND pr.patient_id = $${paramIndex}`;
+      params.push(patientId);
+      paramIndex++;
+    }
+
+    query += `
+      ORDER BY ${EFFECTIVE_DATE_EXPR} DESC,
+        pr.recognized_at DESC,
+        pr.id DESC
+    `;
+
+    const result = await queryAsAdmin(query, params);
+
+    res.json({
+      reports: result.rows,
+      total: result.rows.length
+    });
+  } catch (error) {
+    logger.error({ error: error.message }, '[admin] Failed to list reports');
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+/**
+ * GET /api/admin/reports/:reportId
+ * Get detailed report with lab results (bypasses RLS)
+ */
+router.get('/reports/:reportId', async (req, res) => {
+  const { reportId } = req.params;
+
+  if (!isUuid(reportId)) {
+    return res.status(400).json({ error: 'Invalid report id' });
+  }
+
+  try {
+    const result = await getReportDetail(reportId, { mode: 'admin' });
+
+    if (!result) {
+      return res.status(404).json({ error: 'Report not found', report_id: reportId });
+    }
+
+    return res.json(result);
+  } catch (error) {
+    logger.error({ error: error.message }, '[admin] Failed to fetch report detail');
+    return res.status(500).json({ error: 'Unable to fetch report detail' });
+  }
+});
+
+/**
+ * GET /api/admin/patients/:patientId/reports
+ * Get patient with their reports (bypasses RLS)
+ * No status filter - returns all reports regardless of status
+ */
+router.get('/patients/:patientId/reports', async (req, res) => {
+  const { patientId } = req.params;
+
+  if (!isUuid(patientId)) {
+    return res.status(400).json({ error: 'Invalid patient id' });
+  }
+
+  try {
+    const result = await getPatientReports(patientId, {
+      limit: req.query.limit,
+      offset: req.query.offset,
+    }, { mode: 'admin' });
+
+    if (!result) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    return res.json(result);
+  } catch (error) {
+    logger.error({ error: error.message }, '[admin] Failed to fetch patient reports');
+    return res.status(500).json({ error: 'Unable to fetch patient reports' });
+  }
+});
+
+/**
+ * GET /api/admin/reports/:reportId/original-file
+ * Download original lab report file (bypasses RLS)
+ */
+router.get('/reports/:reportId/original-file', async (req, res) => {
+  const { reportId } = req.params;
+  return streamOriginalFile(reportId, { mode: 'admin' }, res);
 });
 
 export default router;

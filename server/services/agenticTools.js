@@ -2,7 +2,7 @@
 // Agentic SQL Generation - Tool Implementations
 // PRD: docs/PRD_v2_0_agentic_sql_generation_mvp.md
 
-import { pool, queryWithUser } from '../db/index.js';
+import { pool, adminPool, queryWithUser, queryAsAdmin } from '../db/index.js';
 import { validateSQL, ensurePatientScope } from './sqlValidator.js';
 
 // Simple console logger (replacing pino for full visibility)
@@ -56,13 +56,15 @@ const QUERY_TYPE_LIMITS = {
  * Handles multilingual queries, typos, abbreviations, and mixed scripts automatically
  *
  * PRD v4.4.3: Added userId parameter for RLS context (lab_results has RLS)
+ * PRD v4.4.6: Added isAdmin parameter for admin mode (bypasses RLS)
  *
  * @param {string} searchTerm - Term to search for (any language, any script)
  * @param {number} limit - Maximum number of results (default from env)
  * @param {string} userId - User ID for RLS context
+ * @param {boolean} isAdmin - Whether to use admin mode (bypasses RLS)
  * @returns {Object} Search results with similarity scores
  */
-async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_LIMIT, userId = null) {
+async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_LIMIT, userId = null, isAdmin = false) {
   if (!searchTerm || typeof searchTerm !== 'string') {
     throw new Error('search_term is required and must be a string');
   }
@@ -74,17 +76,19 @@ async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARC
     search_term: searchTerm,
     limit: effectiveLimit,
     similarity_threshold: similarityThreshold,
+    is_admin: isAdmin,
   }, '[agenticTools] fuzzy_search_parameter_names');
 
-  // Get a dedicated client for transaction
-  const client = await pool.connect();
+  // PRD v4.4.6: Use adminPool for admin mode (BYPASSRLS), pool for user mode
+  const poolToUse = isAdmin ? adminPool : pool;
+  const client = await poolToUse.connect();
 
   try {
     // Begin transaction - required for SET LOCAL
     await client.query('BEGIN');
 
-    // PRD v4.4.3: Set RLS context for user-scoped data access
-    if (userId) {
+    // PRD v4.4.3: Set RLS context for user-scoped data access (skip for admin mode)
+    if (!isAdmin && userId) {
       await client.query(
         "SELECT set_config('app.current_user_id', $1, true)",
         [userId]
@@ -148,11 +152,15 @@ async function fuzzySearchParameterNames(searchTerm, limit = AGENTIC_FUZZY_SEARC
  * PRD v2.4: Searches aliases (multilingual) and returns canonical analyte names
  * This is the RECOMMENDED search for finding analytes - searches all language variants
  *
+ * PRD v4.4.6: Added isAdmin parameter for admin mode (uses adminPool for SET LOCAL)
+ * Note: analyte_aliases is a shared catalog (no RLS), but SET LOCAL requires transaction
+ *
  * @param {string} searchTerm - Term to search for (any language)
  * @param {number} limit - Maximum number of results
+ * @param {boolean} isAdmin - Whether to use admin mode (uses adminPool)
  * @returns {Object} Search results with canonical names and codes
  */
-async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_LIMIT) {
+async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_LIMIT, isAdmin = false) {
   if (!searchTerm || typeof searchTerm !== 'string') {
     throw new Error('search_term is required and must be a string');
   }
@@ -164,10 +172,12 @@ async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_
     search_term: searchTerm,
     limit: effectiveLimit,
     similarity_threshold: similarityThreshold,
+    is_admin: isAdmin,
   }, '[agenticTools] fuzzy_search_analyte_names');
 
-  // Get a dedicated client for transaction
-  const client = await pool.connect();
+  // PRD v4.4.6: Use adminPool for admin mode (consistent with other tools), pool for user mode
+  const poolToUse = isAdmin ? adminPool : pool;
+  const client = await poolToUse.connect();
 
   try {
     // Begin transaction - required for SET LOCAL
@@ -243,15 +253,17 @@ async function fuzzySearchAnalyteNames(searchTerm, limit = AGENTIC_FUZZY_SEARCH_
  *
  * PRD v4.2.2: Separation of concerns - this tool FETCHES data, display tools SHOW data
  * PRD v4.4.3: Added userId in options for RLS context
+ * PRD v4.4.6: Added isAdmin in options for admin mode (bypasses RLS)
  *
  * @param {string} sql - Read-only SELECT query
  * @param {string} reasoning - Why this query is needed (for logging)
- * @param {Object} options - Additional options (schemaSnapshotId, query_type, userId, etc.)
+ * @param {Object} options - Additional options (schemaSnapshotId, query_type, userId, isAdmin, etc.)
  * @returns {Object} Query results with metadata
  */
 async function executeExploratorySql(sql, reasoning, options = {}) {
   // PRD v4.4.3: Extract userId for RLS context
-  const { userId } = options;
+  // PRD v4.4.6: Extract isAdmin for admin mode (bypasses RLS)
+  const { userId, isAdmin } = options;
   if (!sql || typeof sql !== 'string') {
     throw new Error('sql is required and must be a string');
   }
@@ -345,12 +357,14 @@ async function executeExploratorySql(sql, reasoning, options = {}) {
 
     // Step 4: Execute query
     // PRD v4.4.3: Use RLS context if userId is provided
+    // PRD v4.4.6: Use queryAsAdmin for admin mode (bypasses RLS)
     let result;
-    if (userId) {
+    if (isAdmin) {
+      result = await queryAsAdmin(safeSql, []);
+    } else if (userId) {
       result = await queryWithUser(safeSql, [], userId);
     } else {
-      // Fallback for cases where userId is not available (shouldn't happen in production)
-      result = await pool.query(safeSql);
+      throw new Error('Either userId or isAdmin must be provided for query execution');
     }
 
     const response = {

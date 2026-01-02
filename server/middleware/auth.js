@@ -114,12 +114,20 @@ export async function requireAuth(req, res, next) {
       sessionCache.set(sessionId, sessionData);
     }
 
+    // Compute admin status from ADMIN_EMAIL_ALLOWLIST
+    // PRD v4.4.6: Required for chat session admin context and all authenticated endpoints
+    const adminEmails = (process.env.ADMIN_EMAIL_ALLOWLIST || '')
+      .split(',')
+      .map(email => email.trim().toLowerCase())
+      .filter(email => email.length > 0);
+
     // Attach user to request
     req.user = {
       id: sessionData.user_id,
       display_name: sessionData.display_name,
       email: sessionData.email,
-      avatar_url: sessionData.avatar_url
+      avatar_url: sessionData.avatar_url,
+      is_admin: adminEmails.includes(sessionData.email.toLowerCase())
     };
 
     next();
@@ -181,11 +189,18 @@ export async function optionalAuth(req, res, next) {
     }
 
     if (sessionData) {
+      // Compute admin status from ADMIN_EMAIL_ALLOWLIST
+      const adminEmails = (process.env.ADMIN_EMAIL_ALLOWLIST || '')
+        .split(',')
+        .map(email => email.trim().toLowerCase())
+        .filter(email => email.length > 0);
+
       req.user = {
         id: sessionData.user_id,
         display_name: sessionData.display_name,
         email: sessionData.email,
-        avatar_url: sessionData.avatar_url
+        avatar_url: sessionData.avatar_url,
+        is_admin: adminEmails.includes(sessionData.email.toLowerCase())
       };
     } else {
       req.user = null;

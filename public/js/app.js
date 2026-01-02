@@ -18,6 +18,16 @@
   console.log('[app] Logged in as:', user.display_name);
   displayUserInfo(user);
 
+  // PRD v4.4.6: Hide Management section for non-admin users
+  // Admin-only UI links (e.g., Review Queue) must be hidden for non-admin users
+  if (!user.is_admin) {
+    const managementSection = document.getElementById('management-section');
+    if (managementSection) {
+      managementSection.style.display = 'none';
+      console.log('[app] Management section hidden for non-admin user');
+    }
+  }
+
   // ==================== APP INITIALIZATION (AUTH-GATED) ====================
   // ALL existing code runs here AFTER auth check succeeds
   // This ensures no UI flash or API calls happen before authentication
@@ -114,7 +124,8 @@
     }
 
     try {
-      const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}`);
+      // PRD v4.4.6: Use endpoint resolver for admin access pattern
+      const response = await fetch(window.getReportsEndpoint('/' + encodeURIComponent(reportId)));
       if (!response.ok) {
         return null;
       }
@@ -811,6 +822,7 @@ function viewOriginalFile() {
 
   // Open file in new tab
   // Server returns 410 Gone JSON if file not available (legacy reports)
-  const url = `/api/reports/${reportId}/original-file`;
+  // PRD v4.4.6: Use endpoint resolver for admin access pattern
+  const url = window.getReportsEndpoint('/' + reportId + '/original-file');
   window.open(url, '_blank');
 }

@@ -83,7 +83,8 @@ class ConversationalSQLChat {
     this.disableInput();
 
     try {
-      const response = await fetch('/api/reports/patients?sort=recent');
+      // PRD v4.4.6: Use endpoint resolver for admin access pattern
+      const response = await fetch(window.getReportsEndpoint('/patients') + '?sort=recent');
       if (!response.ok) {
         throw new Error('Failed to fetch patients');
       }

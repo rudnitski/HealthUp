@@ -25,7 +25,8 @@ const ReportsBrowser = {
 
   async loadPatients() {
     try {
-      const response = await fetch('/api/reports/patients');
+      // PRD v4.4.6: Use endpoint resolver for admin access pattern
+      const response = await fetch(window.getReportsEndpoint('/patients'));
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -61,7 +62,8 @@ const ReportsBrowser = {
     if (patientId) params.append('patientId', patientId);
 
     try {
-      const response = await fetch(`/api/reports?${params}`);
+      // PRD v4.4.6: Use endpoint resolver for admin access pattern
+      const response = await fetch(window.getReportsEndpoint('/') + '?' + params);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -155,7 +157,8 @@ const ReportsBrowser = {
 
   viewOriginal(reportId) {
     // Open original file in new tab
-    window.open(`/api/reports/${reportId}/original-file`, '_blank');
+    // PRD v4.4.6: Use endpoint resolver for admin access pattern
+    window.open(window.getReportsEndpoint('/' + reportId + '/original-file'), '_blank');
   },
 
   clearFilters() {

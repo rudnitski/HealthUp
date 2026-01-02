@@ -39,7 +39,7 @@
           </a>
         </div>
 
-        <div class="nav-section">
+        <div class="nav-section" id="management-section">
           <div class="nav-section-title">Management</div>
           <a href="/admin/pending-analytes" class="nav-item">
             <span class="nav-icon">📋</span>
@@ -374,6 +374,8 @@
 
   <!-- Load auth client AFTER vendors, BEFORE app scripts -->
   <script src="js/auth.js" defer></script>
+  <!-- PRD v4.4.6: API endpoint resolver for admin access pattern -->
+  <script src="js/api-helpers.js" defer></script>
 
   <!-- App scripts (run AFTER auth.js) -->
   <script src="js/plotRenderer.js" defer></script>
