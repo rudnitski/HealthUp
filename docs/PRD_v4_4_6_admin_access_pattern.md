@@ -72,13 +72,16 @@ SELECT
   p.date_of_birth,
   p.gender,
   p.user_id,
+  p.last_seen_report_at,
   u.primary_email AS owner_email,
-  COUNT(pr.id) AS report_count
+  u.display_name AS owner_name,
+  COUNT(pr.id) AS report_count,
+  MAX(pr.test_date_text) AS latest_test_date
 FROM patients p
 LEFT JOIN users u ON u.id = p.user_id
 LEFT JOIN patient_reports pr ON pr.patient_id = p.id
-GROUP BY p.id, u.primary_email
-ORDER BY p.full_name;
+GROUP BY p.id, u.primary_email, u.display_name
+ORDER BY p.last_seen_report_at DESC NULLS LAST;
 ```
 
 ### Existing Endpoint (Unchanged)
@@ -92,7 +95,7 @@ ORDER BY p.full_name;
 1. On app init, call `/api/auth/me`.
 2. If `user.is_admin === true`, display admin toggle.
 3. When admin toggle is active, load patients from `/api/admin/patients`.
-4. Display owner email and report count in admin view.
+4. Display owner name, email, report count, last seen date, and latest test date in admin view.
 
 **Important:** UI must not hardcode admin emails.
 
@@ -102,15 +105,15 @@ ORDER BY p.full_name;
 
 ### Read Actions (Optional but Recommended)
 
-Log admin reads to `admin_actions`:
+Log admin reads to `audit_logs`:
 - `action_type`: `admin_view_patients`
 - `entity_type`: `patients`
-- `changes`: `{ count, filters, page }`
-- `admin_user`: `req.user.email`
+- `details`: `{ count, filters }`
+- `user_id`: `req.user.id`
 
 ### Write Actions (Future)
 
-All admin writes must log before/after changes.
+All admin writes must log before/after changes to `audit_logs`.
 
 ---
 
@@ -125,11 +128,12 @@ All admin writes must log before/after changes.
 
 ## 9. Acceptance Criteria
 
-- Admin users can view all patients via `/api/admin/patients`.
+- Admin users can view all patients with owner details via `/api/admin/patients`.
 - Non-admin users receive `403` from `/api/admin/patients`.
 - Normal patient list is unchanged and still RLS-scoped.
 - Admin UI toggle is visible only for `user.is_admin`.
-- Admin access is auditable (if logging enabled).
+- Admin view displays owner name, email, report count, last activity, and latest test date.
+- Admin access is auditable via `audit_logs` (if logging enabled).
 
 ---
 
