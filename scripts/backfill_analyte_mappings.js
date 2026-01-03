@@ -2,7 +2,10 @@
 // scripts/backfill_analyte_mappings.js
 // PRD v2.4: Backfill script to populate analyte_id for existing lab_results rows
 
-import { pool } from '../server/db/index.js';
+// Load environment variables before other imports
+import '../server/config/loadEnv.js';
+
+import { pool, queryAsAdmin } from '../server/db/index.js';
 import { wetRun } from '../server/services/MappingApplier.js';
 
 /**
@@ -27,10 +30,13 @@ async function backfillMappings() {
 
   try {
     // Fetch all unmapped lab_results grouped by report_id
-    const { rows: reports } = await pool.query(
-      `SELECT DISTINCT ON (lr.report_id) lr.report_id, pr.patient_id, pr.created_at
+    // Use queryAsAdmin to bypass RLS - backfill is an admin operation
+    // user_id is on patients table, not patient_reports
+    const { rows: reports } = await queryAsAdmin(
+      `SELECT DISTINCT ON (lr.report_id) lr.report_id, pr.patient_id, p.user_id, pr.created_at
        FROM lab_results lr
        JOIN patient_reports pr ON lr.report_id = pr.id
+       JOIN patients p ON pr.patient_id = p.id
        WHERE lr.analyte_id IS NULL
        ORDER BY lr.report_id, pr.created_at DESC`
     );
@@ -43,7 +49,7 @@ async function backfillMappings() {
     }
 
     // Count total unmapped rows before backfill
-    const { rows: beforeCount } = await pool.query(
+    const { rows: beforeCount } = await queryAsAdmin(
       'SELECT COUNT(*) as count FROM lab_results WHERE analyte_id IS NULL'
     );
     console.log(`[backfill] Total unmapped rows: ${beforeCount[0].count}`);
@@ -69,6 +75,7 @@ async function backfillMappings() {
         const result = await wetRun({
           reportId: report.report_id,
           patientId: report.patient_id,
+          userId: report.user_id,
         });
 
         // Update global counters
@@ -90,7 +97,7 @@ async function backfillMappings() {
     }
 
     // Count total unmapped rows after backfill
-    const { rows: afterCount } = await pool.query(
+    const { rows: afterCount } = await queryAsAdmin(
       'SELECT COUNT(*) as count FROM lab_results WHERE analyte_id IS NULL'
     );
 

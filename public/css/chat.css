@@ -1192,3 +1192,222 @@
 @media (prefers-color-scheme: dark) {
   /* Dark mode variables would go here */
 }
+
+/* ============================================
+   PRD v4.7: Segment Control for Plot/Table View Toggle
+   ============================================ */
+
+/* Header with title and segment control */
+.chat-plot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-slate-50);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.chat-plot-header h3 {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-bottom: none;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  color: var(--color-text);
+}
+
+/* Segment Control Container */
+.view-segment-control {
+  display: flex;
+  align-items: center;
+  position: relative;
+  background: var(--color-slate-200);
+  border-radius: var(--radius-full);
+  padding: 3px;
+  gap: 0;
+}
+
+/* Sliding indicator behind active button */
+.segment-indicator {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: calc(50% - 4px);
+  height: calc(100% - 6px);
+  background: white;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  transition: transform 250ms ease;
+  z-index: 0;
+}
+
+.view-segment-control[data-active="table"] .segment-indicator {
+  transform: translateX(calc(100% + 2px));
+}
+
+/* Segment Button */
+.segment-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 200ms ease;
+  position: relative;
+  z-index: 1;
+}
+
+.segment-button:hover {
+  color: var(--color-text);
+}
+
+.segment-button--active {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.segment-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Segment Icon (inline SVG) */
+.segment-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* Main content area: sidebar + view container (grid layout) */
+.chat-plot-content {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 0;
+}
+
+/* Parameter selector panel with internal scroll - PRD v4.7 override */
+.chat-plot-content .chat-parameter-selector-panel {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.chat-plot-content .chat-parameter-selector-title {
+  position: sticky;
+  top: 0;
+  background: var(--color-slate-50);
+  z-index: 1;
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+/* View container with fixed height */
+.chat-view-container {
+  position: relative;
+  height: 500px;
+  overflow: hidden;
+}
+
+/* Individual views with fade transition (uses visibility, NOT hidden attribute) */
+.chat-view {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 250ms ease, visibility 250ms ease;
+}
+
+.chat-view--active {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Plot view specific */
+.chat-view--plot {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-view--plot .chat-plot-canvas-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-5);
+  min-height: 0; /* Allow flex shrinking */
+  max-height: none; /* Override existing constraints */
+}
+
+.chat-view--plot .chat-plot-canvas-wrapper canvas {
+  flex: 1;
+  max-height: none !important; /* Override existing 420px constraint */
+}
+
+/* Table view specific */
+.chat-view--table {
+  background: var(--color-surface-elevated);
+}
+
+/* Scrollable table with sticky header */
+.chat-scrollable-table-container {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+/* Sticky header: apply to th for cross-browser support */
+.chat-scrollable-table-container th {
+  position: sticky;
+  top: 0;
+  background: var(--color-slate-50);
+  z-index: 1;
+}
+
+/* Ensure table fills width */
+.chat-scrollable-table-container .parameters-table {
+  width: 100%;
+}
+
+/* No data placeholder row */
+.chat-scrollable-table-container .no-data-row td {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: var(--space-6);
+}
+
+/* Reduced motion: disable all segment control and view transitions */
+@media (prefers-reduced-motion: reduce) {
+  .segment-indicator,
+  .chat-view {
+    transition: none;
+  }
+}
+
+/* Responsive: stack layout on mobile */
+@media (max-width: 768px) {
+  .chat-plot-header {
+    flex-direction: column;
+    gap: var(--space-3);
+    align-items: flex-start;
+  }
+
+  .chat-plot-content {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-plot-content .chat-parameter-selector-panel {
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border-light);
+  }
+
+  .chat-view-container {
+    height: 400px;
+  }
+}

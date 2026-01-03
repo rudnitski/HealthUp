@@ -1189,11 +1189,13 @@ class ConversationalSQLChat {
 
   /**
    * Handle plot result (v3.3)
+   * PRD v4.7: Always clear previous visualization (single-visualization mode)
    */
   handlePlotResult(data) {
     console.log('[Chat] Plot result received:', data);
 
-    const { plot_title, rows, replace_previous, message_id } = data;
+    const { plot_title, rows, message_id } = data;
+    // Note: replace_previous is ignored per PRD v4.7 - always clear
 
     // Finalize assistant message if any (PRD v4.2.4: use message_id)
     this.finalizeAssistantMessage(message_id);
@@ -1205,12 +1207,10 @@ class ConversationalSQLChat {
     }
     this.activeTools.clear();
 
-    // Clear or append based on replace_previous
-    if (replace_previous) {
-      // CRITICAL: Properly destroy ALL charts before clearing DOM
-      this.destroyAllCharts();
-      this.resultsContainer.innerHTML = '';
-    }
+    // PRD v4.7: ALWAYS clear previous visualization (remove replace_previous conditional)
+    // CRITICAL: Destroy ALL charts before clearing DOM to prevent memory leaks
+    this.destroyAllCharts();
+    this.resultsContainer.innerHTML = '';
 
     // Show results container
     this.resultsContainer.style.display = 'block';
@@ -1228,11 +1228,13 @@ class ConversationalSQLChat {
 
   /**
    * Handle table result (v3.3)
+   * PRD v4.7: Always clear previous visualization (single-visualization mode)
    */
   handleTableResult(data) {
     console.log('[Chat] Table result received:', data);
 
-    const { table_title, rows, replace_previous, message_id } = data;
+    const { table_title, rows, message_id } = data;
+    // Note: replace_previous is ignored per PRD v4.7 - always clear
 
     // Finalize assistant message if any (PRD v4.2.4: use message_id)
     this.finalizeAssistantMessage(message_id);
@@ -1244,10 +1246,11 @@ class ConversationalSQLChat {
     }
     this.activeTools.clear();
 
-    // Clear or append based on replace_previous
-    if (replace_previous) {
-      this.resultsContainer.innerHTML = '';
-    }
+    // PRD v4.7: ALWAYS clear previous visualization (remove replace_previous conditional)
+    // CRITICAL: Destroy ALL charts BEFORE clearing DOM to prevent memory leaks
+    // (This handles case where table result replaces a plot result)
+    this.destroyAllCharts();
+    this.resultsContainer.innerHTML = '';
 
     // Show results container
     this.resultsContainer.style.display = 'block';
@@ -1316,13 +1319,15 @@ class ConversationalSQLChat {
 
   /**
    * Attach event listener for parameter switching
+   * PRD v4.7: Added plotSection parameter, resets view to Plot on parameter change
    * @param {Array} allRowsForPlot - Full dataset without out-of-range flags (for plot)
    * @param {Array} allRowsOriginal - Full dataset with out-of-range flags (for table)
    * @param {HTMLElement} container - Parameter selector container
    * @param {string} canvasId - Canvas ID for plot
    * @param {string} plotTitle - Base plot title
+   * @param {HTMLElement} plotSection - The root .chat-plot-visualization element
    */
-  attachParameterSelectorListener(allRowsForPlot, allRowsOriginal, container, canvasId, plotTitle) {
+  attachParameterSelectorListener(allRowsForPlot, allRowsOriginal, container, canvasId, plotTitle, plotSection) {
     if (!container) return;
 
     // Remove existing listener if any
@@ -1339,6 +1344,12 @@ class ConversationalSQLChat {
 
         // Filter original data (table version with out-of-range flags)
         const filteredRowsOriginal = allRowsOriginal.filter(row => row.parameter_name === selectedParameter);
+
+        // PRD v4.7: Reset view to Plot on parameter change
+        // Sequence: update tab state → update panel visibility → resize chart in rAF
+        if (plotSection) {
+          this.switchView(plotSection, 'plot', canvasId);
+        }
 
         // Destroy existing chart for this canvas
         const existingChart = this.charts.get(canvasId);
@@ -1357,8 +1368,10 @@ class ConversationalSQLChat {
         // Track the chart instance
         this.charts.set(canvasId, newChart);
 
-        // Update parameter table (with out-of-range flags for red borders)
-        this.renderParameterTable(filteredRowsOriginal, selectedParameter);
+        // PRD v4.7: Update table in the Table view panel (instead of separate container)
+        if (plotSection) {
+          this.renderTableInView(plotSection, filteredRowsOriginal, selectedParameter);
+        }
       }
     };
 
@@ -1481,7 +1494,212 @@ class ConversationalSQLChat {
   }
 
   /**
+   * PRD v4.7: Initialize segment control handlers
+   * Attach click and keyboard handlers for Plot/Table toggle
+   * @param {HTMLElement} plotSection - The root .chat-plot-visualization element
+   * @param {string} canvasId - Canvas ID for chart resize
+   */
+  initViewSegmentControl(plotSection, canvasId) {
+    const segmentControl = plotSection.querySelector('.view-segment-control');
+    if (!segmentControl) return;
+
+    const buttons = segmentControl.querySelectorAll('.segment-button');
+
+    // Click handlers
+    buttons.forEach(button => {
+      button.addEventListener('click', () => {
+        const targetView = button.dataset.view;
+        this.switchView(plotSection, targetView, canvasId);
+      });
+    });
+
+    // Keyboard navigation (Arrow Left/Right for roving tabindex)
+    segmentControl.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+
+      const currentButton = document.activeElement;
+      if (!currentButton.classList.contains('segment-button')) return;
+
+      event.preventDefault();
+
+      const buttonsArray = Array.from(buttons);
+      const currentIndex = buttonsArray.indexOf(currentButton);
+      let newIndex;
+
+      if (event.key === 'ArrowLeft') {
+        newIndex = currentIndex === 0 ? buttonsArray.length - 1 : currentIndex - 1;
+      } else {
+        newIndex = currentIndex === buttonsArray.length - 1 ? 0 : currentIndex + 1;
+      }
+
+      const newButton = buttonsArray[newIndex];
+      const targetView = newButton.dataset.view;
+
+      // Switch view and focus new button
+      this.switchView(plotSection, targetView, canvasId);
+      newButton.focus();
+    });
+  }
+
+  /**
+   * PRD v4.7: Switch between Plot and Table views
+   * @param {HTMLElement} container - The root .chat-plot-visualization element
+   * @param {string} targetView - 'plot' or 'table'
+   * @param {string} canvasId - Canvas ID for chart resize
+   */
+  switchView(container, targetView, canvasId) {
+    const segmentControl = container.querySelector('.view-segment-control');
+    const buttons = container.querySelectorAll('.segment-button');
+    const panels = container.querySelectorAll('.chat-view');
+
+    // Update segment control data-active for indicator animation
+    segmentControl.dataset.active = targetView;
+
+    // Update button states
+    buttons.forEach(button => {
+      const isActive = button.dataset.view === targetView;
+      button.classList.toggle('segment-button--active', isActive);
+      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      button.setAttribute('tabindex', isActive ? '0' : '-1');
+    });
+
+    // Update panel visibility (CSS handles animation via visibility + opacity)
+    panels.forEach(panel => {
+      const isPlotPanel = panel.classList.contains('chat-view--plot');
+      const isActive = (targetView === 'plot' && isPlotPanel) || (targetView === 'table' && !isPlotPanel);
+      panel.classList.toggle('chat-view--active', isActive);
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
+
+    // If switching to plot, resize chart in next frame (ensures DOM is updated)
+    if (targetView === 'plot' && canvasId) {
+      requestAnimationFrame(() => {
+        const chart = this.charts.get(canvasId);
+        if (chart) {
+          chart.resize();
+        }
+      });
+    }
+  }
+
+  /**
+   * PRD v4.7: Render table in the Table view panel
+   * Uses scoped selector to target .chat-scrollable-table-container
+   * @param {HTMLElement} plotSection - The root .chat-plot-visualization element
+   * @param {Array} rows - Filtered dataset for selected parameter
+   * @param {string} parameterName - Currently selected parameter name
+   */
+  renderTableInView(plotSection, rows, parameterName) {
+    const tableContainer = plotSection.querySelector('.chat-scrollable-table-container');
+    if (!tableContainer) return;
+
+    // Format timestamp to readable date
+    const formatDate = (timestamp) => {
+      if (!timestamp) return 'Unknown';
+      const date = new Date(Number(timestamp));
+      if (isNaN(date.getTime())) return 'Invalid Date';
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    };
+
+    // Build reference interval display string
+    const buildReferenceDisplay = (row) => {
+      const lower = row.reference_lower;
+      const upper = row.reference_upper;
+      const lowerOp = row.reference_lower_operator || '>=';
+      const upperOp = row.reference_upper_operator || '<=';
+
+      if (lower !== null && lower !== undefined && upper !== null && upper !== undefined) {
+        return `${lower} - ${upper}`;
+      } else if (lower !== null && lower !== undefined) {
+        return `${lowerOp} ${lower}`;
+      } else if (upper !== null && upper !== undefined) {
+        return `${upperOp} ${upper}`;
+      }
+      return 'Unavailable';
+    };
+
+    // Build table structure
+    const table = document.createElement('table');
+    table.className = 'parameters-table';
+
+    // Add caption
+    const caption = document.createElement('caption');
+    const firstRow = rows[0];
+    const unit = firstRow?.unit || '';
+    const displayName = parameterName || 'Data';
+    caption.textContent = `${displayName}${unit ? ' (' + unit + ')' : ''} Measurements`;
+    caption.style.captionSide = 'top';
+    caption.style.fontWeight = '600';
+    caption.style.marginBottom = '0.5rem';
+    caption.style.textAlign = 'left';
+    table.appendChild(caption);
+
+    // Table header
+    const thead = document.createElement('thead');
+    thead.innerHTML = `
+      <tr>
+        <th scope="col">Date</th>
+        <th scope="col">Value</th>
+        <th scope="col">Unit</th>
+        <th scope="col">Reference Interval</th>
+      </tr>
+    `;
+    table.appendChild(thead);
+
+    // Table body
+    const tbody = document.createElement('tbody');
+
+    // PRD v4.7: Handle zero data rows with placeholder
+    if (!rows || rows.length === 0) {
+      const tr = document.createElement('tr');
+      tr.className = 'no-data-row';
+      tr.innerHTML = '<td colspan="4">No data available</td>';
+      tbody.appendChild(tr);
+    } else {
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+
+        // Date cell
+        const dateCell = document.createElement('td');
+        dateCell.textContent = formatDate(row.t);
+        tr.appendChild(dateCell);
+
+        // Value cell (with out-of-range highlighting)
+        const valueCell = document.createElement('td');
+        valueCell.textContent = row.y !== null && row.y !== undefined ? String(row.y) : '--';
+
+        // Check if value is out of range
+        const isOutOfRange = row.is_out_of_range === true || row.is_value_out_of_range === true;
+        if (isOutOfRange) {
+          valueCell.dataset.outOfRange = 'true';
+        }
+        tr.appendChild(valueCell);
+
+        // Unit cell
+        const unitCell = document.createElement('td');
+        unitCell.textContent = row.unit || '--';
+        tr.appendChild(unitCell);
+
+        // Reference Interval cell
+        const refCell = document.createElement('td');
+        refCell.textContent = buildReferenceDisplay(row);
+        tr.appendChild(refCell);
+
+        tbody.appendChild(tr);
+      });
+    }
+    table.appendChild(tbody);
+
+    tableContainer.replaceChildren(table);
+  }
+
+  /**
    * Display plot results
+   * PRD v4.7: Updated with segment control for Plot/Table view toggle
    */
   displayPlotResults(rows, plotMetadata, plotTitle) {
     // Note: Charts are destroyed via destroyAllCharts() in handlePlotResult() before this is called
@@ -1489,13 +1707,36 @@ class ConversationalSQLChat {
     // Generate unique canvas ID to support multiple concurrent plots
     const canvasId = `resultChart-${this.plotCounter++}`;
 
-    // Create plot visualization structure with parameter selector
+    // PRD v4.7: Create plot visualization structure with segment control
     const plotSection = document.createElement('div');
     plotSection.className = 'chat-plot-visualization';
     plotSection.innerHTML = `
-      <h3>${this.escapeHtml(plotTitle || 'Results')}</h3>
-      <div class="chat-plot-container">
-        <!-- Left panel: Parameter selector -->
+      <!-- Header with title and segment control -->
+      <div class="chat-plot-header">
+        <h3>${this.escapeHtml(plotTitle || 'Results')}</h3>
+        <div class="view-segment-control" role="tablist" aria-label="View options" data-active="plot">
+          <div class="segment-indicator"></div>
+          <button class="segment-button segment-button--active" id="tab-plot-${canvasId}" data-view="plot" role="tab" aria-selected="true" aria-controls="panel-plot-${canvasId}">
+            <svg class="segment-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+            </svg>
+            <span>Plot</span>
+          </button>
+          <button class="segment-button" id="tab-table-${canvasId}" data-view="table" role="tab" aria-selected="false" aria-controls="panel-table-${canvasId}" tabindex="-1">
+            <svg class="segment-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="3" y1="15" x2="21" y2="15"></line>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+            <span>Table</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main content area: sidebar + view container -->
+      <div class="chat-plot-content">
+        <!-- Parameter selector (OUTSIDE view container - always visible) -->
         <div class="chat-parameter-selector-panel">
           <h4 class="chat-parameter-selector-title">Select Parameter</h4>
           <div class="chat-parameter-list">
@@ -1503,18 +1744,25 @@ class ConversationalSQLChat {
           </div>
         </div>
 
-        <!-- Right panel: Plot -->
-        <div class="chat-plot-canvas-wrapper">
-          <div class="chat-plot-toolbar">
-            <span class="chat-plot-toolbar-hint">Pan and zoom to explore the data.</span>
+        <!-- View container with fixed height -->
+        <div class="chat-view-container">
+          <!-- Plot view (default active) -->
+          <div class="chat-view chat-view--plot chat-view--active" id="panel-plot-${canvasId}" role="tabpanel" aria-labelledby="tab-plot-${canvasId}" aria-hidden="false">
+            <div class="chat-plot-canvas-wrapper">
+              <div class="chat-plot-toolbar">
+                <span class="chat-plot-toolbar-hint">Pan and zoom to explore the data.</span>
+              </div>
+              <canvas id="${canvasId}" width="800" height="400"></canvas>
+            </div>
           </div>
-          <canvas id="${canvasId}" width="800" height="400"></canvas>
-        </div>
-      </div>
 
-      <!-- Parameter table below plot -->
-      <div class="chat-parameter-table-container">
-        <!-- Table dynamically rendered -->
+          <!-- Table view (inactive - uses CSS visibility + aria-hidden for screen readers) -->
+          <div class="chat-view chat-view--table" id="panel-table-${canvasId}" role="tabpanel" aria-labelledby="tab-table-${canvasId}" aria-hidden="true">
+            <div class="chat-scrollable-table-container">
+              <!-- Table dynamically rendered -->
+            </div>
+          </div>
+        </div>
       </div>
     `;
     this.resultsContainer.appendChild(plotSection);
@@ -1553,12 +1801,16 @@ class ConversationalSQLChat {
       // Track the chart instance
       this.charts.set(canvasId, chart);
 
-      // Attach parameter selector event listener (pass both versions)
-      this.attachParameterSelectorListener(rowsForPlot, rows, selectorContainer, canvasId, plotTitle);
+      // PRD v4.7: Initialize segment control handlers
+      this.initViewSegmentControl(plotSection, canvasId);
 
-      // Render parameter table for initial load (with out-of-range flags)
-      if (selectedParameter && filteredRowsWithOutOfRange.length > 0) {
-        this.renderParameterTable(filteredRowsWithOutOfRange, selectedParameter);
+      // Attach parameter selector event listener (pass both versions and plotSection)
+      this.attachParameterSelectorListener(rowsForPlot, rows, selectorContainer, canvasId, plotTitle, plotSection);
+
+      // PRD v4.7: Pre-render table in table view for instant switching (with out-of-range flags)
+      // Render table when there are rows, regardless of whether parameter_name exists
+      if (filteredRowsWithOutOfRange.length > 0) {
+        this.renderTableInView(plotSection, filteredRowsWithOutOfRange, selectedParameter);
       }
     } else {
       console.warn('[Chat] plotRenderer not available, showing raw data');

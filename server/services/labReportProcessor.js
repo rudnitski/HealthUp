@@ -757,6 +757,7 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       const mappingResult = await wetRun({
         reportId: persistenceResult.reportId,
         patientId: persistenceResult.patientId,
+        userId,
       });
 
       console.log(`${logPrefix} Mapping completed:`, {

@@ -3,7 +3,7 @@
 // Performs read-only analyte mapping with structured logging
 // v0.9.1: Adds Tier C (LLM-based mapping)
 
-import { pool } from '../db/index.js';
+import { pool, queryWithUser } from '../db/index.js';
 import OpenAI from 'openai';
 import { detectLanguage } from '../utils/languageDetection.js';
 import fs from 'fs';
@@ -668,10 +668,10 @@ async function processRow(row, hasPgTrgm, analyteSuggestions) {
 /**
  * Run dry-run mapping for all lab results in a report
  *
- * @param {Object} options - { report_id, patient_id, analyte_suggestions }
+ * @param {Object} options - { report_id, patient_id, user_id, analyte_suggestions }
  * @returns {Promise<Object>} - { summary, rows }
  */
-async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
+async function dryRun({ report_id, patient_id, user_id, analyte_suggestions = null }) {
   const startTime = Date.now();
 
   // Check pg_trgm availability
@@ -681,13 +681,15 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
   }
 
   // Fetch all lab results for this report
-  const { rows: labResults } = await pool.query(
+  // Use queryWithUser to respect RLS - mapping runs in user's context
+  const { rows: labResults } = await queryWithUser(
     `SELECT id, report_id, position, parameter_name, unit, numeric_result,
             result_value, reference_text
      FROM lab_results
      WHERE report_id = $1
      ORDER BY position`,
-    [report_id]
+    [report_id],
+    user_id
   );
 
   // Add patient_id to each row
@@ -1034,10 +1036,12 @@ async function dryRun({ report_id, patient_id, analyte_suggestions = null }) {
  * @param {number} analyteId - ID of matched analyte
  * @param {number} confidence - Confidence score (0-1)
  * @param {string} source - Mapping source (auto_exact, auto_fuzzy, auto_llm)
+ * @param {string} userId - User ID for RLS context
  * @returns {Promise<number>} - Number of rows updated
  */
-async function writeAnalyteId(resultId, analyteId, confidence, source) {
-  const { rowCount } = await pool.query(
+async function writeAnalyteId(resultId, analyteId, confidence, source, userId) {
+  // Use queryWithUser to respect RLS - mapping runs in user's context
+  const { rowCount } = await queryWithUser(
     `UPDATE lab_results
      SET analyte_id = $1,
          mapping_confidence = $2,
@@ -1045,7 +1049,8 @@ async function writeAnalyteId(resultId, analyteId, confidence, source) {
          mapped_at = NOW()
      WHERE id = $4
        AND analyte_id IS NULL`,
-    [analyteId, confidence, source, resultId]
+    [analyteId, confidence, source, resultId],
+    userId
   );
   return rowCount;
 }
@@ -1417,16 +1422,18 @@ async function queueAbstainForReview(rowResult) {
  * @param {Object} params
  * @param {string} params.reportId - UUID of patient_report
  * @param {string} params.patientId - UUID of patient
+ * @param {string} params.userId - User ID for RLS context
  * @param {Array} params.parameters - Lab result rows (optional, fetched if not provided)
  * @returns {Promise<Object>} - Mapping decisions + write results
  */
-async function wetRun({ reportId, patientId, parameters }) {
+async function wetRun({ reportId, patientId, userId, parameters }) {
   logger.info({ report_id: reportId }, '[wetRun] Starting write mode');
 
   // First, run dry-run to get mapping decisions
   const { summary, rows } = await dryRun({
     report_id: reportId,
     patient_id: patientId,
+    user_id: userId,
     analyte_suggestions: null
   });
 
@@ -1446,9 +1453,11 @@ async function wetRun({ reportId, patientId, parameters }) {
     const { final_decision, confidence, final_analyte, result_id } = row;
 
     // Skip if already mapped
-    const { rows: existing } = await pool.query(
+    // Use queryWithUser to respect RLS - mapping runs in user's context
+    const { rows: existing } = await queryWithUser(
       'SELECT analyte_id FROM lab_results WHERE id = $1',
-      [result_id]
+      [result_id],
+      userId
     );
 
     if (existing[0]?.analyte_id) {
@@ -1462,7 +1471,8 @@ async function wetRun({ reportId, patientId, parameters }) {
         result_id,
         final_analyte.analyte_id,
         1.0,
-        'auto_exact'
+        'auto_exact',
+        userId
       );
       if (rowsAffected > 0) {
         counters.written++;
@@ -1474,7 +1484,8 @@ async function wetRun({ reportId, patientId, parameters }) {
         result_id,
         final_analyte.analyte_id,
         confidence,
-        'auto_fuzzy'
+        'auto_fuzzy',
+        userId
       );
       if (rowsAffected > 0) {
         counters.written++;
@@ -1486,7 +1497,8 @@ async function wetRun({ reportId, patientId, parameters }) {
         result_id,
         final_analyte.analyte_id,
         confidence,
-        'auto_fuzzy_llm_confirmed'
+        'auto_fuzzy_llm_confirmed',
+        userId
       );
       if (rowsAffected > 0) {
         counters.written++;
@@ -1506,7 +1518,8 @@ async function wetRun({ reportId, patientId, parameters }) {
           result_id,
           analyteRows[0].analyte_id,
           confidence,
-          'auto_llm'
+          'auto_llm',
+          userId
         );
         if (rowsAffected > 0) {
           counters.written++;
