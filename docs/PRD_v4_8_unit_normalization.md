@@ -123,7 +123,7 @@ Screenshots from 2026-01-04 show:
 | Component | Current Behavior | Problem |
 |-----------|------------------|---------|
 | `lab_results.unit` | Stores raw OCR string | By design (audit trail) - OK |
-| `v_measurements` view | Exposes `lr.unit AS units` | No normalization |
+| `v_measurements` view | Exposes `lr.unit AS units` (raw unit string) | No normalization |
 | SQL generator prompt | Uses `unit` column directly | No normalization |
 | `plotRenderer.js` | Groups by raw unit string | Treats variants as different |
 | **Missing** | Unit normalization layer | No mapping exists |
@@ -156,9 +156,7 @@ UCUM is the healthcare industry standard for representing measurement units unam
 
 | Tool | npm Package | Purpose |
 |------|-------------|---------|
-| UCUM-LHC | `@lhncbc/ucum-lhc` | Unit validation + conversion |
-| LOINC Validator | `loinc-mapping-validator` | Has some unit alias mappings |
-| PubChem API | REST | Molecular weights for mass↔molar conversion |
+| UCUM-LHC | `@lhncbc/ucum-lhc` | Unit validation + conversion (future steps) |
 
 **Note:** None of these handle Cyrillic unit strings. We must build that mapping ourselves.
 
@@ -200,6 +198,17 @@ UCUM is the healthcare industry standard for representing measurement units unam
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### 2.2.1 Canonical Unit Policy (Step 1)
+
+**Canonical units MUST be ASCII-only** in `unit_aliases.unit_canonical`.
+
+Examples:
+- Use `umol/L`, not `μmol/L`
+- Use `uIU/mL`, not `μIU/mL`
+- Use `%o`, not `‰`
+
+**Note:** Aligning `analytes.unit_canonical` to this policy is explicitly deferred to a later PRD.
+
 ### 2.3 Implementation Phases
 
 This PRD covers **Step 1 only**. Future steps are documented for continuity.
@@ -213,7 +222,7 @@ This PRD covers **Step 1 only**. Future steps are documented for continuity.
 
 ### 2.4 Why This Phased Approach?
 
-1. **Step 1 alone fixes 90%+ of issues** - Most unit variants are predictable Cyrillic/Latin pairs
+1. **Step 1 enables a low-risk fix in Step 2** - Most unit variants are predictable Cyrillic/Latin pairs
 2. **Zero risk** - Additive change, no existing code modified
 3. **Immediately testable** - Simple SQL queries validate the mapping
 4. **Incremental value** - Each step delivers independently
@@ -225,9 +234,11 @@ This PRD covers **Step 1 only**. Future steps are documented for continuity.
 ### 3.1 Scope
 
 - Create `unit_aliases` table
+- Create `normalize_unit_string(text)` SQL helper function for pre-lookup normalization
 - Seed with known Cyrillic ↔ UCUM mappings
 - Validate with test queries
-- **No changes to existing code/views**
+- Apply seed data on **every server boot** (via `ensureSchema()`) and during database reset
+- **No changes to existing views** (v_measurements update deferred to Step 2)
 
 ### 3.2 Schema
 
@@ -243,9 +254,47 @@ CREATE INDEX idx_unit_aliases_canonical ON unit_aliases(unit_canonical);
 
 COMMENT ON TABLE unit_aliases IS 'Maps OCR unit string variations to canonical UCUM codes';
 COMMENT ON COLUMN unit_aliases.alias IS 'Raw unit string from OCR (e.g., "ммоль/л")';
-COMMENT ON COLUMN unit_aliases.unit_canonical IS 'Normalized UCUM code (e.g., "mmol/L")';
+COMMENT ON COLUMN unit_aliases.unit_canonical IS 'Normalized UCUM code (e.g., "mmol/L"). This is not an analyte-specific canonical target unit.';
 COMMENT ON COLUMN unit_aliases.source IS 'Origin: manual, fuzzy, llm';
 ```
+
+### 3.2.1 Normalization Helper Function
+
+Pre-lookup normalization ensures consistent matching even when OCR output has minor variations (extra spaces, different Unicode representations).
+
+```sql
+CREATE OR REPLACE FUNCTION normalize_unit_string(raw_unit TEXT)
+RETURNS TEXT AS $$
+BEGIN
+  RETURN NULLIF(
+    TRIM(
+      REGEXP_REPLACE(
+        NORMALIZE(COALESCE(raw_unit, ''), NFKC),
+        '\s+', ' ', 'g'  -- collapse multiple whitespace to single space
+      )
+    ),
+    ''
+  );
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
+
+COMMENT ON FUNCTION normalize_unit_string(TEXT) IS
+  'Normalizes unit strings before alias lookup: NFKC normalization, whitespace collapse, trim. Returns NULL for empty/whitespace-only input.';
+```
+
+**Normalization steps:**
+1. `COALESCE(raw_unit, '')` - Handle NULL input
+2. `NORMALIZE(..., NFKC)` - Unicode compatibility normalization (e.g., `μ` U+03BC → `µ` U+00B5)
+3. `REGEXP_REPLACE(..., '\s+', ' ')` - Collapse multiple whitespace to single space
+4. `TRIM()` - Remove leading/trailing whitespace
+5. `NULLIF(..., '')` - Return NULL for empty strings
+
+**Usage in Step 2 (v_measurements view):**
+```sql
+LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias
+```
+
+**Note:** Aliases in seed data should be pre-normalized (no leading/trailing spaces, single spaces only).
 
 ### 3.3 Seed Data
 
@@ -259,51 +308,65 @@ INSERT INTO unit_aliases (alias, unit_canonical) VALUES
   ('mmol/l', 'mmol/L'),
   ('мМоль/л', 'mmol/L'),
   ('ммоль/литр', 'mmol/L'),
+  ('ммоль / л', 'mmol/L'),
+  ('mmol / L', 'mmol/L'),
+  ('MMOL/L', 'mmol/L'),
 
   -- Micromolar (μmol/L)
-  ('мкмоль/л', 'μmol/L'),
-  ('μmol/L', 'μmol/L'),
-  ('umol/L', 'μmol/L'),
-  ('umol/l', 'μmol/L'),
-  ('мкмоль/литр', 'μmol/L'),
+  ('мкмоль/л', 'umol/L'),
+  ('μmol/L', 'umol/L'),
+  ('umol/L', 'umol/L'),
+  ('umol/l', 'umol/L'),
+  ('мкмоль/литр', 'umol/L'),
 
   -- Nanomolar (nmol/L)
   ('нмоль/л', 'nmol/L'),
   ('nmol/L', 'nmol/L'),
   ('nmol/l', 'nmol/L'),
+  ('nmol / L', 'nmol/L'),
 
   -- Picomolar (pmol/L)
   ('пмоль/л', 'pmol/L'),
   ('pmol/L', 'pmol/L'),
   ('pmol/l', 'pmol/L'),
+  ('pmol / L', 'pmol/L'),
 
   -- Mass concentration - mg/dL
   ('мг/дл', 'mg/dL'),
   ('mg/dL', 'mg/dL'),
   ('mg/dl', 'mg/dL'),
+  ('mg / dL', 'mg/dL'),
+  ('MG/DL', 'mg/dL'),
 
   -- Mass concentration - g/L
   ('г/л', 'g/L'),
   ('g/L', 'g/L'),
   ('g/l', 'g/L'),
   ('гр/л', 'g/L'),
+  ('g / L', 'g/L'),
 
   -- Mass concentration - g/dL
   ('г/дл', 'g/dL'),
   ('g/dL', 'g/dL'),
   ('g/dl', 'g/dL'),
+  ('g / dL', 'g/dL'),
 
   -- Mass concentration - mg/L
   ('мг/л', 'mg/L'),
   ('mg/L', 'mg/L'),
   ('mg/l', 'mg/L'),
+  ('mg / L', 'mg/L'),
 
   -- Microgram per liter (μg/L)
-  ('мкг/л', 'μg/L'),
-  ('μg/L', 'μg/L'),
-  ('ug/L', 'μg/L'),
-  ('ug/l', 'μg/L'),
-  ('мкг/дл', 'μg/dL'),
+  ('мкг/л', 'ug/L'),
+  ('μg/L', 'ug/L'),
+  ('ug/L', 'ug/L'),
+  ('ug/l', 'ug/L'),
+
+  -- Microgram per deciliter (ug/dL)
+  ('мкг/дл', 'ug/dL'),
+  ('ug/dL', 'ug/dL'),
+  ('ug/dl', 'ug/dL'),
 
   -- Nanogram per milliliter (ng/mL)
   ('нг/мл', 'ng/mL'),
@@ -327,19 +390,25 @@ INSERT INTO unit_aliases (alias, unit_canonical) VALUES
   ('IU/L', 'IU/L'),
   ('мМЕ/л', 'mIU/L'),
   ('mIU/L', 'mIU/L'),
-  ('мкМЕ/мл', 'μIU/mL'),
-  ('uIU/mL', 'μIU/mL'),
-  ('μIU/mL', 'μIU/mL'),
+  ('мкМЕ/мл', 'uIU/mL'),
+  ('uIU/mL', 'uIU/mL'),
+  ('μIU/mL', 'uIU/mL'),
 
-  -- Cell counts
-  ('10^9/л', '10^9/L'),
-  ('×10^9/л', '10^9/L'),
-  ('10*9/L', '10^9/L'),
-  ('тыс/мкл', '10^9/L'),
-  ('10^12/л', '10^12/L'),
-  ('×10^12/л', '10^12/L'),
-  ('10*12/L', '10^12/L'),
-  ('млн/мкл', '10^12/L'),
+  -- Cell counts (UCUM uses * not ^)
+  ('10^9/л', '10*9/L'),
+  ('×10^9/л', '10*9/L'),
+  ('10*9/L', '10*9/L'),
+  ('10^9/L', '10*9/L'),
+  ('x10^9/л', '10*9/L'),
+  ('х10^9/л', '10*9/L'),
+  ('тыс/мкл', '10*9/L'),
+  ('10^12/л', '10*12/L'),
+  ('×10^12/л', '10*12/L'),
+  ('10*12/L', '10*12/L'),
+  ('10^12/L', '10*12/L'),
+  ('x10^12/л', '10*12/L'),
+  ('х10^12/л', '10*12/L'),
+  ('млн/мкл', '10*12/L'),
 
   -- Volume units
   ('фл', 'fL'),
@@ -356,8 +425,9 @@ INSERT INTO unit_aliases (alias, unit_canonical) VALUES
   ('проц.', '%'),
 
   -- Permille
-  ('‰', '‰'),
-  ('промилле', '‰'),
+  ('%o', '%o'),
+  ('‰', '%o'),
+  ('промилле', '%o'),
 
   -- Time-based
   ('мм/час', 'mm/h'),
@@ -380,7 +450,16 @@ SELECT COUNT(*) as total_aliases,
 FROM unit_aliases;
 ```
 
-**Test 2: Check HDL data normalization**
+**Test 2: Verify normalization function works**
+```sql
+SELECT
+  normalize_unit_string('  mmol / L  ') AS spaces_trimmed,      -- Expected: 'mmol / L'
+  normalize_unit_string('μmol/L') AS greek_mu,                  -- Expected: 'μmol/L' (NFKC normalized)
+  normalize_unit_string('') AS empty_string,                    -- Expected: NULL
+  normalize_unit_string(NULL) AS null_input;                    -- Expected: NULL
+```
+
+**Test 3: Check HDL data normalization**
 ```sql
 SELECT
   lr.parameter_name,
@@ -392,12 +471,12 @@ SELECT
 FROM lab_results lr
 JOIN patient_reports pr ON pr.id = lr.report_id
 LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
-LEFT JOIN unit_aliases ua ON lr.unit = ua.alias
+LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias
 WHERE a.code = 'HDL'
 ORDER BY pr.test_date_text;
 ```
 
-**Test 3: Check Creatinine data normalization**
+**Test 4: Check Creatinine data normalization**
 ```sql
 SELECT
   lr.parameter_name,
@@ -409,18 +488,19 @@ SELECT
 FROM lab_results lr
 JOIN patient_reports pr ON pr.id = lr.report_id
 LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
-LEFT JOIN unit_aliases ua ON lr.unit = ua.alias
+LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias
 WHERE a.code = 'CREA'
 ORDER BY pr.test_date_text;
 ```
 
-**Test 4: Find unmapped units (gaps in coverage)**
+**Test 5: Find unmapped units (gaps in coverage)**
 ```sql
 SELECT
   lr.unit,
+  normalize_unit_string(lr.unit) AS unit_normalized,
   COUNT(*) as occurrences
 FROM lab_results lr
-LEFT JOIN unit_aliases ua ON lr.unit = ua.alias
+LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias
 WHERE ua.alias IS NULL
   AND lr.unit IS NOT NULL
   AND lr.unit != ''
@@ -428,19 +508,41 @@ GROUP BY lr.unit
 ORDER BY occurrences DESC;
 ```
 
+**Test 6: Overall mapping coverage**
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE ua.alias IS NOT NULL) AS mapped_rows,
+  COUNT(*) AS total_rows,
+  ROUND(100.0 * COUNT(*) FILTER (WHERE ua.alias IS NOT NULL) / NULLIF(COUNT(*),0), 2) AS mapped_pct
+FROM lab_results lr
+LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias
+WHERE lr.unit IS NOT NULL AND lr.unit <> '';
+```
+
 ### 3.5 Success Criteria
 
-1. All HDL records show same `unit_normalized` value
-2. All Creatinine records show same `unit_normalized` value
-3. Test 4 returns few/no unmapped units for common analytes
-4. No changes to existing application behavior
+1. `unit_aliases` table created with seed data
+2. `normalize_unit_string()` function created and passing Test 2
+3. All HDL records show same `unit_normalized` value (Test 3)
+4. All Creatinine records show same `unit_normalized` value (Test 4)
+5. Test 5 returns few/no unmapped units for common analytes
+6. No changes to existing application behavior (v_measurements unchanged)
 
 ### 3.6 Files to Modify
 
 | File | Change |
 |------|--------|
-| `server/db/schema.js` | Add `unit_aliases` table DDL |
+| `server/db/schema.js` | Add `unit_aliases` table DDL to `schemaStatements` array |
+| `server/db/schema.js` | Add `normalize_unit_string()` function DDL to `schemaStatements` array |
+| `server/db/schema.js` | Add `unit_aliases` seeding in `ensureSchema()` (runs on every boot) |
+| `server/db/schema.js` | Add `DROP TABLE IF EXISTS unit_aliases CASCADE` in `resetDatabase()` |
+| `server/db/schema.js` | Add `unit_aliases` seeding in `resetDatabase()` after schema recreation |
 | `server/db/seed_unit_aliases.sql` | New file with INSERT statements |
+
+**Seed on Every Boot Rationale:**
+- Uses `ON CONFLICT (alias) DO NOTHING` - idempotent, safe to run repeatedly
+- New aliases added to seed file automatically propagate to existing databases
+- No performance impact (single INSERT with conflict handling)
 
 ---
 
@@ -481,7 +583,7 @@ SELECT
 FROM lab_results lr
 JOIN patient_reports pr ON pr.id = lr.report_id
 LEFT JOIN analytes a ON a.analyte_id = lr.analyte_id
-LEFT JOIN unit_aliases ua ON lr.unit = ua.alias;            -- NEW JOIN
+LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias;  -- Uses Step 1 function
 ```
 
 **Prompt Update (prompts/agentic_sql_generator_system_prompt.txt):**
@@ -666,15 +768,20 @@ Examples: "ммоль/л" → "mmol/L", "нг/мл" → "ng/mL", "мкмоль �
 | Wrong canonical form | Use UCUM standard; validate with ucum-lhc |
 | Performance impact | Index on alias column; JOIN is O(1) |
 | Breaking existing queries | Step 1 is additive; no existing code changes |
+| IU/U comparability | Step 1 only normalizes spelling; assay-defined differences remain |
 
 ---
 
 ## 7. Success Metrics
 
 ### Step 1
-- [ ] `unit_aliases` table created
-- [ ] All test queries pass
-- [ ] <5 unmapped units for common analytes
+- [ ] `unit_aliases` table created with seed data
+- [ ] `normalize_unit_string()` function created
+- [ ] Test 1 returns expected alias count
+- [ ] Test 2 (normalization function) passes all assertions
+- [ ] Tests 3-4 show all HDL/Creatinine records with same `unit_normalized`
+- [ ] Test 5 returns <5 unmapped units for common analytes
+- [ ] Test 6 shows >95% mapping coverage
 
 ### Overall (After Step 2)
 - [ ] HDL plot shows single connected line
