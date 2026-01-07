@@ -18,6 +18,9 @@ import { updateJob, updateProgress, setJobResult, setJobError, JobStatus } from 
 import VisionProviderFactory from './vision/VisionProviderFactory.js';
 import { getDirname } from '../utils/path-helpers.js';
 import { wetRun } from './MappingApplier.js';
+import { normalizeUnitsBatch } from './unitNormalizer.js';
+import { adminPool } from '../db/index.js';
+import logger from '../utils/logger.js';
 
 const __dirname = getDirname(import.meta.url);
 
@@ -746,6 +749,43 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       });
 
       throw new Error(`Unable to save lab report: ${error.message}`);
+    }
+
+    // PRD v4.8.2: Post-persistence unit normalization (LLM fallback)
+    updateProgress(jobId, 87, 'Normalizing units');
+
+    try {
+      // Fetch lab_results for this report (with auto-generated IDs)
+      // Use adminPool to bypass RLS - we're querying our own just-persisted data
+      const { rows: labResultRows } = await adminPool.query(
+        `SELECT id, unit, parameter_name FROM lab_results
+         WHERE report_id = $1
+         AND unit IS NOT NULL
+         AND unit <> ''`,
+        [persistenceResult.reportId]
+      );
+
+      if (labResultRows.length > 0) {
+        const unitsToNormalize = labResultRows.map(row => ({
+          unit: row.unit,           // RAW OCR unit (stored in DB)
+          resultId: row.id,         // Actual auto-generated UUID from lab_results
+          parameterName: row.parameter_name  // Context for LLM normalization
+        }));
+
+        const normalizationCache = await normalizeUnitsBatch(unitsToNormalize);
+
+        logger.info({
+          report_id: persistenceResult.reportId,
+          total_units: unitsToNormalize.length,
+          unique_units: normalizationCache.size
+        }, '[unitNormalizer] Unit normalization completed');
+      }
+    } catch (normalizationError) {
+      // Non-fatal: units will use raw values until manually mapped
+      logger.error({
+        error: normalizationError.message,
+        report_id: persistenceResult.reportId
+      }, `${logPrefix} Unit normalization failed (non-fatal)`);
     }
 
     // Run automatic analyte mapping

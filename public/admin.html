@@ -77,6 +77,11 @@
             <span class="admin-tab-label">Ambiguous Matches</span>
             <span id="ambiguous-count" class="admin-tab-badge">0</span>
           </button>
+          <button id="tab-unit-reviews" class="admin-tab" data-tab="unit-reviews">
+            <span class="admin-tab-icon">📐</span>
+            <span class="admin-tab-label">Unit Issues</span>
+            <span id="unit-reviews-count" class="admin-tab-badge">0</span>
+          </button>
           <button id="tab-danger-zone" class="admin-tab admin-tab-danger" data-tab="danger-zone">
             <span class="admin-tab-icon">⚠️</span>
             <span class="admin-tab-label">Danger Zone</span>
@@ -162,6 +167,50 @@
                     </tr>
                   </thead>
                   <tbody id="tbody-ambiguous">
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab Content: Unit Reviews (PRD v4.8.2) -->
+        <section id="content-unit-reviews" class="tab-content" aria-live="polite" hidden>
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Unit Normalization Issues</h2>
+              <p class="card-subtitle">Review and resolve problematic unit normalizations</p>
+            </div>
+            <div class="card-body">
+              <div id="loading-unit-reviews" class="loading-state" hidden>
+                <div class="loading-spinner"></div>
+                <p>Loading unit reviews...</p>
+              </div>
+
+              <div id="empty-unit-reviews" class="empty-state" hidden>
+                <div class="empty-state-icon">✅</div>
+                <div class="empty-state-title">All caught up!</div>
+                <p class="empty-state-desc">No unit issues to review.</p>
+              </div>
+
+              <div id="error-unit-reviews" class="error-state" hidden>
+                <p class="error-message"></p>
+              </div>
+
+              <div class="table-wrapper" id="table-unit-reviews-wrapper" hidden>
+                <table id="table-unit-reviews" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Raw Unit</th>
+                      <th>LLM Suggestion</th>
+                      <th>Issue Type</th>
+                      <th>Confidence</th>
+                      <th>Details</th>
+                      <th>Created</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-unit-reviews">
                   </tbody>
                 </table>
               </div>

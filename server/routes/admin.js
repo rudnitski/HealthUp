@@ -59,7 +59,6 @@ router.get('/pending-analytes', async (req, res) => {
          pending_id,
          proposed_code,
          proposed_name,
-         unit_canonical,
          confidence,
          evidence,
          parameter_variations,
@@ -126,13 +125,12 @@ router.post('/approve-analyte', async (req, res) => {
 
     // Insert into analytes table
     const { rows: newAnalyteRows } = await client.query(
-      `INSERT INTO analytes (code, name, unit_canonical)
-       VALUES ($1, $2, $3)
+      `INSERT INTO analytes (code, name)
+       VALUES ($1, $2)
        RETURNING analyte_id`,
       [
         pending.proposed_code,
-        pending.proposed_name,
-        pending.unit_canonical
+        pending.proposed_name
       ]
     );
 
@@ -607,6 +605,267 @@ router.post('/reset-database', async (req, res) => {
       error: 'Failed to reset database',
       message: error.message
     });
+  }
+});
+
+// ========================================================================
+// PRD v4.8.2: Unit Normalization Admin Review Endpoints
+// ========================================================================
+
+/**
+ * GET /api/admin/unit-reviews
+ * Fetch pending unit normalization issues
+ */
+router.get('/unit-reviews', async (req, res) => {
+  try {
+    const status = req.query.status || 'pending';
+
+    let whereClause = '';
+    if (status !== 'all') {
+      whereClause = 'WHERE ur.status = $1';
+    }
+
+    const { rows } = await queryAsAdmin(
+      `SELECT
+         ur.review_id,
+         ur.result_id,
+         ur.raw_unit,
+         ur.normalized_input,
+         ur.llm_suggestion,
+         ur.llm_confidence,
+         ur.llm_model,
+         ur.issue_type,
+         ur.issue_details,
+         ur.status,
+         ur.created_at,
+         lr.parameter_name,
+         lr.result_value,
+         lr.unit as result_unit
+       FROM unit_reviews ur
+       LEFT JOIN lab_results lr ON ur.result_id = lr.id
+       ${whereClause}
+       ORDER BY ur.created_at DESC`,
+      status !== 'all' ? [status] : []
+    );
+
+    res.json({ reviews: rows });
+  } catch (error) {
+    logger.error({ error: error.message }, 'Failed to fetch unit reviews');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/admin/approve-unit-normalization
+ * Approve LLM suggestion and create alias
+ */
+router.post('/approve-unit-normalization', async (req, res) => {
+  const client = await adminPool.connect();
+
+  try {
+    const { review_id, create_alias = true } = req.body;
+
+    if (!review_id) {
+      return res.status(400).json({ error: 'review_id is required' });
+    }
+
+    await client.query('BEGIN');
+
+    // Fetch review details
+    const { rows: reviewRows } = await client.query(
+      'SELECT * FROM unit_reviews WHERE review_id = $1',
+      [review_id]
+    );
+
+    if (reviewRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Unit review not found' });
+    }
+
+    const review = reviewRows[0];
+
+    if (!review.llm_suggestion) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No LLM suggestion to approve' });
+    }
+
+    // Create alias if requested
+    let aliasCreated = false;
+    if (create_alias) {
+      await client.query(
+        `INSERT INTO unit_aliases (alias, unit_canonical, source, learn_count, last_used_at)
+         VALUES ($1, $2, 'admin_approved', 1, NOW())
+         ON CONFLICT (alias) DO UPDATE SET
+           unit_canonical = EXCLUDED.unit_canonical,
+           source = EXCLUDED.source,
+           learn_count = unit_aliases.learn_count + 1,
+           last_used_at = NOW()`,
+        [review.normalized_input, review.llm_suggestion]
+      );
+      aliasCreated = true;
+    }
+
+    // Mark review as resolved
+    await client.query(
+      `UPDATE unit_reviews
+       SET status = 'resolved',
+           resolved_at = NOW(),
+           resolved_by = $1,
+           resolved_action = 'approved',
+           updated_at = NOW()
+       WHERE review_id = $2`,
+      [req.user?.email || 'admin', review_id]
+    );
+
+    await client.query('COMMIT');
+
+    // Log admin action
+    await logAdminAction('approve_unit_normalization', 'unit_review', review_id, {
+      raw_unit: review.raw_unit,
+      llm_suggestion: review.llm_suggestion,
+      alias_created: aliasCreated
+    }, req);
+
+    logger.info({ review_id, alias_created: aliasCreated }, 'Unit normalization approved');
+
+    res.json({
+      success: true,
+      canonical: review.llm_suggestion,
+      alias_created: aliasCreated
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error({ error: error.message }, 'Failed to approve unit normalization');
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * POST /api/admin/reject-unit-normalization
+ * Reject LLM suggestion, keep raw unit
+ */
+router.post('/reject-unit-normalization', async (req, res) => {
+  try {
+    const { review_id, reason } = req.body;
+
+    if (!review_id) {
+      return res.status(400).json({ error: 'review_id is required' });
+    }
+
+    const { rows } = await queryAsAdmin(
+      `UPDATE unit_reviews
+       SET status = 'resolved',
+           resolved_at = NOW(),
+           resolved_by = $1,
+           resolved_action = 'rejected',
+           updated_at = NOW()
+       WHERE review_id = $2
+       RETURNING raw_unit`,
+      [req.user?.email || 'admin', review_id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Unit review not found' });
+    }
+
+    // Log admin action
+    await logAdminAction('reject_unit_normalization', 'unit_review', review_id, {
+      raw_unit: rows[0].raw_unit,
+      reason: reason || 'No reason provided'
+    }, req);
+
+    logger.info({ review_id, reason }, 'Unit normalization rejected');
+
+    res.json({
+      success: true,
+      message: 'LLM suggestion rejected, raw unit will be used'
+    });
+  } catch (error) {
+    logger.error({ error: error.message }, 'Failed to reject unit normalization');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/admin/override-unit-normalization
+ * Admin manually enters canonical unit
+ */
+router.post('/override-unit-normalization', async (req, res) => {
+  const client = await adminPool.connect();
+
+  try {
+    const { review_id, canonical_override } = req.body;
+
+    if (!review_id || !canonical_override) {
+      return res.status(400).json({
+        error: 'review_id and canonical_override are required'
+      });
+    }
+
+    await client.query('BEGIN');
+
+    // Fetch review
+    const { rows: reviewRows } = await client.query(
+      'SELECT * FROM unit_reviews WHERE review_id = $1',
+      [review_id]
+    );
+
+    if (reviewRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Unit review not found' });
+    }
+
+    const review = reviewRows[0];
+
+    // Create alias with admin override
+    await client.query(
+      `INSERT INTO unit_aliases (alias, unit_canonical, source, learn_count, last_used_at)
+       VALUES ($1, $2, 'admin_approved', 1, NOW())
+       ON CONFLICT (alias) DO UPDATE SET
+         unit_canonical = EXCLUDED.unit_canonical,
+         learn_count = unit_aliases.learn_count + 1,
+         last_used_at = NOW()`,
+      [review.normalized_input, canonical_override]
+    );
+
+    // Mark review as resolved
+    await client.query(
+      `UPDATE unit_reviews
+       SET status = 'resolved',
+           resolved_at = NOW(),
+           resolved_by = $1,
+           resolved_action = 'manual_override',
+           updated_at = NOW()
+       WHERE review_id = $2`,
+      [req.user?.email || 'admin', review_id]
+    );
+
+    await client.query('COMMIT');
+
+    // Log admin action
+    await logAdminAction('override_unit_normalization', 'unit_review', review_id, {
+      raw_unit: review.raw_unit,
+      llm_suggestion: review.llm_suggestion,
+      admin_override: canonical_override
+    }, req);
+
+    logger.info({
+      review_id,
+      canonical_override
+    }, 'Unit normalization overridden by admin');
+
+    res.json({
+      success: true,
+      canonical: canonical_override
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error({ error: error.message }, 'Failed to override unit normalization');
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  } finally {
+    client.release();
   }
 });
 

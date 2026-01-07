@@ -69,7 +69,6 @@ const schemaStatements = [
     analyte_id SERIAL PRIMARY KEY,
     code TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    unit_canonical TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
@@ -83,8 +82,17 @@ const schemaStatements = [
   `
   COMMENT ON COLUMN analytes.name IS 'Canonical English name for display';
   `,
+  // Migration: Drop unit_canonical column if it exists (no longer used - units normalized via unit_aliases)
   `
-  COMMENT ON COLUMN analytes.unit_canonical IS 'Standardized unit of measurement for this analyte. May differ from lab_results.unit which contains raw OCR values.';
+  DO $$
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'analytes' AND column_name = 'unit_canonical'
+    ) THEN
+      ALTER TABLE analytes DROP COLUMN unit_canonical;
+    END IF;
+  END $$;
   `,
   `
   CREATE TABLE IF NOT EXISTS analyte_aliases (
@@ -106,6 +114,67 @@ const schemaStatements = [
   `,
   `
   COMMENT ON COLUMN analyte_aliases.alias_display IS 'Original display form with proper casing and punctuation';
+  `,
+  // PRD v4.8: Unit normalization table
+  // PRD v4.8.2: Added learn_count and last_used_at for LLM auto-learning
+  `
+  CREATE TABLE IF NOT EXISTS unit_aliases (
+    alias TEXT PRIMARY KEY,
+    unit_canonical TEXT NOT NULL,
+    source TEXT DEFAULT 'manual',
+    -- PRD v4.8.2: Quality metric columns for auto-learning
+    learn_count INTEGER DEFAULT 0,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  `,
+  `
+  COMMENT ON TABLE unit_aliases IS 'Maps OCR unit string variations to canonical UCUM codes';
+  `,
+  `
+  COMMENT ON COLUMN unit_aliases.alias IS 'Raw unit string from OCR (e.g., "ммоль/л")';
+  `,
+  `
+  COMMENT ON COLUMN unit_aliases.unit_canonical IS 'Normalized UCUM code (e.g., "mmol/L"). This is not an analyte-specific canonical target unit.';
+  `,
+  `
+  COMMENT ON COLUMN unit_aliases.source IS 'Origin: manual, seed, llm, admin_approved';
+  `,
+  // PRD v4.8.2: Add new columns to existing unit_aliases table (migration for existing data)
+  // MUST run BEFORE COMMENT ON COLUMN for these columns
+  `
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'unit_aliases' AND column_name = 'learn_count'
+    ) THEN
+      ALTER TABLE unit_aliases ADD COLUMN learn_count INTEGER DEFAULT 0;
+    END IF;
+  END $$;
+  `,
+  `
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'unit_aliases' AND column_name = 'last_used_at'
+    ) THEN
+      ALTER TABLE unit_aliases ADD COLUMN last_used_at TIMESTAMPTZ;
+    END IF;
+  END $$;
+  `,
+  `
+  COMMENT ON COLUMN unit_aliases.learn_count IS 'Number of times this alias was auto-learned via concurrent calls to normalizeUnit(). Incremented on ON CONFLICT only if canonical matches. For seed/manual aliases, remains 0 (never auto-learned). Use for quality assessment and rollback decisions.';
+  `,
+  `
+  COMMENT ON COLUMN unit_aliases.last_used_at IS 'Timestamp of most recent AUTO-LEARN event (not query usage). Tracks when normalizeUnit() last wrote/updated this row. NULL for seed/manual aliases (never auto-learned). Use to identify stale learned aliases for review.';
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_unit_aliases_canonical ON unit_aliases(unit_canonical);
+  `,
+  `
+  GRANT SELECT ON unit_aliases TO healthup_user;
   `,
   `
   CREATE TABLE IF NOT EXISTS lab_results (
@@ -175,7 +244,6 @@ const schemaStatements = [
     pending_id BIGSERIAL PRIMARY KEY,
     proposed_code TEXT UNIQUE NOT NULL,
     proposed_name TEXT NOT NULL,
-    unit_canonical TEXT,
     evidence JSONB,
     parameter_variations JSONB,
     confidence REAL,
@@ -188,6 +256,18 @@ const schemaStatements = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  `,
+  // Migration: Drop unit_canonical column from pending_analytes if it exists
+  `
+  DO $$
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'pending_analytes' AND column_name = 'unit_canonical'
+    ) THEN
+      ALTER TABLE pending_analytes DROP COLUMN unit_canonical;
+    END IF;
+  END $$;
   `,
   `
   COMMENT ON TABLE pending_analytes IS 'LLM-proposed NEW analytes awaiting admin review';
@@ -221,6 +301,77 @@ const schemaStatements = [
   `,
   `
   COMMENT ON COLUMN match_reviews.resolved_at IS 'Timestamp when admin resolved this ambiguous match';
+  `,
+  // PRD v4.8.2: Unit normalization admin review queue
+  `
+  CREATE TABLE IF NOT EXISTS unit_reviews (
+    review_id BIGSERIAL PRIMARY KEY,
+    result_id UUID NOT NULL UNIQUE REFERENCES lab_results(id) ON DELETE CASCADE,
+    raw_unit TEXT NOT NULL,
+    normalized_input TEXT NOT NULL,
+    llm_suggestion TEXT,
+    llm_confidence TEXT,
+    llm_model TEXT,
+    issue_type TEXT NOT NULL,
+    issue_details JSONB,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_at TIMESTAMPTZ,
+    resolved_by TEXT,
+    resolved_action TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT chk_confidence CHECK (llm_confidence IN ('high', 'medium', 'low') OR llm_confidence IS NULL),
+    CONSTRAINT chk_status CHECK (status IN ('pending', 'resolved', 'skipped')),
+    CONSTRAINT chk_issue_type CHECK (issue_type IN ('low_confidence', 'alias_conflict', 'llm_error', 'sanitization_rejected', 'ucum_invalid'))
+  );
+  `,
+  // PRD v4.8.3: Migration for existing databases with old constraint
+  // Note: Uses pg_get_constraintdef() for PostgreSQL 12+ compatibility (consrc was removed)
+  `
+  DO $$
+  BEGIN
+    -- Drop and recreate constraint if it doesn't include ucum_invalid
+    IF EXISTS (
+      SELECT 1 FROM pg_constraint c
+      WHERE c.conname = 'chk_issue_type'
+      AND c.conrelid = 'unit_reviews'::regclass
+      AND pg_get_constraintdef(c.oid) NOT LIKE '%ucum_invalid%'
+    ) THEN
+      ALTER TABLE unit_reviews DROP CONSTRAINT chk_issue_type;
+      ALTER TABLE unit_reviews ADD CONSTRAINT chk_issue_type
+        CHECK (issue_type IN ('low_confidence', 'alias_conflict', 'llm_error', 'sanitization_rejected', 'ucum_invalid'));
+    END IF;
+  END $$;
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_unit_reviews_status ON unit_reviews(status) WHERE status = 'pending';
+  `,
+  // PRD v4.8.3: Partial unique index to prevent duplicate pending reviews for same raw_unit
+  `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_unit_reviews_pending_unique
+    ON unit_reviews (raw_unit)
+    WHERE status = 'pending';
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_unit_reviews_result_id ON unit_reviews(result_id);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_unit_reviews_raw_unit ON unit_reviews(raw_unit);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_unit_reviews_created_at ON unit_reviews(created_at DESC);
+  `,
+  `
+  COMMENT ON TABLE unit_reviews IS 'Admin review queue for problematic unit normalizations. Similar to match_reviews for ambiguous analytes, but for unit mapping issues.';
+  `,
+  `
+  COMMENT ON COLUMN unit_reviews.issue_type IS 'Type of issue: low_confidence (LLM not confident), alias_conflict (existing alias maps to different canonical), llm_error (LLM API failed), sanitization_rejected (unsafe input), ucum_invalid (LLM returned invalid UCUM code)';
+  `,
+  `
+  COMMENT ON COLUMN unit_reviews.issue_details IS 'Structured details: {message: string, existing_canonical?: string (for conflicts), error?: string (for failures), attempts?: int (for retries)}';
+  `,
+  `
+  COMMENT ON COLUMN unit_reviews.resolved_action IS 'How admin resolved: approved (use LLM suggestion), rejected (keep raw unit), manual_override (admin entered custom canonical)';
   `,
   `
   CREATE TABLE IF NOT EXISTS admin_actions (
@@ -357,9 +508,34 @@ const schemaStatements = [
   CREATE INDEX IF NOT EXISTS idx_gmail_provenance_message
     ON gmail_report_provenance(message_id);
   `,
-  // Views
+  // PRD v4.8: Unit normalization helper function (MUST be defined before v_measurements view)
   `
-  CREATE OR REPLACE VIEW v_measurements AS
+  CREATE OR REPLACE FUNCTION normalize_unit_string(raw_unit TEXT)
+  RETURNS TEXT AS $$
+  BEGIN
+    RETURN NULLIF(
+      TRIM(
+        REGEXP_REPLACE(
+          NORMALIZE(COALESCE(raw_unit, ''), NFKC),
+          '\\s+', ' ', 'g'
+        )
+      ),
+      ''
+    );
+  END;
+  $$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
+  `,
+  `
+  COMMENT ON FUNCTION normalize_unit_string(TEXT) IS
+    'Normalizes unit strings before alias lookup: NFKC normalization, whitespace collapse, trim. Returns NULL for empty/whitespace-only input.';
+  `,
+  // Views
+  // PRD v4.4: security_invoker=true ensures RLS uses the querying user's context,
+  // not the view owner's. This is critical for admin queries to work correctly.
+  `
+  CREATE OR REPLACE VIEW v_measurements
+  WITH (security_invoker = true)
+  AS
   SELECT
     lr.id AS result_id,
     pr.patient_id,
@@ -376,10 +552,15 @@ const schemaStatements = [
     lr.reference_lower_operator,
     lr.reference_upper_operator,
     lr.is_value_out_of_range,
-    lr.specimen_type
+    lr.specimen_type,
+    COALESCE(ua.unit_canonical, lr.unit) AS unit_normalized
   FROM lab_results lr
   JOIN patient_reports pr ON pr.id = lr.report_id
-  LEFT JOIN analytes a ON a.analyte_id = lr.analyte_id;
+  LEFT JOIN analytes a ON a.analyte_id = lr.analyte_id
+  LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias;
+  `,
+  `
+  COMMENT ON COLUMN v_measurements.unit_normalized IS 'Canonical UCUM unit code after normalization via unit_aliases table. Falls back to raw unit if no mapping exists. Use this for plotting and aggregation queries.';
   `,
   // ============================================================
   // AUTHENTICATION TABLES (Part 1)
@@ -688,6 +869,20 @@ async function ensureSchema() {
     }
 
     await client.query('COMMIT');
+
+    // PRD v4.8: Seed unit_aliases on every boot (idempotent with ON CONFLICT DO NOTHING)
+    const unitAliasesSeedPath = path.join(__dirname, 'seed_unit_aliases.sql');
+    if (fs.existsSync(unitAliasesSeedPath)) {
+      try {
+        const seedSQL = fs.readFileSync(unitAliasesSeedPath, 'utf8');
+        await client.query(seedSQL);
+        console.log('[db] Unit aliases seeded successfully');
+      } catch (seedError) {
+        console.warn('[db] Failed to seed unit_aliases:', seedError);
+      }
+    } else {
+      console.warn('[db] Unit aliases seed file not found:', unitAliasesSeedPath);
+    }
   } catch (error) {
     if (transactionStarted) {
       await client.query('ROLLBACK');
@@ -718,12 +913,14 @@ async function resetDatabase() {
     await client.query('DROP TABLE IF EXISTS admin_actions CASCADE');
     await client.query('DROP TABLE IF EXISTS sql_generation_logs CASCADE');
     await client.query('DROP TABLE IF EXISTS match_reviews CASCADE');
+    await client.query('DROP TABLE IF EXISTS unit_reviews CASCADE');
     await client.query('DROP TABLE IF EXISTS pending_analytes CASCADE');
     await client.query('DROP TABLE IF EXISTS gmail_report_provenance CASCADE');
     await client.query('DROP TABLE IF EXISTS lab_results CASCADE');
     await client.query('DROP TABLE IF EXISTS patient_reports CASCADE');
     await client.query('DROP TABLE IF EXISTS patients CASCADE');
     await client.query('DROP TABLE IF EXISTS analyte_aliases CASCADE');
+    await client.query('DROP TABLE IF EXISTS unit_aliases CASCADE');
     await client.query('DROP TABLE IF EXISTS analytes CASCADE');
 
     // Drop views
@@ -744,6 +941,17 @@ async function resetDatabase() {
       console.log('[db] Analytes seeded successfully');
     } else {
       console.warn('[db] Seed file not found:', seedPath);
+    }
+
+    // Re-seed unit_aliases (PRD v4.8)
+    const unitAliasesSeedPath = path.join(__dirname, 'seed_unit_aliases.sql');
+    if (fs.existsSync(unitAliasesSeedPath)) {
+      console.log('[db] Reseeding unit aliases...');
+      const unitAliasesSeedSQL = fs.readFileSync(unitAliasesSeedPath, 'utf8');
+      await client.query(unitAliasesSeedSQL);
+      console.log('[db] Unit aliases seeded successfully');
+    } else {
+      console.warn('[db] Unit aliases seed file not found:', unitAliasesSeedPath);
     }
 
     console.log('[db] ✅ Database reset complete!');

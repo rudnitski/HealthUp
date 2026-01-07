@@ -88,6 +88,7 @@ function initializeAdminPanel() {
   // State
   let pendingAnalytes = [];
   let ambiguousMatches = [];
+  let unitReviews = [];
 
   // DOM Elements
   const tabButtons = document.querySelectorAll('.admin-tab');
@@ -111,6 +112,15 @@ function initializeAdminPanel() {
   const tableAmbiguous = document.getElementById('table-ambiguous');
   const tbodyAmbiguous = document.getElementById('tbody-ambiguous');
   const ambiguousCount = document.getElementById('ambiguous-count');
+
+  // Unit Reviews Tab (PRD v4.8.2)
+  const loadingUnitReviews = document.getElementById('loading-unit-reviews');
+  const emptyUnitReviews = document.getElementById('empty-unit-reviews');
+  const errorUnitReviews = document.getElementById('error-unit-reviews');
+  const tableUnitReviewsWrapper = document.getElementById('table-unit-reviews-wrapper');
+  const tableUnitReviews = document.getElementById('table-unit-reviews');
+  const tbodyUnitReviews = document.getElementById('tbody-unit-reviews');
+  const unitReviewsCount = document.getElementById('unit-reviews-count');
 
   // Modals
   const detailsModal = document.getElementById('details-modal');
@@ -621,6 +631,208 @@ function initializeAdminPanel() {
     return div.innerHTML;
   }
 
+  // === UNIT REVIEWS (PRD v4.8.2) ===
+
+  // Fetch Unit Reviews
+  async function fetchUnitReviews() {
+    loadingUnitReviews.hidden = false;
+    errorUnitReviews.hidden = true;
+    tableUnitReviewsWrapper.hidden = true;
+    tableUnitReviews.hidden = true;
+    emptyUnitReviews.hidden = true;
+
+    try {
+      const response = await fetch('/api/admin/unit-reviews?status=pending');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      unitReviews = data.reviews || [];
+      unitReviewsCount.textContent = unitReviews.length;
+
+      renderUnitReviews();
+    } catch (error) {
+      console.error('Failed to fetch unit reviews:', error);
+      errorUnitReviews.querySelector('.error-message').textContent = `Error: ${error.message}`;
+      errorUnitReviews.hidden = false;
+    } finally {
+      loadingUnitReviews.hidden = true;
+    }
+  }
+
+  // Helper: Get badge class for issue type
+  function getIssueTypeBadge(issueType) {
+    const badges = {
+      'low_confidence': 'warning',
+      'alias_conflict': 'danger',
+      'llm_error': 'danger',
+      'sanitization_rejected': 'danger',
+      'ucum_invalid': 'danger'  // PRD v4.8.3: UCUM validation errors
+    };
+    return badges[issueType] || 'secondary';
+  }
+
+  // Helper: Format date
+  function formatDate(dateStr) {
+    if (!dateStr) return '—';
+    return new Date(dateStr).toLocaleDateString();
+  }
+
+  // Render Unit Reviews Table
+  function renderUnitReviews() {
+    tbodyUnitReviews.innerHTML = '';
+
+    if (unitReviews.length === 0) {
+      emptyUnitReviews.hidden = false;
+      tableUnitReviewsWrapper.hidden = true;
+      tableUnitReviews.hidden = true;
+      return;
+    }
+
+    emptyUnitReviews.hidden = true;
+    tableUnitReviewsWrapper.hidden = false;
+    tableUnitReviews.hidden = false;
+
+    unitReviews.forEach(review => {
+      const row = document.createElement('tr');
+      row.className = 'admin-row';
+      row.dataset.reviewId = review.review_id;
+
+      const issueDetails = review.issue_details || {};
+      // PRD v4.8.3: For ucum_invalid, show UCUM validation errors
+      let detailsText = issueDetails.message || '—';
+      if (review.issue_type === 'ucum_invalid' && issueDetails.ucum_errors) {
+        detailsText = issueDetails.ucum_errors.join('; ');
+      }
+
+      row.innerHTML = `
+        <td class="code-cell">${escapeHtml(review.raw_unit)}</td>
+        <td>${review.llm_suggestion ? escapeHtml(review.llm_suggestion) : '<em>N/A</em>'}</td>
+        <td><span class="badge badge-${getIssueTypeBadge(review.issue_type)}">${escapeHtml(review.issue_type)}</span></td>
+        <td>${review.llm_confidence || 'N/A'}</td>
+        <td title="${escapeHtml(detailsText)}">${escapeHtml(detailsText.substring(0, 50))}${detailsText.length > 50 ? '...' : ''}</td>
+        <td>${formatDate(review.created_at)}</td>
+        <td class="actions-cell">
+          ${review.llm_suggestion ? `<button class="action-btn approve-btn unit-approve-btn" data-id="${review.review_id}">Approve</button>` : ''}
+          <button class="action-btn discard-btn unit-reject-btn" data-id="${review.review_id}">Reject</button>
+          <button class="action-btn details-btn unit-override-btn" data-id="${review.review_id}">Override</button>
+        </td>
+      `;
+
+      tbodyUnitReviews.appendChild(row);
+    });
+
+    // Add event listeners for unit review actions
+    document.querySelectorAll('.unit-approve-btn').forEach(btn => {
+      btn.addEventListener('click', () => handleApproveUnitNormalization(btn.dataset.id));
+    });
+
+    document.querySelectorAll('.unit-reject-btn').forEach(btn => {
+      btn.addEventListener('click', () => handleRejectUnitNormalization(btn.dataset.id));
+    });
+
+    document.querySelectorAll('.unit-override-btn').forEach(btn => {
+      btn.addEventListener('click', () => handleOverrideUnitNormalization(btn.dataset.id));
+    });
+  }
+
+  // Handle Approve Unit Normalization
+  async function handleApproveUnitNormalization(reviewId) {
+    const review = unitReviews.find(r => r.review_id == reviewId);
+    if (!review) return;
+
+    const confirmed = await confirm(
+      'Approve Unit Normalization',
+      `Approve LLM suggestion?\n\nRaw unit: "${review.raw_unit}"\nCanonical: "${review.llm_suggestion}"\n\nThis will create an alias for future exact matches.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch('/api/admin/approve-unit-normalization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_id: reviewId, create_alias: true })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || `HTTP ${response.status}`);
+      }
+
+      showToast('Unit normalization approved! Alias created.', 'success');
+      await fetchUnitReviews();
+    } catch (error) {
+      console.error('Failed to approve unit normalization:', error);
+      showToast(`Error: ${error.message}`, 'error');
+    }
+  }
+
+  // Handle Reject Unit Normalization
+  async function handleRejectUnitNormalization(reviewId) {
+    const review = unitReviews.find(r => r.review_id == reviewId);
+    if (!review) return;
+
+    const reason = prompt(
+      `Reject LLM suggestion for "${review.raw_unit}"?\n\nOptional: Enter reason for rejection:`
+    );
+
+    if (reason === null) return; // User cancelled
+
+    try {
+      const response = await fetch('/api/admin/reject-unit-normalization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_id: reviewId, reason })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || `HTTP ${response.status}`);
+      }
+
+      showToast('Unit normalization rejected. Raw unit will be used.', 'success');
+      await fetchUnitReviews();
+    } catch (error) {
+      console.error('Failed to reject unit normalization:', error);
+      showToast(`Error: ${error.message}`, 'error');
+    }
+  }
+
+  // Handle Override Unit Normalization
+  async function handleOverrideUnitNormalization(reviewId) {
+    const review = unitReviews.find(r => r.review_id == reviewId);
+    if (!review) return;
+
+    const canonical = prompt(
+      `Override unit normalization for "${review.raw_unit}"?\n\n` +
+      `LLM suggested: ${review.llm_suggestion || 'N/A'}\n\n` +
+      `Enter the correct canonical unit (e.g., "mmol/L", "ug/L"):`
+    );
+
+    if (!canonical) return; // User cancelled or empty
+
+    try {
+      const response = await fetch('/api/admin/override-unit-normalization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_id: reviewId, canonical_override: canonical })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || `HTTP ${response.status}`);
+      }
+
+      showToast(`Unit normalization overridden to "${canonical}"!`, 'success');
+      await fetchUnitReviews();
+    } catch (error) {
+      console.error('Failed to override unit normalization:', error);
+      showToast(`Error: ${error.message}`, 'error');
+    }
+  }
+
   // === DANGER ZONE FUNCTIONALITY ===
 
   const resetDatabaseBtn = document.getElementById('reset-database-btn');
@@ -672,6 +884,7 @@ function initializeAdminPanel() {
       setTimeout(async () => {
         await fetchPendingAnalytes();
         await fetchAmbiguousMatches();
+        await fetchUnitReviews();
       }, 1000);
 
     } catch (error) {
@@ -694,6 +907,7 @@ function initializeAdminPanel() {
   async function init() {
     await fetchPendingAnalytes();
     await fetchAmbiguousMatches();
+    await fetchUnitReviews();
   }
 
   init();

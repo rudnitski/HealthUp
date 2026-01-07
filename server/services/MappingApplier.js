@@ -1110,8 +1110,8 @@ async function queueNewAnalyte(rowResult) {
   try {
     await pool.query(
       `INSERT INTO pending_analytes
-         (proposed_code, proposed_name, unit_canonical, confidence, evidence, status, parameter_variations)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+         (proposed_code, proposed_name, confidence, evidence, status, parameter_variations)
+       VALUES ($1, $2, $3, $4, 'pending', $5)
        ON CONFLICT (proposed_code) DO UPDATE SET
          confidence = GREATEST(pending_analytes.confidence, EXCLUDED.confidence),
          evidence = CASE
@@ -1135,7 +1135,6 @@ async function queueNewAnalyte(rowResult) {
       [
         llm.code,
         llm.name,
-        unit,
         llm.confidence,
         JSON.stringify(evidence),
         JSON.stringify(parameterVariations)

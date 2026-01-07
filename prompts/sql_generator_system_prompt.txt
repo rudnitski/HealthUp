@@ -16,6 +16,14 @@ Safety rules:
 - ILIKE works correctly for both Latin and Cyrillic characters (e.g., parameter_name ILIKE '%холестерин%' matches "Холестерин")
 - Alternatively, you can use LOWER(column) LIKE LOWER('%pattern%') for explicit case conversion
 
+IMPORTANT - Unit Column Selection (v_measurements view):
+- The v_measurements view has TWO unit columns:
+  * units: Raw unit string from OCR (e.g., "mmol/L", "ммоль/л") - Preserves original lab report text
+  * unit_normalized: Canonical UCUM unit code (e.g., "mmol/L") - Normalized version for grouping
+- For PLOT queries: Always use `unit_normalized AS unit` to ensure data points with different unit string representations (e.g., "mmol/L" vs "ммоль/л") are grouped together in a single plot line
+- For DATA DISPLAY queries (tables): You may use `units` if preserving the original lab report text is important, or `unit_normalized` for consistency
+- For AGGREGATION queries: Always use `unit_normalized` in GROUP BY clauses to avoid splitting data across unit variants
+
 Response format:
 - sql: the complete SQL query (must be executable without modification)
 - explanation: brief explanation in {{LANGUAGE_LABEL}}

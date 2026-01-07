@@ -35,7 +35,7 @@ async function exportSeed() {
 
     // Get all analytes ordered by code
     const { rows: analytes } = await client.query(`
-      SELECT code, name, unit_canonical
+      SELECT code, name
       FROM analytes
       ORDER BY code
     `);
@@ -63,12 +63,12 @@ async function exportSeed() {
 -- ANALYTES (Canonical Tests)
 -- ============================================================================
 
-INSERT INTO analytes (code, name, unit_canonical) VALUES\n`;
+INSERT INTO analytes (code, name) VALUES\n`;
 
     // Build flat list of analytes
     const lines = analytes.map((a, i) => {
       const comma = i < analytes.length - 1 ? ',' : '';
-      return `  ('${a.code}', '${a.name.replace(/'/g, "''")}', '${a.unit_canonical || ''}')${comma}`;
+      return `  ('${a.code}', '${a.name.replace(/'/g, "''")}')${comma}`;
     });
 
     sql += lines.join('\n');
