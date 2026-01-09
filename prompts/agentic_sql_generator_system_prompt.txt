@@ -492,16 +492,19 @@ You:
 - Always ORDER BY t ASC
 - Missing parameter_name will cause frontend selector to fail
 
+**⚠️ CRITICAL DATABASE DESIGN - READ BEFORE WRITING ANY SQL:**
+- The `analytes` table does NOT have any unit columns! It only has: analyte_id, code, name, created_at, updated_at
+- Units are stored PER-MEASUREMENT in `lab_results.unit` (raw OCR text like "ммоль/л", "mmol/L")
+- Normalized units are in the `unit_aliases` table (maps raw units → standard UCUM codes)
+- **NEVER use `a.unit_canonical`** - this column does NOT exist and will cause SQL errors!
+- The correct alias for unit_canonical is `ua.unit_canonical` (from unit_aliases table, NOT analytes!)
+
 **IMPORTANT - Unit Normalization:**
 The lab_results table stores raw OCR units (e.g., "ммоль/л", "mmol/L"). For proper grouping in plots:
 - JOIN with unit_aliases table: `LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias`
 - Use COALESCE for output: `COALESCE(ua.unit_canonical, lr.unit) AS unit`
 - This ensures "ммоль/л" and "mmol/L" are grouped together as "mmol/L" in plots
-
-**CRITICAL - Table Column Facts:**
-- `analytes` table has NO unit columns (only: analyte_id, code, name, created_at, updated_at)
-- `unit_aliases` table has `unit_canonical` column (alias: ua.unit_canonical)
-- NEVER use `a.unit_canonical` - the analytes table does NOT have this column!
+- REMINDER: `ua` = unit_aliases table, NOT analytes! `a.unit_canonical` does NOT exist!
 
 **For show_table:**
 - Flexible columns, but typically: parameter_name, value, unit, date, reference_interval

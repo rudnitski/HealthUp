@@ -277,7 +277,14 @@ function buildSchemaSection(manifest, question) {
     }
 
     const columnsList = trimmedColumns
-      .map((col) => `${col.name} (${col.type})${col.nullable ? ' nullable' : ''}`)
+      .map((col) => {
+        let colStr = `${col.name} (${col.type})${col.nullable ? ' nullable' : ''}`;
+        // Include description if present (helps LLM understand column usage)
+        if (col.description) {
+          colStr += ` -- ${col.description}`;
+        }
+        return colStr;
+      })
       .join(', ');
 
     const fkInfo = table.foreignKeys.length > 0
