@@ -304,7 +304,7 @@ function initializeAdminPanel() {
       row.innerHTML = `
         <td class="code-cell">${escapeHtml(analyte.proposed_code)}</td>
         <td>${escapeHtml(analyte.proposed_name)}</td>
-        <td>${escapeHtml(analyte.unit_canonical || '—')}</td>
+        <td>${escapeHtml(analyte.evidence?.unit || '—')}</td>
         <td><span class="confidence-badge">${(analyte.confidence * 100).toFixed(0)}%</span></td>
         <td>${variationsCount} variations</td>
         <td>${createdAt}</td>
@@ -506,7 +506,7 @@ function initializeAdminPanel() {
       <pre>${JSON.stringify(evidence, null, 2)}</pre>
 
       <h4>Metadata</h4>
-      <p><strong>Unit:</strong> ${escapeHtml(analyte.unit_canonical || '—')}</p>
+      <p><strong>Unit:</strong> ${escapeHtml(analyte.evidence?.unit || '—')}</p>
       <p><strong>Confidence:</strong> ${(analyte.confidence * 100).toFixed(1)}%</p>
       <p><strong>Created:</strong> ${new Date(analyte.created_at).toLocaleString()}</p>
     `;

@@ -225,7 +225,7 @@ const schemaStatements = [
   COMMENT ON COLUMN lab_results.parameter_name IS 'Original parameter name from lab report as recognized by OCR. May contain typos, variations, or non-standard naming. Use analyte_id for canonical mapping.';
   `,
   `
-  COMMENT ON COLUMN lab_results.unit IS 'Unit of measurement as recognized from lab report (e.g., "нг/мл", "mmol/L"). May vary across labs. Use analyte.unit_canonical for standardized unit.';
+  COMMENT ON COLUMN lab_results.unit IS 'Unit of measurement as recognized from lab report (e.g., "нг/мл", "mmol/L"). May vary across labs. Use v_measurements.unit_normalized or JOIN unit_aliases for standardized UCUM unit.';
   `,
   `
   COMMENT ON COLUMN lab_results.reference_lower IS 'Lower bound of reference range extracted from lab report. Use with reference_upper to determine normal range.';

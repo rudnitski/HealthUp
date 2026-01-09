@@ -1222,8 +1222,9 @@ class ConversationalSQLChat {
     this.resultsContainer.scrollIntoView({ behavior: 'smooth' });
 
     // Continue conversation - don't end processing
+    // NOTE: Do NOT reset isProcessing here - LLM may still be generating text after show_plot
+    // The isProcessing flag is reset on message_end only
     this.enableInput();
-    this.isProcessing = false; // CRITICAL: Reset processing flag to allow follow-up questions
   }
 
   /**
@@ -1262,8 +1263,9 @@ class ConversationalSQLChat {
     this.resultsContainer.scrollIntoView({ behavior: 'smooth' });
 
     // Continue conversation - don't end processing
+    // NOTE: Do NOT reset isProcessing here - LLM may still be generating text after show_table
+    // The isProcessing flag is reset on message_end only
     this.enableInput();
-    this.isProcessing = false; // CRITICAL: Reset processing flag to allow follow-up questions
   }
 
   /**

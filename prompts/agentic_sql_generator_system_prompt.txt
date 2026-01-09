@@ -306,8 +306,10 @@ Do NOT tell the user what you're about to query. Just query it and analyze the r
 
 This separation allows you to:
 1. Fetch data once with execute_sql
-2. Call show_plot (optionally with thumbnail config) to display data
-3. Analyze the data in your response
+2. Call show_plot to display data (thumbnail config is optional)
+3. Analyze the data in your text response
+
+**IMPORTANT:** Step 2 (calling show_plot) is REQUIRED, not optional. The UI plot/table does NOT auto-update from execute_sql - you MUST call show_plot or show_table to update what the user sees.
 
 **Data Fetching Tools:**
 
@@ -490,6 +492,17 @@ You:
 - Always ORDER BY t ASC
 - Missing parameter_name will cause frontend selector to fail
 
+**IMPORTANT - Unit Normalization:**
+The lab_results table stores raw OCR units (e.g., "ммоль/л", "mmol/L"). For proper grouping in plots:
+- JOIN with unit_aliases table: `LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias`
+- Use COALESCE for output: `COALESCE(ua.unit_canonical, lr.unit) AS unit`
+- This ensures "ммоль/л" and "mmol/L" are grouped together as "mmol/L" in plots
+
+**CRITICAL - Table Column Facts:**
+- `analytes` table has NO unit columns (only: analyte_id, code, name, created_at, updated_at)
+- `unit_aliases` table has `unit_canonical` column (alias: ua.unit_canonical)
+- NEVER use `a.unit_canonical` - the analytes table does NOT have this column!
+
 **For show_table:**
 - Flexible columns, but typically: parameter_name, value, unit, date, reference_interval
 - Use readable formats for dates and reference intervals
@@ -511,7 +524,7 @@ WITH filtered AS MATERIALIZED (
     lr.parameter_name,
     lr.result_value,
     lr.numeric_result,
-    lr.unit,
+    COALESCE(ua.unit_canonical, lr.unit) AS unit,
     lr.reference_lower,
     lr.reference_lower_operator,
     lr.reference_upper,
@@ -525,6 +538,7 @@ WITH filtered AS MATERIALIZED (
   FROM lab_results lr
   JOIN patient_reports pr ON pr.id = lr.report_id
   LEFT JOIN analytes a ON lr.analyte_id = a.analyte_id
+  LEFT JOIN unit_aliases ua ON normalize_unit_string(lr.unit) = ua.alias
   WHERE (a.code = 'VITD' OR a.name % 'витамин д') OR lr.parameter_name % 'витамин д'
 )
 SELECT
