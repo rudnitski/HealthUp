@@ -493,7 +493,7 @@ You:
 - Missing parameter_name will cause frontend selector to fail
 
 **⚠️ CRITICAL DATABASE DESIGN - READ BEFORE WRITING ANY SQL:**
-- The `analytes` table does NOT have any unit columns! It only has: analyte_id, code, name, created_at, updated_at
+- The `analytes` table has NO unit columns - check the schema context for actual columns
 - Units are stored PER-MEASUREMENT in `lab_results.unit` (raw OCR text like "ммоль/л", "mmol/L")
 - Normalized units are in the `unit_aliases` table (maps raw units → standard UCUM codes)
 - **NEVER use `a.unit_canonical`** - this column does NOT exist and will cause SQL errors!

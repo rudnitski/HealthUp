@@ -190,7 +190,8 @@ function trimColumns(table, question, totalTables, tokenBudget) {
 
   for (let i = 0; i < scoredColumns.length && i < MAX_COLUMNS_PER_TABLE; i += 1) {
     const col = scoredColumns[i];
-    const colText = `${col.name} (${col.type})${col.nullable ? ' nullable' : ''}`;
+    // Include description in token calculation to match actual output format
+    const colText = `${col.name} (${col.type})${col.nullable ? ' nullable' : ''}${col.description ? ` -- ${col.description}` : ''}`;
     const colTokens = countTokens(colText);
 
     if (currentTokens + colTokens <= tokenBudget) {
