@@ -169,6 +169,8 @@ async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy') 
 
 7. **Gmail tokens**: Never commit `gmail-token.json`. Auto-refresh preserves `refresh_token`.
 
+8. **Schema aliases sync**: When changing database schema, update `config/schema_aliases.json`. Incorrect mappings cause LLM to hallucinate columns (e.g., `"unit": ["analytes"]` made LLM assume `analytes.unit_canonical` exists).
+
 ## Key Architecture
 
 ```
