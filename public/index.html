@@ -39,7 +39,7 @@
           </a>
         </div>
 
-        <div class="nav-section" id="management-section">
+        <div class="nav-section" id="management-section" hidden>
           <div class="nav-section-title">Management</div>
           <a href="/admin/pending-analytes" class="nav-item">
             <span class="nav-icon">📋</span>
@@ -475,7 +475,7 @@
         }
       });
 
-      // Fetch pending count for badge
+      // Fetch pending count for badge (admin only)
       async function fetchPendingCount() {
         try {
           const response = await fetch('/api/admin/pending-analytes');
@@ -492,7 +492,13 @@
           // Silently fail - badge just won't show
         }
       }
-      fetchPendingCount();
+
+      // Show admin section and fetch pending count only for admins
+      const user = window.authClient?.getUser();
+      if (user?.is_admin) {
+        document.getElementById('management-section').hidden = false;
+        fetchPendingCount();
+      }
     });
   </script>
 </body>
