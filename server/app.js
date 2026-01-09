@@ -12,7 +12,6 @@ import { ensureSchema } from './db/schema.js';
 import { startSessionCleanup, stopSessionCleanup } from './jobs/sessionCleanup.js';
 import authRouter from './routes/auth.js';
 import VisionProviderFactory from './services/vision/VisionProviderFactory.js';
-import sqlGeneratorRouter from './routes/sqlGenerator.js';
 import chatStreamRouter, { closeSSEConnection } from './routes/chatStream.js';
 import analyzeLabReportRouter from './routes/analyzeLabReport.js';
 import reportsRouter from './routes/reports.js';
@@ -180,7 +179,6 @@ app.use('/api/analyze-labs', (req, res, next) => {
 // PRD v4.4.2: Auth routes (must be before other protected routes)
 app.use('/api/auth', authRouter);
 
-app.use('/api/sql-generator', sqlGeneratorRouter);
 app.use('/api/chat', chatStreamRouter); // v3.2: Conversational SQL assistant
 app.use('/api/analyze-labs', analyzeLabReportRouter);
 app.use('/api/execute-sql', executeSqlRouter);

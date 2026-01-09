@@ -7,7 +7,7 @@ import { getMRUScore } from './schemaSnapshot.js';
 const __dirname = getDirname(import.meta.url);
 
 // Configuration
-const SCHEMA_TOKEN_BUDGET = 6000;
+const SCHEMA_TOKEN_BUDGET = 8000; // Increased from 6000 to accommodate column descriptions
 const MAX_TABLES = 25;
 const MAX_COLUMNS_PER_TABLE = 60;
 
@@ -18,39 +18,6 @@ try {
   schemaAliases = JSON.parse(fs.readFileSync(aliasPath, 'utf8'));
 } catch (error) {
   console.warn('[promptBuilder] Failed to load schema_aliases.json:', error.message);
-}
-
-const PROMPTS_DIR = path.join(__dirname, '../../prompts');
-const SYSTEM_PROMPT_PATH = path.join(PROMPTS_DIR, 'sql_generator_system_prompt.txt');
-const USER_PROMPT_PATH = path.join(PROMPTS_DIR, 'sql_generator_user_prompt.txt');
-
-let systemPromptTemplate = null;
-let userPromptTemplate = null;
-
-try {
-  systemPromptTemplate = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8');
-} catch (error) {
-  console.warn('[promptBuilder] Failed to load system prompt template:', error.message);
-}
-
-try {
-  userPromptTemplate = fs.readFileSync(USER_PROMPT_PATH, 'utf8');
-} catch (error) {
-  console.warn('[promptBuilder] Failed to load user prompt template:', error.message);
-}
-
-/**
- * Reload schema aliases (call after cache bust)
- */
-function reloadSchemaAliases() {
-  try {
-    const aliasPath = path.join(__dirname, '../../config/schema_aliases.json');
-    // No cache to clear - file is re-read from disk every time
-    schemaAliases = JSON.parse(fs.readFileSync(aliasPath, 'utf8'));
-    console.info('[promptBuilder] Schema aliases reloaded');
-  } catch (error) {
-    console.error('[promptBuilder] Failed to reload schema_aliases.json:', error.message);
-  }
 }
 
 /**
@@ -311,65 +278,9 @@ function buildSchemaSection(manifest, question) {
   return schemaLines.join('\n');
 }
 
-/**
- * Build complete prompt for SQL generation
- */
-function buildPrompt({ question, schemaSummary, language = 'en' }) {
-  const languageLabel = language === 'ru' ? 'Russian' : 'English';
-  const languageNote = language === 'ru'
-    ? 'Use Russian for explanation only; SQL keywords remain in English.'
-    : 'Use English for SQL keywords and explanation.';
-
-  const systemTemplate = systemPromptTemplate || `You are a PostgreSQL query generator for a health lab results database.
-Generate safe, read-only SELECT queries based on the schema provided.
-
-Safety rules:
-- ONLY generate SELECT statements (or WITH...SELECT)
-- Include LIMIT 50 or less
-- No INSERT, UPDATE, DELETE, or DDL operations
-- No functions that modify data or system state
-- Use proper JOINs based on foreign key relationships
-- NEVER use placeholders like :param, $1, or ? - queries must be executable as-is
-- NEVER hardcode UUIDs like '00000000-0000-0000-0000-000000000000'
-- For patient-specific queries, generate queries that work for ALL patients (no WHERE patient.id = ...)
-- When user says "my" or "мои", generate a query for ALL patients (frontend will filter)
-- Prefer the simplest SELECT that answers the question; avoid DISTINCT ON or UNION unless clearly required.
-
-Response format:
-- sql: the complete SQL query (must be executable without modification)
-- explanation: brief explanation in {{LANGUAGE_LABEL}}
-
-{{LANGUAGE_NOTE}}`;
-
-  const userTemplate = userPromptTemplate || `Question ({{LANGUAGE_LABEL}}): {{QUESTION}}
-
-Database Schema:
-{{SCHEMA_SUMMARY}}
-
-Generate a safe SQL query to answer the question.
-IMPORTANT: Do NOT filter by specific patient ID. Generate queries that work for ALL patients.`;
-
-  const systemPrompt = systemTemplate
-    .replace(/{{LANGUAGE_LABEL}}/g, languageLabel)
-    .replace(/{{LANGUAGE_NOTE}}/g, languageNote);
-
-  const userPrompt = userTemplate
-    .replace(/{{LANGUAGE_LABEL}}/g, languageLabel)
-    .replace(/{{QUESTION}}/g, question)
-    .replace(/{{SCHEMA_SUMMARY}}/g, schemaSummary);
-
-  return {
-    systemPrompt,
-    userPrompt,
-    totalTokens: countTokens(systemPrompt) + countTokens(userPrompt),
-  };
-}
-
 export {
   buildSchemaSection,
-  buildPrompt,
   extractEntities,
   rankTables,
   countTokens,
-  reloadSchemaAliases,
 };

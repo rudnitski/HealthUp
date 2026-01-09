@@ -1,7 +1,0 @@
-Question ({{LANGUAGE_LABEL}}): {{QUESTION}}
-
-Database Schema:
-{{SCHEMA_SUMMARY}}
-
-Generate a safe SQL query to answer the question.
-IMPORTANT: Do NOT filter by specific patient ID. Generate queries that work for ALL patients.
