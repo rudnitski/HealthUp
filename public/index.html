@@ -494,11 +494,19 @@
       }
 
       // Show admin section and fetch pending count only for admins
-      const user = window.authClient?.getUser();
-      if (user?.is_admin) {
-        document.getElementById('management-section').hidden = false;
-        fetchPendingCount();
-      }
+      // Must wait for auth to complete before checking user role
+      (async () => {
+        try {
+          await window.authReady;
+          const user = window.authClient?.getUser();
+          if (user?.is_admin) {
+            document.getElementById('management-section').hidden = false;
+            fetchPendingCount();
+          }
+        } catch (e) {
+          // Auth failed or not ready - admin section stays hidden
+        }
+      })();
     });
   </script>
 </body>
