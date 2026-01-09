@@ -218,6 +218,7 @@ async function executeReportDetailQueries(client, reportId) {
       pr.recognized_at,
       pr.processed_at,
       pr.test_date_text,
+      pr.test_date,
       pr.patient_name_snapshot,
       pr.patient_age_snapshot,
       pr.patient_gender_snapshot,
@@ -280,7 +281,11 @@ async function executeReportDetailQueries(client, reportId) {
     processed_at: toIsoString(details.processed_at),
     created_at: toIsoString(details.created_at),
     updated_at: toIsoString(details.updated_at),
-    test_date: details.test_date_text,
+    // PRD v4.0: Use normalized test_date with fallback to raw text for ambiguous dates
+    // Note: pg returns DATE columns as strings ('YYYY-MM-DD'), not JS Date objects.
+    // We return the string directly since it's already in the desired format.
+    test_date: details.test_date || details.test_date_text || null,
+    test_date_text: details.test_date_text, // Raw OCR text (for debugging)
     patient_name: details.patient_name_snapshot || details.full_name,
     patient_age: details.patient_age_snapshot,
     patient_gender: details.patient_gender_snapshot || details.gender,

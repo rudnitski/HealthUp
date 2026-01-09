@@ -61,7 +61,10 @@ Rules:
 - Only output JSON.
 - Include every parameter even if fields are missing.
 - Preserve the source language and casing for text.
-- Use ISO-8601 (YYYY-MM-DD) when a date is unambiguous; otherwise copy the exact text.
+- Convert dates to ISO-8601 format (YYYY-MM-DD, always zero-padded: use 04 not 4). Use report context (language, lab name, country) to interpret the source format:
+  - If day > 12: format is unambiguously DD/MM/YYYY or DD.MM.YYYY (e.g., 15.10.2025 -> 2025-10-15)
+  - If day <= 12: use context clues (Russian text typically means European DD/MM format)
+  - If ambiguous AND context is insufficient to determine the format, output the raw text as-is (do not guess)
 - For test_date, prefer specimen collection or draw dates; if unavailable, fall back to order, validation, or print dates in that order.
 - Copy numeric measurements exactly as written while omitting the unit if it is captured separately; if the report omits a value, set result to null.
 - When the report provides both numeric and textual context (e.g., "3.1 High"), include the combined text in result without repeating the unit.

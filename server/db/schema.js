@@ -34,6 +34,7 @@ const schemaStatements = [
     recognized_at TIMESTAMPTZ NOT NULL,
     processed_at TIMESTAMPTZ NOT NULL,
     test_date_text TEXT,
+    test_date DATE,
     patient_name_snapshot TEXT,
     patient_age_snapshot TEXT,
     patient_gender_snapshot TEXT,
@@ -51,10 +52,10 @@ const schemaStatements = [
   COMMENT ON TABLE patient_reports IS 'Lab report documents parsed from PDFs';
   `,
   `
-  COMMENT ON COLUMN patient_reports.test_date_text IS 'Test date as text extracted from lab report (e.g., "2024-03-15"). May be NULL if not found. Parse to timestamp for time-series queries.';
+  COMMENT ON COLUMN patient_reports.test_date_text IS 'Raw test date text extracted by OCR. Preserved for audit/debugging. Use test_date column for queries.';
   `,
   `
-  COMMENT ON COLUMN patient_reports.recognized_at IS 'Timestamp when the lab report was processed by OCR. Use as fallback date when test_date_text is NULL.';
+  COMMENT ON COLUMN patient_reports.recognized_at IS 'Timestamp when the lab report was processed by OCR. Used as fallback when test_date is NULL.';
   `,
   `
   COMMENT ON COLUMN patient_reports.file_path IS
@@ -508,6 +509,23 @@ const schemaStatements = [
   CREATE INDEX IF NOT EXISTS idx_gmail_provenance_message
     ON gmail_report_provenance(message_id);
   `,
+  // PRD v4.0: Add normalized date column for existing environments (MUST be before v_measurements view)
+  `
+  ALTER TABLE patient_reports
+  ADD COLUMN IF NOT EXISTS test_date DATE;
+  `,
+  `
+  COMMENT ON COLUMN patient_reports.test_date IS
+    'Normalized DATE parsed from test_date_text. NULL if parsing failed or ambiguous. Use for queries; fall back to recognized_at if NULL.';
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_patient_reports_test_date
+  ON patient_reports (test_date DESC NULLS LAST);
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_patient_reports_patient_test_date
+  ON patient_reports (patient_id, test_date DESC NULLS LAST);
+  `,
   // PRD v4.8: Unit normalization helper function (MUST be defined before v_measurements view)
   `
   CREATE OR REPLACE FUNCTION normalize_unit_string(raw_unit TEXT)
@@ -545,7 +563,7 @@ const schemaStatements = [
     lr.numeric_result AS value_num,
     lr.result_value AS value_text,
     lr.unit AS units,
-    COALESCE(pr.test_date_text::date, pr.recognized_at::date) AS date_eff,
+    COALESCE(pr.test_date, pr.recognized_at::date) AS date_eff,
     lr.report_id,
     lr.reference_lower,
     lr.reference_upper,

@@ -3,29 +3,17 @@
 // Single source of truth for date parsing logic used by both user and admin endpoints
 
 /**
- * SQL expression to parse multiple date formats into YYYY-MM-DD
- * Supports:
- * - ISO format: YYYY-MM-DD, YYYY-MM-DDTHH:mm:ss
- * - European format: DD/MM/YYYY, DD.MM.YYYY
- * - Fallback: recognized_at timestamp
+ * SQL expression for effective report date
+ * Uses pre-parsed test_date column with recognized_at fallback
+ *
+ * PRD v4.0: Simplified from complex regex parsing to use normalized test_date column
+ * Returns DATE type (not TEXT) for proper index usage and type semantics
  *
  * Used in: GET /api/reports, GET /api/admin/reports
  * Must use `pr.` prefix for patient_reports table alias
  */
 export const EFFECTIVE_DATE_EXPR = `
-  CASE
-    WHEN pr.test_date_text ~ '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])'
-    THEN SUBSTRING(pr.test_date_text FROM 1 FOR 10)
-    WHEN pr.test_date_text ~ '^\\d{1,2}[/.]\\d{1,2}[/.]\\d{4}'
-    THEN CONCAT(
-      SUBSTRING(pr.test_date_text FROM '(\\d{4})'),
-      '-',
-      LPAD(SUBSTRING(pr.test_date_text FROM '^\\d{1,2}[/.](\\d{1,2})'), 2, '0'),
-      '-',
-      LPAD(SUBSTRING(pr.test_date_text FROM '^(\\d{1,2})'), 2, '0')
-    )
-    ELSE to_char(pr.recognized_at, 'YYYY-MM-DD')
-  END
+  COALESCE(pr.test_date, pr.recognized_at::date)
 `;
 
 /**

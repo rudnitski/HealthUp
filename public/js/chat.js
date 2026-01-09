@@ -1893,8 +1893,8 @@ class ConversationalSQLChat {
       nameCell.textContent = paramName;
       row.appendChild(nameCell);
 
-      // Value
-      const resultValue = entry.result_value || entry.value || entry.y;
+      // Value (handle multiple column name conventions)
+      const resultValue = entry.result_value || entry.value || entry.value_num || entry.y;
       const resultCell = document.createElement('td');
       if (resultValue !== null && resultValue !== undefined) {
         if (typeof resultValue === 'number') {
@@ -1913,9 +1913,9 @@ class ConversationalSQLChat {
 
       row.appendChild(resultCell);
 
-      // Unit
+      // Unit (handle multiple column name conventions from v_measurements)
       const unitCell = document.createElement('td');
-      unitCell.textContent = entry.unit || '--';
+      unitCell.textContent = entry.unit || entry.units || entry.unit_normalized || '--';
       row.appendChild(unitCell);
 
       // Reference interval

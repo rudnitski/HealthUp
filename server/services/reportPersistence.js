@@ -258,6 +258,7 @@ async function persistLabReport({
         recognized_at,
         processed_at,
         test_date_text,
+        test_date,
         patient_name_snapshot,
         patient_age_snapshot,
         patient_gender_snapshot,
@@ -270,8 +271,8 @@ async function persistLabReport({
         updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb,
-        $15, $16,
+        $1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb,
+        $16, $17,
         NOW(), NOW()
       )
       ON CONFLICT (patient_id, checksum)
@@ -280,6 +281,7 @@ async function persistLabReport({
         status = EXCLUDED.status,
         processed_at = EXCLUDED.processed_at,
         test_date_text = EXCLUDED.test_date_text,
+        test_date = COALESCE(EXCLUDED.test_date, patient_reports.test_date),
         patient_name_snapshot = EXCLUDED.patient_name_snapshot,
         patient_age_snapshot = EXCLUDED.patient_age_snapshot,
         patient_gender_snapshot = EXCLUDED.patient_gender_snapshot,
@@ -292,22 +294,23 @@ async function persistLabReport({
       RETURNING id, (xmax = 0) AS inserted;
       `,
       [
-        reportId,
-        patientId,
-        filename ?? null,
-        checksum,
-        parserVersion ?? null,
-        recognizedAt,
-        processedTimestamp,
-        safeCoreResult.test_date ?? null,
-        patientName,
-        safeCoreResult.patient_age ?? null,
-        patientGender,
-        patientDateOfBirth,
-        safeCoreResult.raw_model_output ?? null,
-        missingDataJson,
-        savedFilePath,
-        normalizedMimetype,
+        reportId,                                    // $1
+        patientId,                                   // $2
+        filename ?? null,                            // $3
+        checksum,                                    // $4
+        parserVersion ?? null,                       // $5
+        recognizedAt,                                // $6
+        processedTimestamp,                          // $7
+        safeCoreResult.test_date ?? null,            // $8 -> test_date_text
+        safeCoreResult.test_date_normalized ?? null, // $9 -> test_date (NEW)
+        patientName,                                 // $10
+        safeCoreResult.patient_age ?? null,          // $11
+        patientGender,                               // $12
+        patientDateOfBirth,                          // $13
+        safeCoreResult.raw_model_output ?? null,     // $14
+        missingDataJson,                             // $15
+        savedFilePath,                               // $16
+        normalizedMimetype,                          // $17
       ],
     );
 

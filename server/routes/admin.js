@@ -934,10 +934,11 @@ router.get('/reports', async (req, res) => {
 
   try {
     // PRD v4.4.6: Same query structure as /api/reports
+    // PRD v4.0: Use to_char() for consistent string output in SELECT
     let query = `
       SELECT
         pr.id AS report_id,
-        ${EFFECTIVE_DATE_EXPR} AS effective_date,
+        to_char(${EFFECTIVE_DATE_EXPR}, 'YYYY-MM-DD') AS effective_date,
         p.id AS patient_id,
         COALESCE(pr.patient_name_snapshot, p.full_name, 'Unnamed Patient') AS patient_name,
         (pr.file_path IS NOT NULL) AS has_file

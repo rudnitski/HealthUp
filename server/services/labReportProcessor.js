@@ -21,6 +21,7 @@ import { wetRun } from './MappingApplier.js';
 import { normalizeUnitsBatch } from './unitNormalizer.js';
 import { adminPool } from '../db/index.js';
 import logger from '../utils/logger.js';
+import { normalizeTestDate } from '../utils/dateParser.js';
 
 const __dirname = getDirname(import.meta.url);
 
@@ -456,6 +457,7 @@ const parseVisionResponse = (rawOutput, fallbackText = '') => {
       patient_date_of_birth: sanitizeDateField(rawDob),
       patient_gender: sanitizeTextField(rawGender, { maxLength: 24 }),
       test_date: sanitizeDateField(rawTestDate),
+      test_date_normalized: normalizeTestDate(rawTestDate),
       parameters,
       missing_data: sanitizeMissingData(parsed.missing_data),
       raw_model_output: fallbackString,
