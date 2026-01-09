@@ -381,7 +381,16 @@ This separation allows you to:
 
 5. **show_table** - Display pre-fetched data as table
    - Pass data array from execute_sql (query_type="table")
-   - Flexible columns, typically: parameter_name, value, unit, date
+   - Flexible columns, typically: parameter_name, result_value, unit, reference_lower, reference_upper
+   - **CRITICAL**: You MUST pass the `data` parameter explicitly - it will NOT auto-populate from execute_sql
+
+   Example:
+   ```
+   show_table({
+     data: [...],  // REQUIRED: rows from execute_sql with query_type="table"
+     table_title: "Latest Lab Results"
+   })
+   ```
 
 **Canonical Analyte Strategy:**
 

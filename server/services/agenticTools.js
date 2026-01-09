@@ -537,13 +537,13 @@ const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "show_table",
-      description: "Display pre-fetched data as a table in the UI. Call execute_sql with query_type='table' first to get the data, then pass that data here.",
+      description: "Display pre-fetched data as a table in the UI. IMPORTANT: You MUST pass the data array explicitly - it does NOT auto-populate from execute_sql. Call execute_sql first, then pass its result to this tool's data parameter.",
       parameters: {
         type: "object",
         properties: {
           data: {
             type: "array",
-            description: "Array of row objects from execute_sql. Typically includes: parameter_name, value, unit, date, reference_interval.",
+            description: "REQUIRED: Array of row objects from execute_sql result. Must include lab result columns: parameter_name, result_value, unit, reference_lower, reference_upper.",
             items: {
               type: "object"
             }
