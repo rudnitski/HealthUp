@@ -51,7 +51,7 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 
 ### Key Services
 
-- **`server/services/labReportProcessor.js`**: Async job-based OCR pipeline. Returns 202 Accepted with `job_id`, client polls `/api/analyze-labs/jobs/:jobId`. Handles PDF→PNG conversion (via `pdftoppm`), calls vision providers, persists to DB, triggers auto-mapping.
+- **`server/services/labReportProcessor.js`**: Async job-based OCR pipeline. Returns 202 Accepted with `job_id`, client polls `/api/analyze-labs/jobs/:jobId`. Sends PDFs directly to vision providers via native PDF APIs (Anthropic always, OpenAI when `OPENAI_USE_NATIVE_PDF=true`). Falls back to `pdftoppm` conversion for OpenAI legacy mode. Persists to DB, triggers auto-mapping.
 
 - **`server/services/vision/VisionProviderFactory.js`**: Selects OCR backend (`OCR_PROVIDER=openai|anthropic`). OpenAI supports native PDF via `OPENAI_USE_NATIVE_PDF=true`. Anthropic uses Claude Sonnet vision with native PDF support.
 
