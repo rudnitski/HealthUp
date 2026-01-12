@@ -17,7 +17,9 @@ const schemaStatements = [
     user_id UUID,  -- Added in Part 1: Associated user account (NULL for shared/unassigned patients)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_seen_report_at TIMESTAMPTZ
+    last_seen_report_at TIMESTAMPTZ,
+    -- PRD v4.4.3: Composite unique constraint scoped by user_id (enables ON CONFLICT)
+    CONSTRAINT patients_user_name_unique UNIQUE (user_id, full_name_normalized)
   );
   `,
   `
@@ -83,18 +85,6 @@ const schemaStatements = [
   `
   COMMENT ON COLUMN analytes.name IS 'Canonical English name for display';
   `,
-  // Migration: Drop unit_canonical column if it exists (no longer used - units normalized via unit_aliases)
-  `
-  DO $$
-  BEGIN
-    IF EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'analytes' AND column_name = 'unit_canonical'
-    ) THEN
-      ALTER TABLE analytes DROP COLUMN unit_canonical;
-    END IF;
-  END $$;
-  `,
   `
   CREATE TABLE IF NOT EXISTS analyte_aliases (
     analyte_id INT NOT NULL REFERENCES analytes(analyte_id) ON DELETE CASCADE,
@@ -140,30 +130,6 @@ const schemaStatements = [
   `,
   `
   COMMENT ON COLUMN unit_aliases.source IS 'Origin: manual, seed, llm, admin_approved';
-  `,
-  // PRD v4.8.2: Add new columns to existing unit_aliases table (migration for existing data)
-  // MUST run BEFORE COMMENT ON COLUMN for these columns
-  `
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'unit_aliases' AND column_name = 'learn_count'
-    ) THEN
-      ALTER TABLE unit_aliases ADD COLUMN learn_count INTEGER DEFAULT 0;
-    END IF;
-  END $$;
-  `,
-  `
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'unit_aliases' AND column_name = 'last_used_at'
-    ) THEN
-      ALTER TABLE unit_aliases ADD COLUMN last_used_at TIMESTAMPTZ;
-    END IF;
-  END $$;
   `,
   `
   COMMENT ON COLUMN unit_aliases.learn_count IS 'Number of times this alias was auto-learned via concurrent calls to normalizeUnit(). Incremented on ON CONFLICT only if canonical matches. For seed/manual aliases, remains 0 (never auto-learned). Use for quality assessment and rollback decisions.';
@@ -325,24 +291,6 @@ const schemaStatements = [
     CONSTRAINT chk_status CHECK (status IN ('pending', 'resolved', 'skipped')),
     CONSTRAINT chk_issue_type CHECK (issue_type IN ('low_confidence', 'alias_conflict', 'llm_error', 'sanitization_rejected', 'ucum_invalid'))
   );
-  `,
-  // PRD v4.8.3: Migration for existing databases with old constraint
-  // Note: Uses pg_get_constraintdef() for PostgreSQL 12+ compatibility (consrc was removed)
-  `
-  DO $$
-  BEGIN
-    -- Drop and recreate constraint if it doesn't include ucum_invalid
-    IF EXISTS (
-      SELECT 1 FROM pg_constraint c
-      WHERE c.conname = 'chk_issue_type'
-      AND c.conrelid = 'unit_reviews'::regclass
-      AND pg_get_constraintdef(c.oid) NOT LIKE '%ucum_invalid%'
-    ) THEN
-      ALTER TABLE unit_reviews DROP CONSTRAINT chk_issue_type;
-      ALTER TABLE unit_reviews ADD CONSTRAINT chk_issue_type
-        CHECK (issue_type IN ('low_confidence', 'alias_conflict', 'llm_error', 'sanitization_rejected', 'ucum_invalid'));
-    END IF;
-  END $$;
   `,
   `
   CREATE INDEX IF NOT EXISTS idx_unit_reviews_status ON unit_reviews(status) WHERE status = 'pending';
@@ -508,11 +456,6 @@ const schemaStatements = [
   `
   CREATE INDEX IF NOT EXISTS idx_gmail_provenance_message
     ON gmail_report_provenance(message_id);
-  `,
-  // PRD v4.0: Add normalized date column for existing environments (MUST be before v_measurements view)
-  `
-  ALTER TABLE patient_reports
-  ADD COLUMN IF NOT EXISTS test_date DATE;
   `,
   `
   COMMENT ON COLUMN patient_reports.test_date IS
@@ -772,25 +715,7 @@ const schemaStatements = [
   // ============================================================
   // Part 3: RLS-Scoped Data Access (PRD v4.4.3)
   // ============================================================
-  // 1. Drop global unique constraint on full_name_normalized
-  `
-  ALTER TABLE patients DROP CONSTRAINT IF EXISTS patients_full_name_normalized_key;
-  `,
-  // 2. Add composite unique constraint scoped by user_id
-  // CRITICAL: Use a full unique constraint (not a partial index) to ensure ON CONFLICT clause works reliably.
-  // PostgreSQL's ON CONFLICT inference does not work with partial indexes (WHERE clauses).
-  `
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'patients_user_name_unique'
-    ) THEN
-      ALTER TABLE patients ADD CONSTRAINT patients_user_name_unique
-        UNIQUE (user_id, full_name_normalized);
-    END IF;
-  END $$;
-  `,
-  // 3. Apply FORCE ROW LEVEL SECURITY (even table owners must respect RLS)
+  // Apply FORCE ROW LEVEL SECURITY (even table owners must respect RLS)
   `
   ALTER TABLE patients FORCE ROW LEVEL SECURITY;
   `,

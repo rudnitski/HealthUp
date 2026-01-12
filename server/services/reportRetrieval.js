@@ -177,27 +177,6 @@ const toNumber = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-const normalizeMissingData = (value) => {
-  if (Array.isArray(value)) {
-    return value;
-  }
-
-  if (value && typeof value === 'object') {
-    return value;
-  }
-
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (_error) {
-      return [];
-    }
-  }
-
-  return [];
-};
-
 /**
  * Execute queries for getReportDetail using provided client
  * @param {object} client - Database client (from transaction or adminPool)
@@ -290,7 +269,7 @@ async function executeReportDetailQueries(client, reportId) {
     patient_age: details.patient_age_snapshot,
     patient_gender: details.patient_gender_snapshot || details.gender,
     patient_date_of_birth: details.patient_date_of_birth_snapshot || details.date_of_birth,
-    missing_data: normalizeMissingData(details.missing_data),
+    missing_data: details.missing_data || [],
     raw_model_output: details.raw_model_output || '',
     parameters: labResults.rows.map((row) => ({
       parameter_name: row.parameter_name,
