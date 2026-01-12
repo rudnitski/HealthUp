@@ -206,9 +206,10 @@ function streamEvent(sessionId, data) {
  * POST /api/chat/sessions
  * PRD v4.3: Create session with selected patient ID
  * PRD v4.4.3: Add requireAuth and store userId for session ownership
+ * PRD v5.0: Add initial_context for onboarding
  */
 router.post('/sessions', requireAuth, async (req, res) => {
-  const { selectedPatientId } = req.body;
+  const { selectedPatientId, initial_context } = req.body;
 
   // Validate patient ID format if provided
   if (selectedPatientId) {
@@ -258,6 +259,13 @@ router.post('/sessions', requireAuth, async (req, res) => {
   // Set selected patient
   if (selectedPatientId) {
     session.selectedPatientId = selectedPatientId;
+  }
+
+  // PRD v5.0: Store initial_context for onboarding (NOT in messages array yet)
+  // This will be injected AFTER initializeSystemPrompt() runs
+  if (initial_context) {
+    session.initialContext = initial_context;
+    logger.info({ userId: req.user.id, event: 'onboarding_context_stored' });
   }
 
   logger.info('[chatStream] Session created:', {
@@ -517,7 +525,18 @@ async function processMessage(sessionId, userMessage) {
 
     // Initialize system prompt on first message
     if (session.messages.length === 1) {
-      await initializeSystemPrompt(session);
+      // PRD v5.0: Extract onboarding context for injection
+      const onboardingContext = session.initialContext || null;
+      if (onboardingContext) {
+        logger.info({ sessionId: session.id, event: 'onboarding_context_will_be_injected' });
+      }
+
+      await initializeSystemPrompt(session, { onboardingContext });
+
+      // Delete context AFTER successful initialization (prevents loss on retry if init fails)
+      if (onboardingContext) {
+        delete session.initialContext;
+      }
     }
 
     // PRD v4.3: Patient selection now happens before chat starts (via POST /api/chat/sessions)
@@ -587,8 +606,12 @@ async function processMessage(sessionId, userMessage) {
  * PRD v4.3: Uses chat mode with pre-selected patient ID
  * PRD v4.4.3: Pass userId for RLS context
  * PRD v4.4.6: Pass isAdmin for admin mode support
+ * PRD v5.0: Accepts optional onboardingContext to merge into primary system prompt
+ * @param {object} session - Session object
+ * @param {object} options - Optional parameters
+ * @param {object|null} options.onboardingContext - Onboarding context object { insight, report_ids, patient_name }
  */
-async function initializeSystemPrompt(session) {
+async function initializeSystemPrompt(session, { onboardingContext = null } = {}) {
   // Get schema snapshot and format it
   const { manifest } = await getSchemaSnapshot();
   const schemaContext = buildSchemaSection(manifest, ''); // Empty question = include all tables
@@ -605,15 +628,66 @@ async function initializeSystemPrompt(session) {
     session.isAdmin || false // PRD v4.4.6: Admin mode flag
   );
 
-  // Add system message
+  // PRD v5.0: Prepend onboarding context to system prompt if provided
+  // This ensures the context survives conversation pruning (only first system message is preserved)
+  // NOTE: onboardingContext is an object { insight, report_ids, patient_name, lab_data }
+  let finalPrompt = prompt;
+  if (onboardingContext && onboardingContext.insight) {
+    // Format lab data as markdown table for LLM readability
+    let labDataSection = '';
+    if (onboardingContext.lab_data && Array.isArray(onboardingContext.lab_data) && onboardingContext.lab_data.length > 0) {
+      // Helper to escape pipe characters that would break markdown table
+      const escapeTableCell = (val) => val != null ? String(val).replace(/\|/g, '\\|') : '-';
+
+      const tableRows = onboardingContext.lab_data.map(p => {
+        const status = p.is_value_out_of_range ? '⚠️ OUT OF RANGE' : 'Normal';
+        // Use ?? for result (preserves 0), || for strings (empty string → '-')
+        const name = escapeTableCell(p.parameter_name || null);
+        const result = escapeTableCell(p.result ?? null);
+        const unit = escapeTableCell(p.unit || null);
+        const ref = escapeTableCell(p.reference_interval || null);
+        return `| ${name} | ${result} | ${unit} | ${ref} | ${status} |`;
+      }).join('\n');
+
+      labDataSection = `
+
+### Pre-loaded Lab Results
+
+| Parameter | Value | Unit | Reference | Status |
+|-----------|-------|------|-----------|--------|
+${tableRows}
+`;
+    }
+
+    const onboardingPrefix = `## Onboarding Context
+
+The user just completed their first upload and received this personalized insight:
+
+${onboardingContext.insight}
+${labDataSection}
+They are now asking a follow-up question. You have the lab data above - use it to answer specific questions about values without needing to execute SQL. For complex queries, trend analysis, or data not shown above, you may still use SQL tools.
+
+---
+
+`;
+    finalPrompt = onboardingPrefix + prompt;
+    logger.info({
+      sessionId: session.id,
+      event: 'onboarding_context_merged_into_system_prompt',
+      lab_data_count: onboardingContext.lab_data?.length || 0
+    });
+  }
+
+  // Add system message (single system message, survives pruning)
   session.messages.unshift({
     role: 'system',
-    content: prompt
+    content: finalPrompt
   });
 
   logger.info('[chatStream] System prompt initialized:', {
     session_id: session.id,
-    selected_patient_id: session.selectedPatientId
+    selected_patient_id: session.selectedPatientId,
+    has_onboarding_context: !!onboardingContext
   });
 }
 

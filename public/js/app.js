@@ -748,10 +748,118 @@
   // Old upload button event listener removed (functionality moved to unified-upload.js)
 
   // PRD v3.2: Initialize Conversational SQL Assistant (lazy-init when visible)
+  // PRD v5.0: Enhanced to support onboarding context from landing page
   let conversationalSQLChat = null;
   let chatInitialized = false;
   const assistantSection = document.getElementById('section-assistant');
   const chatContainer = document.getElementById('conversational-chat-container');
+
+  /**
+   * PRD v5.0: Handle onboarding context from landing page
+   * Reads sessionStorage, creates session with initial_context, connects SSE,
+   * and calls chat.initWithExistingSession() for seamless transition.
+   * @returns {Promise<boolean>} True if onboarding was handled, false otherwise
+   */
+  async function handleOnboardingContext() {
+    const contextJson = sessionStorage.getItem('onboarding_context');
+    if (!contextJson) {
+      return false;
+    }
+
+    try {
+      const context = JSON.parse(contextJson);
+      // eslint-disable-next-line no-console
+      console.log('[app] Onboarding context found:', {
+        insight: context.insight?.substring(0, 50) + '...',
+        selected_query: context.selected_query,
+        patient_id: context.patient_id
+      });
+
+      // Clear sessionStorage immediately to prevent reprocessing on refresh
+      sessionStorage.removeItem('onboarding_context');
+
+      if (!window.ConversationalSQLChat) {
+        console.error('[app] ConversationalSQLChat not loaded for onboarding');
+        return false;
+      }
+
+      // Step 1: Create session with initial_context
+      // NOTE: Server expects 'selectedPatientId' not 'patient_id'
+      const sessionResponse = await fetch('/api/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          selectedPatientId: context.patient_id,
+          initial_context: {
+            insight: context.insight,
+            report_ids: context.report_ids,
+            patient_name: context.patient_name,
+            lab_data: context.lab_data || []  // PRD v5.0: Include lab data for system prompt
+          }
+        })
+      });
+
+      if (!sessionResponse.ok) {
+        const error = await sessionResponse.json().catch(() => ({}));
+        throw new Error(error.error || 'Failed to create session');
+      }
+
+      const { sessionId } = await sessionResponse.json();
+      // Construct SSE stream URL (not returned by POST /sessions)
+      const streamUrl = `/api/chat/stream?sessionId=${sessionId}`;
+      // eslint-disable-next-line no-console
+      console.log('[app] Onboarding session created:', sessionId);
+      // eslint-disable-next-line no-console
+      console.log('[app] Onboarding patient_name:', context.patient_name);
+
+      // Step 2: Connect SSE and WAIT for connection to be established
+      const eventSource = new EventSource(streamUrl, { withCredentials: true });
+
+      // CRITICAL: Wait for SSE connection to open before initializing chat
+      // Without this, message sends before server can receive SSE events
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('SSE connection timeout'));
+        }, 10000); // 10 second timeout
+
+        eventSource.onopen = () => {
+          clearTimeout(timeout);
+          // eslint-disable-next-line no-console
+          console.log('[app] SSE connection established for onboarding');
+          resolve();
+        };
+
+        eventSource.onerror = (err) => {
+          clearTimeout(timeout);
+          eventSource.close(); // Prevent dangling connection on error
+          reject(new Error('SSE connection failed'));
+        };
+      });
+
+      // Step 3: Initialize chat with existing session (SSE now connected)
+      conversationalSQLChat = new window.ConversationalSQLChat();
+      conversationalSQLChat.initWithExistingSession(chatContainer, {
+        sessionId,
+        eventSource,
+        selectedPatientId: context.patient_id,
+        patientName: context.patient_name,
+        pendingQuery: context.selected_query
+      });
+
+      chatInitialized = true;
+      // eslint-disable-next-line no-console
+      console.log('[app] Onboarding chat initialized with existing session');
+
+      return true;
+
+    } catch (error) {
+      console.error('[app] Failed to handle onboarding context:', error);
+      // Clear sessionStorage to avoid retry loop
+      sessionStorage.removeItem('onboarding_context');
+      return false;
+    }
+  }
 
   const initChatIfVisible = () => {
     if (chatInitialized || !chatContainer || !assistantSection) {
@@ -772,12 +880,38 @@
     console.log('[app] Conversational SQL chat initialized');
   };
 
-  if (assistantSection && 'MutationObserver' in window) {
-    const observer = new MutationObserver(() => initChatIfVisible());
-    observer.observe(assistantSection, { attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
-  }
-  // Initial check in case assistant is shown on load
-  initChatIfVisible();
+  // PRD v5.0: Check for onboarding context BEFORE setting up lazy-init
+  // This ensures we handle onboarding immediately when coming from landing page
+  // CRITICAL: Must complete before initChatIfVisible() runs to prevent race condition
+  (async () => {
+    const hasOnboarding = await handleOnboardingContext();
+    if (hasOnboarding) {
+      // Navigate to assistant section and show it
+      const hash = window.location.hash;
+      if (hash !== '#assistant') {
+        window.location.hash = '#assistant';
+      }
+      // Force section visibility (hash handler may not have run yet)
+      if (assistantSection) {
+        assistantSection.style.display = 'block';
+        document.querySelectorAll('.content-section').forEach(section => {
+          if (section.id !== 'section-assistant') {
+            section.style.display = 'none';
+          }
+        });
+      }
+      // Don't set up lazy-init - chat already initialized via onboarding
+      return;
+    }
+
+    // No onboarding - set up normal lazy-init for chat
+    if (assistantSection && 'MutationObserver' in window) {
+      const observer = new MutationObserver(() => initChatIfVisible());
+      observer.observe(assistantSection, { attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
+    }
+    // Initial check in case assistant is shown on load
+    initChatIfVisible();
+  })();
 
   // Auto-load report if reportId is in URL parameters
   if (reportIdParam) {

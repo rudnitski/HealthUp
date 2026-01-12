@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome to HealthUp</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/landing.css">
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
+</head>
+
+<body class="landing-body">
+  <div class="landing-container">
+    <div class="landing-card" id="landing-card">
+      <!-- Welcome State -->
+      <div class="landing-state" id="state-welcome">
+        <h1 class="landing-title">Your labs, explained.</h1>
+        <p class="landing-subtitle">
+          Upload a lab report and get instant, personalized insights powered by AI.
+        </p>
+
+        <div class="upload-zone" id="upload-zone">
+          <div class="upload-zone-content">
+            <div class="upload-icon">📄</div>
+            <button type="button" class="upload-button" id="upload-button">
+              Upload Lab Report
+            </button>
+            <p class="upload-hint">PDF, PNG, JPEG, HEIC</p>
+            <p class="upload-drop-hint">Drop files here or click to browse</p>
+          </div>
+        </div>
+
+        <input id="file-input" type="file" name="analysisFile"
+          accept="application/pdf,image/png,image/jpeg,image/heic,.pdf,.png,.jpg,.jpeg,.heic" multiple
+          style="display: none;">
+      </div>
+
+      <!-- Processing State -->
+      <div class="landing-state" id="state-processing" hidden>
+        <h2 class="landing-title-sm">Analyzing your report...</h2>
+
+        <div class="progress-container" id="progress-container">
+          <div class="progress-bar">
+            <div class="progress-bar-fill" id="progress-bar-fill"></div>
+          </div>
+          <p class="progress-message" id="progress-message">Uploading...</p>
+        </div>
+
+        <div class="file-list" id="file-list"></div>
+      </div>
+
+      <!-- Generating State -->
+      <div class="landing-state" id="state-generating" hidden>
+        <div class="checkmark-container">
+          <span class="checkmark">✓</span>
+          <span class="checkmark-text" id="markers-count">Health markers extracted</span>
+        </div>
+        <h2 class="landing-title-sm">Preparing your personalized insights...</h2>
+        <div class="pulse-indicator"></div>
+      </div>
+
+      <!-- Insight State -->
+      <div class="landing-state" id="state-insight" hidden>
+        <div class="insight-card" id="insight-card">
+          <div class="insight-header">
+            <span class="insight-icon">💡</span>
+            <span class="insight-header-text">Your Results at a Glance</span>
+          </div>
+          <p class="insight-text" id="insight-text"></p>
+        </div>
+
+        <p class="suggestions-prompt">What would you like to know?</p>
+        <div class="suggestions-grid" id="suggestions-grid"></div>
+      </div>
+
+      <!-- Error State -->
+      <div class="landing-state" id="state-error" hidden>
+        <div class="error-icon">⚠️</div>
+        <h2 class="landing-title-sm" id="error-title">Something went wrong</h2>
+        <p class="error-message" id="error-message"></p>
+        <button type="button" class="retry-button" id="retry-button">Try Again</button>
+        <button type="button" class="skip-button" id="skip-button" hidden>Go to App</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts - order matters: auth first, then onboarding redirect, then landing -->
+  <script src="/js/auth.js"></script>
+  <script src="/js/onboarding-redirect.js"></script>
+  <script src="/js/landing.js"></script>
+</body>
+
+</html>

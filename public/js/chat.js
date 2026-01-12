@@ -73,6 +73,135 @@ class ConversationalSQLChat {
   }
 
   /**
+   * PRD v5.0: Initialize chat with an existing session (for onboarding)
+   * Called when transitioning from landing page with pre-created session
+   * @param {HTMLElement} containerElement - Chat container DOM element
+   * @param {object} onboardingSession - Session data from handleOnboardingContext()
+   * @param {string} onboardingSession.sessionId - Pre-created session ID
+   * @param {EventSource} onboardingSession.eventSource - Pre-connected EventSource
+   * @param {string} onboardingSession.selectedPatientId - Patient ID
+   * @param {string|null} onboardingSession.patientName - Patient display name
+   * @param {string} onboardingSession.pendingQuery - Query to auto-submit
+   */
+  initWithExistingSession(containerElement, { sessionId, eventSource, selectedPatientId, patientName, pendingQuery }) {
+    // ============================================================
+    // STEP 1: Set up ALL DOM references (must match init() exactly)
+    // ============================================================
+    this.chatContainer = containerElement;
+    this.messagesContainer = this.chatContainer.querySelector('.chat-messages');
+    this.inputTextarea = this.chatContainer.querySelector('.chat-input-textarea');
+    this.sendButton = this.chatContainer.querySelector('.chat-send-button');
+    this.resultsContainer = document.getElementById('sqlResults');
+
+    // PRD v4.3: Patient selector elements (must be set even if locked)
+    this.patientChipsContainer = document.getElementById('patient-chips-container');
+    this.newChatButton = document.getElementById('new-chat-button');
+    this.chipsScrollLeft = document.getElementById('chips-scroll-left');
+    this.chipsScrollRight = document.getElementById('chips-scroll-right');
+
+    // ============================================================
+    // STEP 2: Attach ALL event listeners (must match init() exactly)
+    // ============================================================
+    this.sendButton.addEventListener('click', this.handleSendMessage);
+    this.inputTextarea.addEventListener('keydown', this.handleKeyPress);
+
+    // PRD v4.3: New Chat button handler
+    if (this.newChatButton) {
+      this.newChatButton.addEventListener('click', this.handleNewChat);
+    }
+
+    // Scroll arrow handlers for patient chips
+    this.initChipsScrollHandlers();
+
+    // Example prompt handlers (for empty state)
+    this.attachExamplePromptHandlers();
+
+    // ============================================================
+    // STEP 3: Use pre-created session (do NOT call initPatientSelector)
+    // ============================================================
+    this.sessionId = sessionId;
+    this.eventSource = eventSource;
+    this.selectedPatientId = selectedPatientId;
+
+    // ============================================================
+    // STEP 4: Attach SSE handlers BEFORE submitting message
+    // CRITICAL: This prevents dropped events from the streamed response
+    // ============================================================
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        this.handleSSEEvent(data);
+      } catch (error) {
+        console.error('[Chat] Failed to parse SSE event:', error, event.data);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('[Chat] SSE connection error:', error);
+      if (this.eventSource.readyState === EventSource.CLOSED) {
+        this.showError('Connection lost. Please refresh the page.');
+        this.disableInput();
+      }
+    };
+
+    // ============================================================
+    // STEP 5: Lock patient chips (onboarding already selected patient)
+    // Use patientName from onboarding context for display (avoids extra fetch)
+    // ============================================================
+    this.chipsLocked = true;
+    this.patients = [{
+      id: selectedPatientId,
+      display_name: patientName || 'Patient',
+      full_name: patientName || null
+    }];
+    this.selectedPatientId = selectedPatientId;
+    this.renderPatientChips();
+
+    // ============================================================
+    // STEP 6: Submit pending query with proper UI state management
+    // CRITICAL: Add user bubble and set isProcessing BEFORE submitting
+    // This mirrors handleSendMessage() behavior for UI consistency
+    // ============================================================
+    if (pendingQuery) {
+      // Add user message bubble (so user sees their question)
+      this.addUserMessage(pendingQuery);
+
+      // Set processing state (prevents duplicate submissions)
+      this.isProcessing = true;
+      this.disableInput();
+
+      // NOW submit the message (SSE handlers already attached above)
+      fetch('/api/chat/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          sessionId: this.sessionId,
+          message: pendingQuery
+        })
+      }).then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      }).catch(error => {
+        console.error('[Chat] Failed to send onboarding message:', error);
+        this.showError('Failed to send message. Please try again.');
+        this.enableInput();
+        this.isProcessing = false;
+      });
+    } else {
+      // No pending query - just enable input
+      this.enableInput();
+    }
+
+    console.log('[Chat] Initialized with existing session:', {
+      sessionId,
+      selectedPatientId,
+      pendingQuery: pendingQuery ? pendingQuery.substring(0, 50) + '...' : null
+    });
+  }
+
+  /**
    * PRD v4.3: Initialize patient selector
    * Fetches patients sorted by recent activity
    */

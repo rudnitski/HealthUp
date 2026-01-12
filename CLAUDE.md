@@ -69,6 +69,8 @@ Upload (Manual/Gmail) → Batch Processing → Async Jobs → Vision OCR → Per
 
 - **`server/services/fileStorage.js`**: Filesystem-based storage for uploaded lab reports (PRD v3.4). Organizes files by patient ID with structure `{patient_id}/{report_id}.ext`. Stores relative paths in database (`patient_reports.file_path`). Configurable via `FILE_STORAGE_PATH` env variable (defaults to `./storage/lab_reports`).
 
+- **`server/routes/onboarding.js`**: First-time user onboarding API (PRD v5.0). Provides `GET /api/onboarding/status` (new user detection: `patient_count === 0 && report_count === 0`) and `POST /api/onboarding/insight` (generates personalized insight from first lab upload using OpenAI Responses API). Works with landing page (`landing.html`) for guided first-time user experience.
+
 ### Critical Configuration
 
 **File Storage (PRD v3.4):**
@@ -363,6 +365,7 @@ Feature specs live in `docs/PRD_*.md`:
 - v4.2.1: LLM Thumbnail & Separated Data Flow (execute_sql → show_plot + show_thumbnail)
 - v4.2.2: Thumbnail Contract Expansion + Backend Derivation (unified show_plot, backend derives sparkline/deltas)
 - v4.2.3: Thumbnail UI Infrastructure (message anchoring with UUIDs, contract finalization)
+- v5.0: First-Time User Onboarding (landing page, guided upload, personalized insight, chat handoff)
 
 Consult these when drafting new PRDs or understanding feature history. Prompt templates in `prompts/` define OCR extraction schema and SQL generation instructions.
 
@@ -387,3 +390,4 @@ Consult these when drafting new PRDs or understanding feature history. Prompt te
 17. **Environment file sync**: When making changes to `.env` file, make sure you update `.env.example` as well to keep documentation in sync.
 18. **Row Level Security (RLS)**: Several tables (`lab_results`, `patient_reports`, `patients`) have RLS policies enabled. When writing server-side queries that need to access data without user context (e.g., background jobs, batch processing, post-OCR normalization), use `adminPool` instead of `pool`. The `adminPool` connection has `BYPASSRLS` privilege. Symptom of RLS issue: query returns 0 rows even though data exists in the table. Example: `await adminPool.query('SELECT * FROM lab_results WHERE report_id = $1', [reportId])`.
 19. **Schema aliases sync**: When modifying database schema (adding/removing columns or tables), update `config/schema_aliases.json` to match. This file teaches the LLM which tables are relevant for specific keywords. Incorrect mappings cause the LLM to hallucinate non-existent columns. Example bug: `"unit": ["lab_results", "analytes"]` caused LLM to generate `a.unit_canonical` because it assumed `analytes` has unit columns (it doesn't - only `unit_aliases` does). Always verify aliases point to tables that actually have relevant columns.
+20. **Onboarding state transfer**: First-time user onboarding uses `sessionStorage.setItem('onboarding_context', JSON.stringify(context))` to pass state from `landing.html` to `index.html`. The main app reads this in `handleOnboardingContext()` and clears it immediately to prevent re-processing on refresh. If debugging onboarding transitions, check browser DevTools → Application → Session Storage.

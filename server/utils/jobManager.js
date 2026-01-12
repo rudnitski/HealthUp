@@ -286,6 +286,7 @@ function getBatchStatus(batchId) {
       progress: job?.progress || 0,
       progress_message: job?.progressMessage || '',
       report_id: job?.result?.report_id || null,
+      patient_id: job?.result?.patient_id || null,  // PRD v5.0: Expose for onboarding
       parameters: job?.result?.parameters || null,
       error: job?.error || null
     };

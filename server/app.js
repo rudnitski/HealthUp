@@ -18,6 +18,7 @@ import reportsRouter from './routes/reports.js';
 import executeSqlRouter from './routes/executeSql.js';
 import adminRouter from './routes/admin.js';
 import gmailDevRouter from './routes/gmailDev.js';
+import onboardingRouter from './routes/onboarding.js';
 import { shutdownSchemaSnapshot } from './services/schemaSnapshot.js';
 import sessionManager from './utils/sessionManager.js';
 import { shutdown as shutdownJobManager } from './utils/jobManager.js';
@@ -184,6 +185,7 @@ app.use('/api/analyze-labs', analyzeLabReportRouter);
 app.use('/api/execute-sql', executeSqlRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/dev-gmail', gmailDevRouter);
+app.use('/api/onboarding', onboardingRouter); // PRD v5.0: Onboarding routes
 app.use('/api', reportsRouter);
 
 app.get('/', (_req, res) => {

@@ -1,0 +1,423 @@
+/* ============================================
+   Landing Page Styles (PRD v5.0)
+   First-Time User Onboarding
+   ============================================ */
+
+/* Body Override for Landing */
+.landing-body {
+  background: var(--color-bg);
+  min-height: 100vh;
+}
+
+/* Main Container */
+.landing-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+}
+
+/* Card Container */
+.landing-card {
+  max-width: 480px;
+  width: 100%;
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-10);
+  box-shadow: var(--shadow-xl);
+}
+
+/* State Management */
+.landing-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.landing-state[hidden] {
+  display: none;
+}
+
+/* Typography */
+.landing-title {
+  font-family: var(--font-display);
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--space-4);
+  text-align: center;
+}
+
+.landing-title-sm {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--space-6);
+  text-align: center;
+}
+
+.landing-subtitle {
+  font-family: var(--font-body);
+  font-size: var(--text-lg);
+  color: var(--color-text-secondary);
+  text-align: center;
+  margin: 0 0 var(--space-8);
+  max-width: 380px;
+}
+
+/* Upload Zone */
+.upload-zone {
+  width: 100%;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-8) var(--space-6);
+  transition: all var(--transition-base);
+  cursor: pointer;
+}
+
+.upload-zone:hover,
+.upload-zone.drag-over {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+.upload-zone.drag-over {
+  transform: scale(1.02);
+}
+
+.upload-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.upload-icon {
+  font-size: 3rem;
+  margin-bottom: var(--space-4);
+  opacity: 0.9;
+}
+
+.upload-button {
+  width: 100%;
+  max-width: 280px;
+  padding: var(--space-4) var(--space-6);
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.upload-button:hover {
+  background: var(--color-accent-hover);
+}
+
+.upload-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upload-hint {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.upload-drop-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* Progress Container */
+.progress-container {
+  width: 100%;
+  margin-bottom: var(--space-6);
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--color-border-light);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--color-sage-400), var(--color-sage-600));
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+  animation: progress-shimmer 2s ease-in-out infinite;
+}
+
+@keyframes progress-shimmer {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.progress-message {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+/* File List */
+.file-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.file-item-name {
+  flex: 1;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-item-status {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.file-item-status.complete {
+  color: var(--color-success);
+}
+
+.file-item-status.error {
+  color: var(--color-error);
+}
+
+/* Generating State */
+.checkmark-container {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  animation: fadeInUp 300ms ease-out;
+}
+
+.checkmark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--color-success);
+  color: white;
+  border-radius: var(--radius-full);
+  font-size: var(--text-base);
+  font-weight: 600;
+  animation: scaleIn 300ms ease-out;
+}
+
+.checkmark-text {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.pulse-indicator {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--color-accent-light);
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-full);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Insight Card */
+.insight-card {
+  width: 100%;
+  background: var(--color-accent-light);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
+  animation: fadeInUp 300ms ease-out;
+}
+
+.insight-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.insight-icon {
+  font-size: var(--text-xl);
+}
+
+.insight-header-text {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.insight-text {
+  margin: 0;
+  font-size: var(--text-base);
+  color: var(--color-text);
+  line-height: 1.7;
+  text-align: left;
+}
+
+/* Suggestions */
+.suggestions-prompt {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
+}
+
+.suggestions-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+}
+
+.suggestion-button {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  text-align: center;
+  animation: fadeInUp 300ms ease-out backwards;
+}
+
+.suggestion-button:nth-child(1) { animation-delay: 0ms; }
+.suggestion-button:nth-child(2) { animation-delay: 50ms; }
+.suggestion-button:nth-child(3) { animation-delay: 100ms; }
+.suggestion-button:nth-child(4) { animation-delay: 150ms; }
+
+.suggestion-button:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+/* Error State */
+.error-icon {
+  font-size: 3rem;
+  margin-bottom: var(--space-4);
+}
+
+.error-message {
+  margin: 0 0 var(--space-6);
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
+  max-width: 340px;
+}
+
+.retry-button {
+  padding: var(--space-3) var(--space-6);
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-base);
+  margin-bottom: var(--space-3);
+}
+
+.retry-button:hover {
+  background: var(--color-accent-hover);
+}
+
+.skip-button {
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.skip-button:hover {
+  border-color: var(--color-text-secondary);
+  color: var(--color-text);
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Mobile Adjustments */
+@media (max-width: 480px) {
+  .landing-container {
+    padding: var(--space-4);
+  }
+
+  .landing-card {
+    padding: var(--space-6);
+    border-radius: var(--radius-xl);
+  }
+
+  .landing-title {
+    font-size: var(--text-2xl);
+  }
+
+  .suggestions-grid {
+    grid-template-columns: 1fr;
+  }
+}
