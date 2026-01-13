@@ -33,7 +33,7 @@ const __dirname = getDirname(import.meta.url);
 // Increase max listeners for process event emitter
 // Multiple modules legitimately register exit/signal handlers for cleanup:
 // - db pool error handler
-// - SIGINT/SIGTERM handlers (app.js)
+// - SIGHUP/SIGINT/SIGTERM handlers (app.js)
 // - uncaughtException/unhandledRejection handlers (app.js)
 // - various cleanup routines in loaded modules
 process.setMaxListeners(20);
@@ -353,7 +353,10 @@ server.on('error', (err) => {
   }
 });
 
-['SIGINT', 'SIGTERM'].forEach((sig) => {
+// SIGHUP: sent when terminal is closed (prevents orphaned processes)
+// SIGINT: sent on Ctrl+C
+// SIGTERM: sent by kill command or process managers
+['SIGHUP', 'SIGINT', 'SIGTERM'].forEach((sig) => {
   process.on(sig, () => shutdown(0));
 });
 
