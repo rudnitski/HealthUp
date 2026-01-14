@@ -25,7 +25,6 @@
   const progressMessage = document.getElementById('progress-message');
   const fileList = document.getElementById('file-list');
   const markersCount = document.getElementById('markers-count');
-  const insightText = document.getElementById('insight-text');
   const suggestionsGrid = document.getElementById('suggestions-grid');
   const errorMessage = document.getElementById('error-message');
   const retryButton = document.getElementById('retry-button');
@@ -38,12 +37,20 @@
   const MAX_INSIGHT_RETRIES = 3;
   const fileItemRefs = new Map(); // Map<filename, HTMLElement> for safe DOM access
 
+  // Section type configuration for structured insight UI
+  // Icons are static; titles come from LLM (language-aware) with fallbacks
+  const SECTION_CONFIG = {
+    finding: { icon: '🔬', fallbackTitle: 'Key Findings' },
+    action: { icon: '💪', fallbackTitle: 'What You Can Do' },
+    tracking: { icon: '📈', fallbackTitle: 'Track Progress' }
+  };
+
   // Progress message mapping
   function getDisplayMessage(progress, progressMessage) {
     const patterns = [
       { match: /^File uploaded/i, display: 'Uploading...' },
       { match: /^Processing|^Preparing/i, display: 'Preparing your report...' },
-      { match: /^Analyzing/i, display: 'Extracting health markers...' },
+      { match: /^Analyzing/i, display: 'Reading and structuring your results' },
       { match: /^Parsing|^AI analysis/i, display: 'Processing results...' },
       { match: /^Saving|^Results saved/i, display: 'Saving your data...' },
       { match: /^Normalizing|^Mapping|^Analyte/i, display: 'Finalizing...' },
@@ -284,7 +291,7 @@
           const totalParams = primaryPatientJobs.reduce((sum, j) => sum + (j.parameters?.length || 0), 0);
 
           // Move to generating state
-          markersCount.textContent = `${totalParams} health markers extracted`;
+          markersCount.textContent = `${totalParams} markers found in your report`;
           showState('generating');
 
           // Generate insight
@@ -342,32 +349,139 @@
   }
 
   function displayInsight(data) {
-    // Use textContent to prevent XSS
-    insightText.textContent = data.insight;
+    // Get sections container
+    const sectionsContainer = document.getElementById('insight-sections');
+    sectionsContainer.innerHTML = '';
 
-    // Render suggestions safely
+    // Handle both old format (insight string) and new format (sections array)
+    const sections = data.sections || [
+      // Fallback: Convert legacy insight string to single section
+      { type: 'finding', text: data.insight }
+    ];
+
+    // Render each section card (compact design: header with icon+title, then text)
+    sections.forEach((section) => {
+      const config = SECTION_CONFIG[section.type] || SECTION_CONFIG.finding;
+
+      const card = document.createElement('div');
+      card.className = `insight-section-card insight-section-card--${section.type}`;
+
+      // Header row: icon + title
+      const headerDiv = document.createElement('div');
+      headerDiv.className = 'insight-section-header';
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'insight-section-icon';
+      iconSpan.textContent = config.icon;
+
+      const titleEl = document.createElement('span');
+      titleEl.className = 'insight-section-title';
+      titleEl.textContent = section.title || config.fallbackTitle; // LLM-provided title with fallback
+
+      headerDiv.appendChild(iconSpan);
+      headerDiv.appendChild(titleEl);
+
+      // Text content
+      const textEl = document.createElement('p');
+      textEl.className = 'insight-section-text';
+      textEl.textContent = section.text; // textContent for XSS safety
+
+      card.appendChild(headerDiv);
+      card.appendChild(textEl);
+      sectionsContainer.appendChild(card);
+    });
+
+    // Render suggestions intro (LLM-generated, language-aware)
+    const suggestionsPrompt = document.getElementById('suggestions-prompt');
+    suggestionsPrompt.textContent = data.suggestions_intro || 'If you want to learn more, I can tell you about:';
+
+    // Render suggestions - ghost buttons with arrow affordance
     suggestionsGrid.innerHTML = '';
-    data.suggestions.forEach((suggestion, index) => {
+    data.suggestions.forEach((suggestion) => {
       const button = document.createElement('button');
       button.className = 'suggestion-button';
-      button.textContent = suggestion.label; // textContent for XSS safety
+
+      // Label text
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'suggestion-button-label';
+      labelSpan.textContent = suggestion.label;
+
+      // Arrow indicator (affordance for "tap to explore")
+      const arrowSpan = document.createElement('span');
+      arrowSpan.className = 'suggestion-button-arrow';
+      arrowSpan.textContent = '→';
+
+      // Full query text (hidden, used for chat)
+      const querySpan = document.createElement('span');
+      querySpan.className = 'suggestion-button-query';
+      querySpan.textContent = suggestion.query;
+
+      button.appendChild(labelSpan);
+      button.appendChild(arrowSpan);
+      button.appendChild(querySpan);
+
       button.addEventListener('click', () => {
         proceedToChat(suggestion, data);
       });
+
       suggestionsGrid.appendChild(button);
     });
 
     showState('insight');
   }
 
-  function displayFallbackInsight() {
-    const fallbackData = {
-      insight: `We processed ${completedReportIds.length} lab report(s) with health markers. You can now ask questions about your results.`,
+  // Locale-aware fallback messages (used when LLM generation fails)
+  const FALLBACK_MESSAGES = {
+    ru: {
+      finding: { title: 'Ключевые показатели', text: (count) => `Мы обработали ${count} отчёт(ов) с вашими показателями здоровья.` },
+      action: { title: 'Что можно сделать', text: 'Теперь вы можете задавать вопросы о своих результатах.' },
+      tracking: { title: 'Отслеживание динамики', text: 'Загружайте анализы регулярно, чтобы отслеживать изменения.' },
+      suggestions_intro: 'Хотите узнать подробнее о:',
       suggestions: [
-        { label: 'Summarize my results', query: 'Can you give me a summary of my lab results?' },
-        { label: 'What\'s out of range?', query: 'Which of my lab values are outside the normal range?' },
-        { label: 'Health recommendations', query: 'Based on my lab results, what health recommendations do you have?' }
+        { label: 'обзоре ваших результатов', query: 'Можешь дать обзор моих анализов?' },
+        { label: 'значениях вне нормы', query: 'Какие из моих показателей выходят за пределы нормы?' },
+        { label: 'рекомендациях по здоровью', query: 'Какие рекомендации по здоровью ты можешь дать на основе моих результатов?' }
+      ]
+    },
+    en: {
+      finding: { title: 'Key Findings', text: (count) => `We processed ${count} report(s) with your health markers.` },
+      action: { title: 'What You Can Do', text: 'You can now ask questions about your results.' },
+      tracking: { title: 'Track Progress', text: 'Upload reports regularly to track changes over time.' },
+      suggestions_intro: 'If you\'d like, I can tell you about:',
+      suggestions: [
+        { label: 'an overview of your results', query: 'Can you give me an overview of my lab results?' },
+        { label: 'which values are out of range', query: 'Which of my values are outside the normal range?' },
+        { label: 'health recommendations based on your data', query: 'What health recommendations do you have based on my results?' }
+      ]
+    }
+  };
+
+  function displayFallbackInsight() {
+    // Detect locale from browser (fallback to English)
+    const browserLang = (navigator.language || navigator.userLanguage || 'en').toLowerCase();
+    const locale = browserLang.startsWith('ru') ? 'ru' : 'en';
+    const msgs = FALLBACK_MESSAGES[locale];
+
+    const fallbackData = {
+      sections: [
+        {
+          type: 'finding',
+          title: msgs.finding.title,
+          text: msgs.finding.text(completedReportIds.length)
+        },
+        {
+          type: 'action',
+          title: msgs.action.title,
+          text: msgs.action.text
+        },
+        {
+          type: 'tracking',
+          title: msgs.tracking.title,
+          text: msgs.tracking.text
+        }
       ],
+      suggestions_intro: msgs.suggestions_intro,
+      suggestions: msgs.suggestions,
       patient_id: completedPatientId,
       patient_name: null
     };
@@ -377,8 +491,14 @@
   }
 
   function proceedToChat(selectedSuggestion, insightResponse) {
+    // Convert sections back to single insight string for chat context
+    // This maintains backward compatibility with the chat system prompt
+    const insightText = insightResponse.sections
+      ? insightResponse.sections.map(s => s.text).join(' ')
+      : insightResponse.insight;
+
     const context = {
-      insight: insightResponse.insight,
+      insight: insightText,
       selected_query: selectedSuggestion.query,
       report_ids: completedReportIds,
       patient_id: insightResponse.patient_id || completedPatientId,

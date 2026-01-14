@@ -196,13 +196,42 @@ router.post('/insight', requireAuth, async (req, res) => {
           schema: {
             type: 'object',
             properties: {
-              insight: { type: 'string', description: '2-4 sentence personalized insight' },
+              sections: {
+                type: 'array',
+                description: 'Exactly 3 sections: finding, action, tracking',
+                items: {
+                  type: 'object',
+                  properties: {
+                    type: {
+                      type: 'string',
+                      enum: ['finding', 'action', 'tracking'],
+                      description: 'Section type for visual styling'
+                    },
+                    title: {
+                      type: 'string',
+                      description: 'Section heading in the same language as lab data'
+                    },
+                    text: {
+                      type: 'string',
+                      description: '1-2 sentences for this section'
+                    }
+                  },
+                  required: ['type', 'title', 'text'],
+                  additionalProperties: false
+                },
+                minItems: 3,
+                maxItems: 3
+              },
+              suggestions_intro: {
+                type: 'string',
+                description: 'Conversational intro phrase in same language as lab data, e.g. "I can tell you more about:"'
+              },
               suggestions: {
                 type: 'array',
                 items: {
                   type: 'object',
                   properties: {
-                    label: { type: 'string', description: 'Short button text (2-4 words)' },
+                    label: { type: 'string', description: 'Topic phrase that flows after intro' },
                     query: { type: 'string', description: 'Full question to send to chat' }
                   },
                   required: ['label', 'query'],
@@ -212,7 +241,7 @@ router.post('/insight', requireAuth, async (req, res) => {
                 maxItems: 4
               }
             },
-            required: ['insight', 'suggestions'],
+            required: ['sections', 'suggestions_intro', 'suggestions'],
             additionalProperties: false
           }
         }
@@ -224,11 +253,12 @@ router.post('/insight', requireAuth, async (req, res) => {
 
     // 5. Access parsed response with defensive null check
     const parsed = response.output_parsed;
-    if (!parsed || !parsed.insight || !Array.isArray(parsed.suggestions)) {
+    if (!parsed || !Array.isArray(parsed.sections) || parsed.sections.length !== 3 || !Array.isArray(parsed.suggestions)) {
       console.error('[onboarding] LLM returned malformed response:', {
         userId: req.user.id,
         has_parsed: !!parsed,
-        has_insight: !!parsed?.insight,
+        has_sections: Array.isArray(parsed?.sections),
+        sections_count: parsed?.sections?.length,
         has_suggestions: Array.isArray(parsed?.suggestions)
       });
       return res.status(500).json({ error: 'Failed to parse LLM response', retryable: true });
@@ -241,10 +271,11 @@ router.post('/insight', requireAuth, async (req, res) => {
       patient_id
     });
 
-    // Return insight with patient info and lab data for client display
+    // Return insight sections with patient info and lab data for client display
     // PRD v5.0: Include lab_data for system prompt injection (avoids LLM needing SQL for basic questions)
     res.json({
-      insight: parsed.insight,
+      sections: parsed.sections,
+      suggestions_intro: parsed.suggestions_intro,
       suggestions: parsed.suggestions,
       analytes_extracted: allParameters.length,
       reports_processed: singlePatientReports.length,

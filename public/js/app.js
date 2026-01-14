@@ -814,7 +814,8 @@
       console.log('[app] Onboarding patient_name:', context.patient_name);
 
       // Step 2: Connect SSE and WAIT for connection to be established
-      const eventSource = new EventSource(streamUrl, { withCredentials: true });
+      // PRD v5.0: Use auth-aware EventSource for 401 handling (same as chat.js)
+      const eventSource = window.createAuthAwareEventSource(streamUrl);
 
       // CRITICAL: Wait for SSE connection to open before initializing chat
       // Without this, message sends before server can receive SSE events

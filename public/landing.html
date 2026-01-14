@@ -18,17 +18,17 @@
       <div class="landing-state" id="state-welcome">
         <h1 class="landing-title">Your labs, explained.</h1>
         <p class="landing-subtitle">
-          Upload a lab report and get instant, personalized insights powered by AI.
+          Upload a lab report to see what really matters — explained clearly.
         </p>
 
         <div class="upload-zone" id="upload-zone">
           <div class="upload-zone-content">
             <div class="upload-icon">📄</div>
             <button type="button" class="upload-button" id="upload-button">
-              Upload Lab Report
+              Upload lab report
             </button>
             <p class="upload-hint">PDF, PNG, JPEG, HEIC</p>
-            <p class="upload-drop-hint">Drop files here or click to browse</p>
+            <p class="upload-drop-hint">Drop a file here or click to browse</p>
           </div>
         </div>
 
@@ -57,21 +57,17 @@
           <span class="checkmark">✓</span>
           <span class="checkmark-text" id="markers-count">Health markers extracted</span>
         </div>
-        <h2 class="landing-title-sm">Preparing your personalized insights...</h2>
+        <h2 class="landing-title-sm">Preparing a clear summary for you...</h2>
         <div class="pulse-indicator"></div>
       </div>
 
       <!-- Insight State -->
       <div class="landing-state" id="state-insight" hidden>
-        <div class="insight-card" id="insight-card">
-          <div class="insight-header">
-            <span class="insight-icon">💡</span>
-            <span class="insight-header-text">Your Results at a Glance</span>
-          </div>
-          <p class="insight-text" id="insight-text"></p>
+        <div class="insight-sections" id="insight-sections">
+          <!-- Section cards rendered dynamically by JS -->
         </div>
 
-        <p class="suggestions-prompt">What would you like to know?</p>
+        <p class="suggestions-prompt" id="suggestions-prompt"></p>
         <div class="suggestions-grid" id="suggestions-grid"></div>
       </div>
 
