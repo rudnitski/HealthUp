@@ -366,6 +366,12 @@ function parseLLMBatchOutput(outputText, unmappedRows) {
     if (!parsed.results || !Array.isArray(parsed.results)) {
       throw new Error('Invalid JSON structure: missing results array');
     }
+    // Normalize codes - strip [PENDING] suffix if LLM included it
+    parsed.results.forEach(r => {
+      if (r.code && typeof r.code === 'string') {
+        r.code = r.code.replace(' [PENDING]', '');
+      }
+    });
     return parsed.results;
   } catch (error) {
     logger.error({ error: error.message, outputText }, 'Failed to parse LLM output');
@@ -413,13 +419,17 @@ async function proposeAnalytesWithLLM(unmappedRows, mappedRows, analyteSchema) {
     .map(r => r.final_analyte?.code)
     .filter(Boolean);
 
-  // Build analyte schema string with status indicators
-  const schemaText = analyteSchema
-    .map(a => {
-      const statusTag = a.status === 'pending' ? ' [PENDING]' : '';
-      return `${a.code}${statusTag} (${a.name})`;
-    })
-    .join('\n');
+  // Build analyte schema string with separate sections for approved and pending
+  const approvedAnalytes = analyteSchema.filter(a => a.status !== 'pending');
+  const pendingAnalytes = analyteSchema.filter(a => a.status === 'pending');
+
+  let schemaText = '=== APPROVED ANALYTES ===\n';
+  schemaText += approvedAnalytes.map(a => `${a.code} (${a.name})`).join('\n');
+
+  if (pendingAnalytes.length > 0) {
+    schemaText += '\n\n=== PENDING ANALYTES (use these codes to avoid duplicates) ===\n';
+    schemaText += pendingAnalytes.map(a => `${a.code} (${a.name})`).join('\n');
+  }
 
   // Build batch prompt
   const inputPrompt = buildBatchPrompt(unmappedRows, categoryContext, schemaText);
@@ -940,7 +950,7 @@ async function dryRun({ report_id, patient_id, user_id, analyte_suggestions = nu
   }
 
   // Now log individual rows (after LLM processing)
-  rowLogs.forEach(rowResult => logger.info(rowResult));
+  rowLogs.forEach(rowResult => logger.info(rowResult, rowResult.event || 'mapping.row'));
 
   // Calculate summary statistics
   const totalDuration = Date.now() - startTime;

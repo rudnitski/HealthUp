@@ -189,6 +189,17 @@ SELECT normalize_unit_string(alias), unit_canonical FROM (VALUES
   ('Ед/мл', 'U/mL'),          -- Russian "units per mL"
   ('КП', '1'),                -- Коэффициент позитивности (positivity coefficient)
   ('R', '1{ratio}'),          -- Ratio (dimensionless)
-  ('нг/мл DDU', 'ng/mL{DDU}') -- D-dimer units
+  ('нг/мл DDU', 'ng/mL{DDU}'), -- D-dimer units
+
+  -- LLM-learned and admin-approved aliases (2026-01-15)
+  ('ОЕд/мл', '[arb''U]/mL'),   -- Relative/arbitrary units per mL (celiac antibodies)
+  ('BAU/ml', '{BAU}/mL'),      -- Bioequivalent Allergy Units
+  ('INR', '1{INR}'),           -- International Normalized Ratio
+  ('мЕд/л', 'm[IU]/L'),        -- milli-international units per liter
+  ('мкг/мл', 'ug/mL'),         -- microgram per milliliter
+  ('мкЕд/мл', 'u[IU]/mL'),     -- micro-international units per mL
+  ('мМЕд/мл', 'm[IU]/mL'),     -- milli-international units per mL (variant)
+  ('мМЕ/мл', 'm[IU]/mL'),      -- milli-international units per mL
+  ('рН', '{pH}')               -- pH (dimensionless, UCUM notation)
 ) AS raw_aliases(alias, unit_canonical)
 ON CONFLICT (alias) DO NOTHING;

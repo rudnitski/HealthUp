@@ -104,7 +104,9 @@ INSERT INTO analyte_aliases (analyte_id, alias, lang, confidence, source) VALUES
         const comma = isLast ? '' : ',';
         const conf = alias.confidence || 1.0;
         const src = alias.source || 'seed';
-        aliasLines.push(`  ((SELECT analyte_id FROM analytes WHERE code = '${code}'), '${alias.alias.replace(/'/g, "''")}', '${alias.lang || 'en'}', ${conf}, '${src}')${comma}`);
+        // Detect language from text if not set: Cyrillic → 'ru', otherwise 'en'
+        const lang = alias.lang || (/[а-яА-ЯёЁіїєґІЇЄҐ]/.test(alias.alias) ? 'ru' : 'en');
+        aliasLines.push(`  ((SELECT analyte_id FROM analytes WHERE code = '${code}'), '${alias.alias.replace(/'/g, "''")}', '${lang}', ${conf}, '${src}')${comma}`);
       });
 
       if (codeIdx < codes.length - 1) aliasLines.push('');
