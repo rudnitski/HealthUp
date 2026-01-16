@@ -1034,7 +1034,7 @@ async function dryRun({ report_id, patient_id, user_id, analyte_suggestions = nu
   };
 
   // Log summary
-  logger.info(summary);
+  logger.info(summary, 'Mapping summary');
 
   return { summary, rows: rowLogs };
 }
