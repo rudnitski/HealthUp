@@ -597,7 +597,7 @@ const convertPdfToImageDataUrls = async (buffer, pageCount, filenameHint = 'uplo
  * @param {string} params.userId - User ID for RLS context (PRD v4.4.3)
  * @returns {Promise<object>} Processing result
  */
-async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSize, userId }) {
+async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSize, userId, fallbackPatientId }) {
   const logPrefix = `[labReportProcessor:${jobId}]`;
 
   try {
@@ -740,6 +740,7 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
         processedAt,
         coreResult,
         userId, // PRD v4.4.3: Pass userId for RLS context
+        fallbackPatientId, // PRD v6.0: For chat inline upload
       });
 
       updateProgress(jobId, 85, 'Results saved');
@@ -828,6 +829,11 @@ async function processLabReport({ jobId, fileBuffer, mimetype, filename, fileSiz
       checksum: persistenceResult.checksum,
       user_id: userId, // PRD v4.4.3: Include userId in result
       processed_at: processedAt.toISOString(),
+      // PRD v6.0: Additional fields for chat inline upload
+      patient_name: persistenceResult.patientName,
+      test_date_normalized: persistenceResult.testDateNormalized,
+      parameter_count: persistenceResult.parameterCount,
+      is_new_patient: persistenceResult.isNewPatient,
       ...coreResult,
     };
 

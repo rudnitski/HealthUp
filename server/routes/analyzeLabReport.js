@@ -2,6 +2,7 @@ import express from 'express';
 import { createJob, getJob, getJobStatus, createBatch, getBatch, getBatchStatus } from '../utils/jobManager.js';
 import { processLabReport } from '../services/labReportProcessor.js';
 import { requireAuth } from '../middleware/auth.js';
+import { queryWithUser } from '../db/index.js';
 
 const router = express.Router();
 
@@ -193,14 +194,42 @@ router.post('/batch', requireAuth, async (req, res) => {
     });
   }
 
+  // PRD v6.0: Extract and validate optional fallbackPatientId from form data
+  // Used by chat inline upload when OCR fails to extract patient name
+  const fallbackPatientId = req.body?.fallbackPatientId || null;
+
+  if (fallbackPatientId) {
+    // UUID format validation to prevent PostgreSQL 500 errors
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (typeof fallbackPatientId !== 'string' || !uuidPattern.test(fallbackPatientId)) {
+      return res.status(400).json({
+        error: 'Invalid fallbackPatientId format - expected UUID'
+      });
+    }
+
+    // SECURITY: Validate that fallbackPatientId belongs to current user via RLS
+    const patientCheck = await queryWithUser(
+      'SELECT id FROM patients WHERE id = $1',
+      [fallbackPatientId],
+      req.user.id
+    );
+    if (patientCheck.rows.length === 0) {
+      return res.status(403).json({
+        error: 'Invalid fallbackPatientId - patient not found or access denied'
+      });
+    }
+    console.log(`[analyzeLabReportBatch:${requestId}] Using fallbackPatientId: ${fallbackPatientId}`);
+  }
+
   // PRD v4.4.3: Create batch with authenticated user ID
   const { batchId, jobs, files: filesWithJobIds } = createBatch(req.user.id, filesArray);
 
   console.log(`[analyzeLabReportBatch:${requestId}] Batch created: ${batchId} with ${jobs.length} jobs for user: ${req.user.id}`);
 
   // Queue processing in background (don't await!)
+  // PRD v6.0: Pass fallbackPatientId for chat inline upload
   setImmediate(async () => {
-    await processBatchFiles(filesWithJobIds, batchId, requestId, req.user.id);
+    await processBatchFiles(filesWithJobIds, batchId, requestId, req.user.id, fallbackPatientId);
   });
 
   // Return 202 immediately
@@ -215,8 +244,9 @@ router.post('/batch', requireAuth, async (req, res) => {
 /**
  * Background worker function to process batch files with throttled concurrency
  * PRD v4.4.3: Added userId parameter for RLS context
+ * PRD v6.0: Added fallbackPatientId for chat inline upload
  */
-async function processBatchFiles(files, batchId, requestId, userId) {
+async function processBatchFiles(files, batchId, requestId, userId, fallbackPatientId = null) {
   const CONCURRENCY = 3; // Process 3 files at a time
 
   console.log(`[analyzeLabReportBatch:${requestId}] Starting batch processing for ${files.length} files (concurrency: ${CONCURRENCY})`);
@@ -239,6 +269,7 @@ async function processBatchFiles(files, batchId, requestId, userId) {
         filename: name,
         fileSize: size,
         userId, // PRD v4.4.3: Pass userId for RLS context
+        fallbackPatientId, // PRD v6.0: For chat inline upload
       })
         .then(() => {
           console.log(`[analyzeLabReportBatch:${requestId}] Job ${jobId} completed for file: ${name}`);
@@ -283,7 +314,12 @@ router.get('/batches/:batchId', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'Batch not found' });
   }
 
-  return res.status(200).json(batchStatus);
+  // PRD v6.0: Compute allComplete flag for frontend polling
+  const allComplete = batchStatus.jobs.every(
+    job => job.status === 'completed' || job.status === 'failed'
+  );
+
+  return res.status(200).json({ ...batchStatus, allComplete });
 });
 
 export default router;

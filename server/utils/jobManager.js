@@ -287,7 +287,11 @@ function getBatchStatus(batchId) {
       progress_message: job?.progressMessage || '',
       report_id: job?.result?.report_id || null,
       patient_id: job?.result?.patient_id || null,  // PRD v5.0: Expose for onboarding
-      parameters: job?.result?.parameters || null,
+      patient_name: job?.result?.patient_name || null,           // PRD v6.0: For chat inline upload
+      test_date: job?.result?.test_date_normalized || null,      // PRD v6.0: ISO date from OCR
+      parameter_count: job?.result?.parameter_count || 0,        // PRD v6.0: Count for upload card
+      is_new_patient: job?.result?.is_new_patient || false,      // PRD v6.0: For toast message
+      parameters: job?.result?.parameters || null,               // Keep for backward compat
       error: job?.error || null
     };
   });

@@ -107,7 +107,7 @@ async function upsertPatient(client, payload) {
         gender = COALESCE(EXCLUDED.gender, patients.gender),
         updated_at = NOW(),
         last_seen_report_at = NOW()
-    RETURNING id;
+    RETURNING id, (xmax = 0) AS is_new;
     `,
     [
       patientId,
@@ -118,7 +118,7 @@ async function upsertPatient(client, payload) {
     ],
   );
 
-  return result.rows[0].id;
+  return { patientId: result.rows[0].id, isNew: result.rows[0].is_new };
 }
 
 const buildLabResultTuples = (reportId, parameters) => {
@@ -188,6 +188,7 @@ async function persistLabReport({
   processedAt,
   coreResult,
   userId, // PRD v4.4.3: Required for RLS context
+  fallbackPatientId, // PRD v6.0: Optional fallback when OCR fails to extract patient name
 }) {
   if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
     throw new Error('File buffer is required for persistence');
@@ -213,6 +214,7 @@ async function persistLabReport({
   const client = await pool.connect();
   const reportId = randomUUID();
   let patientId;
+  let isNewPatient = false; // PRD v6.0: Track if patient was newly created
   let persistedReportId;
   let savedFilePath = null; // NEW file we saved (may need cleanup)
   let shouldCleanupOnError = true; // Whether to delete savedFilePath on rollback
@@ -228,12 +230,27 @@ async function persistLabReport({
       [userId]
     );
 
-    patientId = await upsertPatient(client, {
-      fullName: patientName,
-      dateOfBirth: patientDateOfBirth,
-      gender: patientGender,
-      recognizedAt,
-    });
+    // PRD v6.0: Conditional patient handling based on fallbackPatientId
+    // When OCR fails to extract patient name but we have a fallback, use it directly
+    if (!patientName && fallbackPatientId) {
+      // Use fallback patient - skip upsertPatient, just update last_seen_report_at
+      patientId = fallbackPatientId;
+      isNewPatient = false;
+      await client.query(
+        'UPDATE patients SET last_seen_report_at = NOW() WHERE id = $1',
+        [fallbackPatientId]
+      );
+    } else {
+      // Normal flow: upsert patient based on OCR-extracted name
+      const upsertResult = await upsertPatient(client, {
+        fullName: patientName,
+        dateOfBirth: patientDateOfBirth,
+        gender: patientGender,
+        recognizedAt,
+      });
+      patientId = upsertResult.patientId;
+      isNewPatient = upsertResult.isNew;
+    }
 
     const missingDataArray = Array.isArray(safeCoreResult.missing_data)
       ? safeCoreResult.missing_data
@@ -360,10 +377,15 @@ async function persistLabReport({
 
     await client.query('COMMIT');
 
+    // PRD v6.0: Return additional fields for chat inline upload
     return {
       patientId,
       reportId: persistedReportId,
       checksum,
+      isNewPatient,
+      patientName,
+      testDateNormalized: safeCoreResult.test_date_normalized ?? null,
+      parameterCount,
     };
   } catch (error) {
     await client.query('ROLLBACK');

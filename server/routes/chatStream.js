@@ -35,6 +35,7 @@ import {
   normalizeRowsForFrontend,
   ensureOutOfRangeField
 } from '../utils/thumbnailDerivation.js';
+import { getReportDetail } from '../services/reportRetrieval.js';
 // Note: validateSQL no longer needed here - display tools receive pre-fetched data (PRD v4.2.2)
 
 const router = express.Router();
@@ -389,11 +390,12 @@ router.get('/stream', requireAuth, (req, res) => {
  * PRD v4.4.3: Add requireAuth and session ownership check
  */
 router.post('/messages', requireAuth, async (req, res) => {
-  const { sessionId, message } = req.body;
+  const { sessionId, message, uploadContext } = req.body; // PRD v6.0: Add uploadContext
 
-  if (!sessionId || !message) {
+  // PRD v6.0: Allow empty message when uploadContext is present
+  if (!sessionId || (!message && !uploadContext)) {
     return res.status(400).json({
-      error: 'sessionId and message are required',
+      error: 'sessionId and (message or uploadContext) required',
       code: 'INVALID_REQUEST'
     });
   }
@@ -427,8 +429,9 @@ router.post('/messages', requireAuth, async (req, res) => {
   res.json({ ok: true });
 
   // Process message asynchronously
+  // PRD v6.0: Pass uploadContext for chat inline upload
   setImmediate(async () => {
-    await processMessage(sessionId, message);
+    await processMessage(sessionId, message, uploadContext);
   });
 });
 
@@ -466,8 +469,9 @@ router.delete('/sessions/:sessionId', requireAuth, (req, res) => {
 
 /**
  * Process user message and stream response
+ * PRD v6.0: Added uploadContext parameter for chat inline upload
  */
-async function processMessage(sessionId, userMessage) {
+async function processMessage(sessionId, userMessage, uploadContext = null) {
   const session = sessionManager.getSession(sessionId);
   if (!session) {
     logger.error('[chatStream] Session not found during processing:', { session_id: sessionId });
@@ -520,8 +524,11 @@ async function processMessage(sessionId, userMessage) {
       }
     }
 
+    // PRD v6.0: Build synthetic user message for upload context if message is empty
+    const effectiveMessage = userMessage || buildSyntheticUploadMessage(uploadContext);
+
     // Add user message to conversation
-    sessionManager.addMessage(sessionId, 'user', userMessage);
+    sessionManager.addMessage(sessionId, 'user', effectiveMessage);
 
     // Initialize system prompt on first message
     if (session.messages.length === 1) {
@@ -537,6 +544,12 @@ async function processMessage(sessionId, userMessage) {
       if (onboardingContext) {
         delete session.initialContext;
       }
+    }
+
+    // PRD v6.0: Append upload context to system prompt if provided
+    // Fetches full lab data for personalized LLM response
+    if (uploadContext) {
+      await appendUploadContextToSystemPrompt(session, uploadContext, session.userId);
     }
 
     // PRD v4.3: Patient selection now happens before chat starts (via POST /api/chat/sessions)
@@ -1583,6 +1596,194 @@ function pruneConversationIfNeeded(session) {
     session_id: session.id,
     after_count: session.messages.length,
     kept_messages: KEEP_RECENT_MESSAGES
+  });
+}
+
+/**
+ * PRD v6.0: Build synthetic user message from upload context
+ * Used when user uploads files without typing a message
+ */
+function buildSyntheticUploadMessage(uploadContext) {
+  if (!uploadContext || !uploadContext.filenames || uploadContext.filenames.length === 0) {
+    return 'I\'ve uploaded lab reports.';
+  }
+
+  const { filenames } = uploadContext;
+  const displayFilenames = filenames.length > 5
+    ? `${filenames.slice(0, 2).join(', ')}, and ${filenames.length - 2} more`
+    : filenames.join(', ');
+
+  return `I've uploaded lab reports: ${displayFilenames}`;
+}
+
+/**
+ * PRD v6.0: Build upload context block with lab data for system prompt
+ * Formats lab results with out-of-range highlighting and conversational instructions
+ */
+function buildUploadContextBlock(uploadContext, labData) {
+  const { filenames, patientName, reportDates } = uploadContext;
+
+  const fileCount = (filenames || []).length;
+  const displayFilenames = fileCount > 3
+    ? `${filenames.slice(0, 2).join(', ')}, and ${fileCount - 2} more`
+    : (filenames || []).join(', ');
+
+  const formattedDates = (reportDates || [])
+    .filter(Boolean)
+    .join(', ') || 'unknown';
+
+  // Separate out-of-range vs normal
+  const outOfRange = labData.filter(p => p.is_value_out_of_range);
+  const normal = labData.filter(p => !p.is_value_out_of_range);
+
+  let block = `\n\n--- UPLOADED LAB RESULTS ---
+Patient: ${patientName || 'Unknown'}
+Files: ${displayFilenames}
+Date(s): ${formattedDates}
+Total parameters: ${labData.length}`;
+
+  if (outOfRange.length > 0) {
+    block += `\n\nOut of range (${outOfRange.length}):`;
+    outOfRange.slice(0, 20).forEach(p => {
+      const ref = p.reference_interval?.text || '';
+      block += `\n  • ${p.parameter_name}: ${p.result} ${p.unit || ''} (ref: ${ref})`;
+    });
+    if (outOfRange.length > 20) {
+      block += `\n  • ... and ${outOfRange.length - 20} more out of range`;
+    }
+  }
+
+  if (normal.length > 0) {
+    block += `\n\nNormal values (${normal.length}):`;
+    normal.slice(0, 15).forEach(p => {
+      block += `\n  • ${p.parameter_name}: ${p.result} ${p.unit || ''}`;
+    });
+    if (normal.length > 15) {
+      block += `\n  • ... and ${normal.length - 15} more normal values`;
+    }
+  }
+
+  // Fallback if no lab data fetched
+  if (labData.length === 0) {
+    block += `\n\nParameters: ${uploadContext.totalParameters || 0} (details not available)`;
+  }
+
+  block += `\n
+---
+**LANGUAGE REQUIREMENT (CRITICAL):** Detect the language of the lab data from parameter names above.
+If parameter names are in Russian (Cyrillic), respond ENTIRELY in Russian.
+If parameter names are in English, respond in English.
+NEVER mix languages or default to English when data is in another language.
+
+The user just uploaded these lab results. Respond conversationally:
+• Briefly acknowledge the upload (patient name, parameter count)
+• If out-of-range values exist: mention 1-2 specifically, be factual but reassuring
+• If all normal: note things look good, mention a couple specific markers
+• End with an open offer to explain or explore further
+
+Tone: Warm, like a knowledgeable friend. Not clinical or alarming.
+Keep it concise — 3-5 sentences. This is a chat, not a medical report.`;
+
+  return block;
+}
+
+/**
+ * PRD v6.0: Append upload context block to system prompt with full lab data
+ * Fetches lab results via getReportDetail for personalized LLM response
+ * Maintains max 5 blocks, removes oldest when exceeded
+ */
+async function appendUploadContextToSystemPrompt(session, uploadContext, userId) {
+  const systemMessageIndex = session.messages.findIndex(m => m.role === 'system');
+  if (systemMessageIndex === -1) {
+    logger.warn('[chatStream] No system prompt found for upload context injection:', {
+      session_id: session.id
+    });
+    return;
+  }
+
+  // FIX #4: Validate userId before attempting RLS queries
+  if (!userId) {
+    logger.warn('[chatStream] No userId for upload context - skipping lab data fetch:', {
+      session_id: session.id
+    });
+  }
+
+  const { filenames, reportIds } = uploadContext;
+
+  // Fetch full lab data if reportIds provided and userId is valid
+  let labData = [];
+  if (reportIds && reportIds.length > 0 && userId) {
+    // Validate UUID format for each reportId to prevent DB errors
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const validReportIds = reportIds.filter(id => typeof id === 'string' && uuidPattern.test(id));
+
+    if (validReportIds.length !== reportIds.length) {
+      logger.warn('[chatStream] Invalid reportIds filtered out:', {
+        session_id: session.id,
+        original_count: reportIds.length,
+        valid_count: validReportIds.length
+      });
+    }
+
+    try {
+      const reports = await Promise.all(
+        validReportIds.slice(0, 10).map(id =>
+          // FIX #2: Add per-report error logging instead of silent swallow
+          getReportDetail(id, { mode: 'user', userId }).catch(err => {
+            logger.warn('[chatStream] Failed to fetch report for upload context:', {
+              session_id: session.id,
+              report_id: id,
+              error: err.message
+            });
+            return null;
+          })
+        )
+      );
+      labData = reports
+        .filter(Boolean)
+        .flatMap(r => r.parameters || []);
+
+      logger.info('[chatStream] Fetched lab data for upload context:', {
+        session_id: session.id,
+        report_count: reports.filter(Boolean).length,
+        failed_count: reports.filter(r => r === null).length,
+        parameter_count: labData.length
+      });
+    } catch (err) {
+      logger.warn('[chatStream] Failed to fetch lab data for upload context:', {
+        session_id: session.id,
+        error: err.message
+      });
+    }
+  }
+
+  // Build context block with lab data
+  const contextBlock = buildUploadContextBlock(uploadContext, labData);
+
+  // FIX #5: Append new block FIRST, then check and remove oldest
+  // This prevents race condition where concurrent calls both see < 5 blocks
+  session.messages[systemMessageIndex].content += contextBlock;
+
+  // Count blocks AFTER appending and remove oldest if > 5
+  const blockRegex = /\n\n--- UPLOADED LAB RESULTS ---[\s\S]*?(?=\n\n--- UPLOADED LAB RESULTS ---|$)/g;
+  const currentContent = session.messages[systemMessageIndex].content;
+  const blocks = currentContent.match(blockRegex) || [];
+
+  if (blocks.length > 5) {
+    // Remove first (oldest) block
+    session.messages[systemMessageIndex].content = currentContent.replace(blocks[0], '');
+    logger.info('[chatStream] Removed oldest upload context block (limit exceeded):', {
+      session_id: session.id,
+      removed_block_length: blocks[0].length,
+      blocks_after_removal: blocks.length - 1
+    });
+  }
+
+  logger.info('[chatStream] Upload context appended with lab data:', {
+    session_id: session.id,
+    file_count: (filenames || []).length,
+    parameter_count: labData.length,
+    total_blocks: Math.min(blocks.length, 5)
   });
 }
 

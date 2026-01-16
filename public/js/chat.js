@@ -20,6 +20,15 @@ class ConversationalSQLChat {
     this.selectedPatientId = null; // Currently selected patient
     this.chipsLocked = false; // Lock chips after first message
 
+    // PRD v6.0: Upload state
+    this.isUploading = false; // Track upload in progress
+    this.currentBatchId = null; // Current batch being uploaded
+    this.jobOrderMap = new Map(); // Map<job_id, originalIndex> for file ordering
+    this.pollTimer = null; // Polling interval timer
+    this.isCancelled = false; // Track if upload was cancelled
+    this._onSessionStartResolve = null; // Promise resolver for session_start wait
+    this._sessionStartReceived = false; // FIX: Track if session_start already arrived (race condition)
+
     // DOM elements (will be set when UI is initialized)
     this.chatContainer = null;
     this.messagesContainer = null;
@@ -30,6 +39,10 @@ class ConversationalSQLChat {
     this.newChatButton = null; // PRD v4.3
     this.chipsScrollLeft = null; // Scroll arrows
     this.chipsScrollRight = null;
+    // PRD v6.0: Upload UI elements
+    this.attachButton = null;
+    this.fileInput = null;
+    this.dropOverlay = null;
 
     // Bind methods
     this.handleSendMessage = this.handleSendMessage.bind(this);
@@ -67,6 +80,9 @@ class ConversationalSQLChat {
 
     // Attach example prompt click handlers
     this.attachExamplePromptHandlers();
+
+    // PRD v6.0: Initialize upload UI (attachment button, file input, drag-drop)
+    this.initUploadUI();
 
     // PRD v4.3: Fetch patients and initialize selector BEFORE connecting SSE
     this.initPatientSelector();
@@ -115,6 +131,9 @@ class ConversationalSQLChat {
 
     // Example prompt handlers (for empty state)
     this.attachExamplePromptHandlers();
+
+    // PRD v6.0: Initialize upload UI
+    this.initUploadUI();
 
     // ============================================================
     // STEP 3: Use pre-created session (do NOT call initPatientSelector)
@@ -186,12 +205,12 @@ class ConversationalSQLChat {
       }).catch(error => {
         console.error('[Chat] Failed to send onboarding message:', error);
         this.showError('Failed to send message. Please try again.');
-        this.enableInput();
         this.isProcessing = false;
+        this.syncInputState();
       });
     } else {
       // No pending query - just enable input
-      this.enableInput();
+      this.syncInputState();
     }
 
     console.log('[Chat] Initialized with existing session:', {
@@ -538,7 +557,14 @@ class ConversationalSQLChat {
       case 'session_start':
         this.sessionId = data.sessionId;
         console.log('[Chat] Session started:', this.sessionId);
-        this.enableInput();
+        this.syncInputState();
+        // PRD v6.0: Mark session as started and resolve promise if pending
+        // FIX: Set flag first so waitForSessionStart() can resolve immediately if called later
+        this._sessionStartReceived = true;
+        if (this._onSessionStartResolve) {
+          this._onSessionStartResolve();
+          this._onSessionStartResolve = null;
+        }
         break;
 
       case 'message_start':
@@ -565,8 +591,9 @@ class ConversationalSQLChat {
           this.renderPatientChips();
         }
 
-        this.enableInput();
+        // PRD v6.0: Reset isProcessing BEFORE syncInputState so input gets enabled
         this.isProcessing = false;
+        this.syncInputState();
         break;
 
       case 'text':
@@ -667,8 +694,8 @@ class ConversationalSQLChat {
     } catch (error) {
       console.error('[Chat] Failed to send message:', error);
       this.showError(`Failed to send message: ${error.message}`);
-      this.enableInput();
       this.isProcessing = false;
+      this.syncInputState();
     }
   }
 
@@ -1353,7 +1380,7 @@ class ConversationalSQLChat {
     // Continue conversation - don't end processing
     // NOTE: Do NOT reset isProcessing here - LLM may still be generating text after show_plot
     // The isProcessing flag is reset on message_end only
-    this.enableInput();
+    this.syncInputState();
   }
 
   /**
@@ -1394,7 +1421,7 @@ class ConversationalSQLChat {
     // Continue conversation - don't end processing
     // NOTE: Do NOT reset isProcessing here - LLM may still be generating text after show_table
     // The isProcessing flag is reset on message_end only
-    this.enableInput();
+    this.syncInputState();
   }
 
   /**
@@ -2090,8 +2117,8 @@ class ConversationalSQLChat {
 
     this.scrollToBottom();
 
-    this.enableInput();
     this.isProcessing = false;
+    this.syncInputState();
 
     // Clear chat after error
     setTimeout(() => {
@@ -2158,6 +2185,25 @@ class ConversationalSQLChat {
   }
 
   /**
+   * PRD v6.0: Centralized input state management
+   * Synchronizes input/send/attach button states based on isUploading and isProcessing
+   * Replaces scattered enableInput() calls to prevent race conditions
+   */
+  syncInputState() {
+    if (this.isUploading || this.isProcessing) {
+      this.disableInput();
+      if (this.attachButton) {
+        this.attachButton.setAttribute('disabled', 'true');
+      }
+    } else {
+      this.enableInput();
+      if (this.attachButton) {
+        this.attachButton.removeAttribute('disabled');
+      }
+    }
+  }
+
+  /**
    * Destroy all Chart.js instances
    */
   destroyAllCharts() {
@@ -2203,12 +2249,863 @@ class ConversationalSQLChat {
     return div.innerHTML;
   }
 
+  // ============================================================
+  // PRD v6.0: Upload Functionality
+  // ============================================================
+
+  /**
+   * PRD v6.0: Initialize upload UI components
+   * Creates attachment button, hidden file input, and drag-drop handlers
+   */
+  initUploadUI() {
+    // Get drop overlay reference
+    this.dropOverlay = document.getElementById('chat-drop-overlay');
+
+    // Create attachment button
+    this.attachButton = document.createElement('button');
+    this.attachButton.className = 'chat-attach-btn';
+    this.attachButton.type = 'button';
+    this.attachButton.setAttribute('aria-label', 'Attach files');
+    this.attachButton.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+      </svg>
+    `;
+
+    // Create hidden file input
+    this.fileInput = document.createElement('input');
+    this.fileInput.type = 'file';
+    this.fileInput.className = 'chat-file-input';
+    this.fileInput.accept = '.pdf,.png,.jpg,.jpeg,.heic';
+    this.fileInput.multiple = true;
+    this.fileInput.style.display = 'none';
+
+    // Insert attachment button before send button
+    const inputWrapper = this.chatContainer.querySelector('.chat-input-wrapper');
+    if (inputWrapper && this.sendButton) {
+      inputWrapper.insertBefore(this.attachButton, this.inputTextarea);
+      inputWrapper.appendChild(this.fileInput);
+    }
+
+    // Attachment button click → trigger file input
+    this.attachButton.addEventListener('click', () => {
+      if (!this.attachButton.hasAttribute('disabled')) {
+        this.fileInput.click();
+      }
+    });
+
+    // File input change handler
+    this.fileInput.addEventListener('change', (event) => {
+      if (event.target.files && event.target.files.length > 0) {
+        this.handleFileSelection(Array.from(event.target.files));
+        // Reset input to allow selecting same file again
+        this.fileInput.value = '';
+      }
+    });
+
+    // Setup drag-and-drop
+    this.setupDragDrop();
+  }
+
+  /**
+   * PRD v6.0: Setup drag-and-drop handlers on chat container
+   */
+  setupDragDrop() {
+    const chatSection = document.getElementById('section-assistant');
+    if (!chatSection) return;
+
+    let dragCounter = 0;
+
+    chatSection.addEventListener('dragenter', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dragCounter++;
+
+      if (dragCounter === 1 && !this.isUploading && !this.isProcessing) {
+        this.dropOverlay?.removeAttribute('hidden');
+      }
+    });
+
+    chatSection.addEventListener('dragleave', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dragCounter--;
+
+      if (dragCounter === 0) {
+        this.dropOverlay?.setAttribute('hidden', '');
+      }
+    });
+
+    chatSection.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
+    chatSection.addEventListener('drop', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dragCounter = 0;
+      this.dropOverlay?.setAttribute('hidden', '');
+
+      if (this.isUploading || this.isProcessing) {
+        return;
+      }
+
+      const files = Array.from(event.dataTransfer?.files || []);
+      if (files.length > 0) {
+        this.handleFileSelection(files);
+      }
+    });
+  }
+
+  /**
+   * PRD v6.0: Handle file selection from input or drop
+   * Validates files and starts batch upload
+   * @param {File[]} files - Selected files
+   */
+  async handleFileSelection(files) {
+    console.log('[Chat Upload] Files selected:', files.length);
+
+    // Validate files
+    const validation = this.validateFiles(files);
+    if (!validation.valid) {
+      this.showToast(validation.error, 'error');
+      return;
+    }
+
+    // Set upload state
+    this.isUploading = true;
+    this.isCancelled = false;
+    this.syncInputState();
+
+    try {
+      // Create FormData with files
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('analysisFile', file);
+      });
+
+      // Add fallbackPatientId if we have a selected patient
+      if (this.selectedPatientId) {
+        formData.append('fallbackPatientId', this.selectedPatientId);
+      }
+
+      // Submit batch upload
+      const response = await fetch('/api/analyze-labs/batch', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Upload failed');
+      }
+
+      const { batch_id: batchId, jobs } = await response.json();
+      this.currentBatchId = batchId;
+
+      // Build job order map for file ordering
+      this.jobOrderMap.clear();
+      jobs.forEach((job, index) => {
+        this.jobOrderMap.set(job.job_id, index);
+      });
+
+      console.log('[Chat Upload] Batch created:', batchId, 'Jobs:', jobs.length);
+
+      // Create upload card in chat
+      this.createUploadCard(jobs);
+
+      // Start polling for status
+      this.startBatchPolling(batchId);
+
+    } catch (error) {
+      console.error('[Chat Upload] Upload failed:', error);
+      this.showToast(`Upload failed: ${error.message}`, 'error');
+      this.isUploading = false;
+      this.currentBatchId = null;
+      this.syncInputState();
+    }
+  }
+
+  /**
+   * PRD v6.0: Validate files before upload
+   * Reuses validation rules from unified-upload.js
+   * @param {File[]} files - Files to validate
+   * @returns {{ valid: boolean, error?: string }}
+   */
+  validateFiles(files) {
+    // Constants matching unified-upload.js
+    const MAX_FILES = 20;
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
+    const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100MB total
+    const ALLOWED_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/heic'];
+    const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.heic'];
+
+    if (files.length === 0) {
+      return { valid: false, error: 'No files selected' };
+    }
+
+    if (files.length > MAX_FILES) {
+      return { valid: false, error: `Maximum ${MAX_FILES} files allowed per batch` };
+    }
+
+    let totalSize = 0;
+    for (const file of files) {
+      // Check file type
+      const extension = '.' + file.name.split('.').pop().toLowerCase();
+      const isValidType = ALLOWED_TYPES.includes(file.type) || ALLOWED_EXTENSIONS.includes(extension);
+      if (!isValidType) {
+        return { valid: false, error: `Invalid file type: ${file.name}. Allowed: PDF, PNG, JPEG, HEIC` };
+      }
+
+      // Check file size
+      if (file.size > MAX_FILE_SIZE) {
+        return { valid: false, error: `File too large: ${file.name}. Maximum 10MB per file` };
+      }
+
+      totalSize += file.size;
+    }
+
+    if (totalSize > MAX_TOTAL_SIZE) {
+      return { valid: false, error: 'Total batch size exceeds 100MB limit' };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * PRD v6.0: Create upload card in chat messages
+   * Shows grouped upload progress for batch
+   * @param {Array} jobs - Initial job list from batch creation
+   */
+  createUploadCard(jobs) {
+    // Remove any existing upload card first
+    const existingCard = this.messagesContainer.querySelector('.chat-bubble-upload');
+    if (existingCard) {
+      existingCard.closest('.chat-message').remove();
+    }
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'chat-message chat-message-user';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble chat-bubble-upload';
+    bubble.innerHTML = `
+      <div class="upload-card">
+        <div class="upload-card-header">
+          <span class="upload-title">Uploading ${jobs.length} file${jobs.length > 1 ? 's' : ''}...</span>
+          <button class="upload-cancel-btn" type="button" aria-label="Cancel upload">✕</button>
+        </div>
+        <div class="upload-file-list">
+          ${jobs.map((job, index) => `
+            <div class="upload-file-row" data-job-id="${this.escapeHtml(job.job_id || '')}">
+              <span class="upload-filename">${this.escapeHtml(job.filename || `File ${index + 1}`)}</span>
+              <span class="upload-file-status upload-file-status--pending">Queued</span>
+            </div>
+          `).join('')}
+        </div>
+        <div class="upload-card-progress">
+          <div class="upload-progress-bar">
+            <div class="upload-progress-fill" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Cancel button handler
+    const cancelBtn = bubble.querySelector('.upload-cancel-btn');
+    cancelBtn.addEventListener('click', () => this.cancelUpload());
+
+    messageDiv.appendChild(bubble);
+    this.messagesContainer.appendChild(messageDiv);
+    this.scrollToBottom();
+  }
+
+  /**
+   * PRD v6.0: Update upload card with job status
+   * @param {Array} jobs - Current job statuses from polling
+   */
+  updateUploadCard(jobs) {
+    const uploadCard = this.messagesContainer.querySelector('.upload-card');
+    if (!uploadCard) return;
+
+    // Update each file row status
+    jobs.forEach(job => {
+      const row = uploadCard.querySelector(`[data-job-id="${job.job_id}"]`);
+      if (!row) return;
+
+      const statusEl = row.querySelector('.upload-file-status');
+      if (!statusEl) return;
+
+      // Clear existing status classes
+      statusEl.className = 'upload-file-status';
+
+      switch (job.status) {
+        case 'pending':
+        case 'queued':
+          statusEl.classList.add('upload-file-status--pending');
+          statusEl.textContent = 'Queued';
+          break;
+        case 'processing':
+          statusEl.classList.add('upload-file-status--processing');
+          statusEl.textContent = 'Processing...';
+          break;
+        case 'completed':
+          statusEl.classList.add('upload-file-status--completed');
+          statusEl.textContent = '✓ Done';
+          break;
+        case 'failed':
+          statusEl.classList.add('upload-file-status--failed');
+          statusEl.textContent = '✕ Failed';
+          break;
+        default:
+          statusEl.textContent = job.status;
+      }
+    });
+
+    // Update progress bar
+    const completedCount = jobs.filter(j => j.status === 'completed' || j.status === 'failed').length;
+    const progressPercent = Math.round((completedCount / jobs.length) * 100);
+    const progressFill = uploadCard.querySelector('.upload-progress-fill');
+    if (progressFill) {
+      progressFill.style.width = `${progressPercent}%`;
+    }
+
+    // Update title
+    const title = uploadCard.querySelector('.upload-title');
+    if (title) {
+      const processingCount = jobs.filter(j => j.status === 'processing').length;
+      if (processingCount > 0) {
+        title.textContent = `Processing ${processingCount} of ${jobs.length} file${jobs.length > 1 ? 's' : ''}...`;
+      } else if (completedCount === jobs.length) {
+        title.textContent = `${jobs.length} file${jobs.length > 1 ? 's' : ''} processed`;
+      }
+    }
+  }
+
+  /**
+   * PRD v6.0: Start polling for batch status
+   * @param {string} batchId - Batch ID to poll
+   */
+  startBatchPolling(batchId) {
+    // Clear any existing poll timer
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+    }
+
+    const poll = async () => {
+      if (this.isCancelled) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/analyze-labs/batches/${batchId}`, {
+          credentials: 'include'
+        });
+
+        // Re-check cancellation after fetch - user may have cancelled during network round-trip
+        if (this.isCancelled) {
+          clearInterval(this.pollTimer);
+          this.pollTimer = null;
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error('Failed to get batch status');
+        }
+
+        const { jobs, allComplete } = await response.json();
+
+        // Update upload card UI
+        this.updateUploadCard(jobs);
+
+        if (allComplete) {
+          clearInterval(this.pollTimer);
+          this.pollTimer = null;
+          this.handleBatchComplete(jobs);
+        }
+      } catch (error) {
+        console.error('[Chat Upload] Poll error:', error);
+        // Continue polling unless cancelled
+      }
+    };
+
+    // Initial poll immediately
+    poll();
+
+    // Then poll every 2 seconds
+    this.pollTimer = setInterval(poll, 2000);
+  }
+
+  /**
+   * PRD v6.0: Handle batch completion
+   * Evaluates primary patient and triggers LLM analysis
+   * @param {Array} jobs - Completed job statuses
+   */
+  async handleBatchComplete(jobs) {
+    // Detailed debug logging for batch completion
+    console.log('[Chat Upload] Batch complete - full job details:', {
+      total_jobs: jobs.length,
+      completed: jobs.filter(j => j.status === 'completed').length,
+      failed: jobs.filter(j => j.status === 'failed').length,
+      with_report_id: jobs.filter(j => j.report_id).length,
+      with_patient_id: jobs.filter(j => j.patient_id).length,
+      jobs: jobs.map(j => ({
+        job_id: j.job_id,
+        filename: j.filename,
+        status: j.status,
+        report_id: j.report_id,
+        patient_id: j.patient_id,
+        patient_name: j.patient_name,
+        parameter_count: j.parameter_count,
+        error: j.error
+      }))
+    });
+
+    // Check if all failed
+    const successfulJobs = jobs.filter(j => j.status === 'completed');
+    if (successfulJobs.length === 0) {
+      this.showToast('All files failed to process', 'error');
+      this.removeUploadCardAfterDelay();
+      this.isUploading = false;
+      this.currentBatchId = null;
+      this.syncInputState();
+      return;
+    }
+
+    // Transform upload card to completion state
+    this.transformUploadCardToComplete(jobs);
+
+    // Determine primary patient from jobs
+    const primaryPatient = this.determinePrimaryPatient(jobs);
+
+    // Build upload context for LLM
+    const primaryPatientId = primaryPatient?.patientId || this.selectedPatientId;
+    const uploadContext = this.buildUploadContext(jobs, primaryPatientId);
+
+    // Check if we need to switch patients
+    if (primaryPatient && primaryPatient.patientId !== this.selectedPatientId) {
+      // Need to switch patient context
+      await this.handlePatientSwitchFromUpload(
+        primaryPatient.patientId,
+        primaryPatient.patientName,
+        primaryPatient.isNew,
+        uploadContext
+      );
+    } else {
+      // Same patient - just trigger LLM analysis
+      this.isUploading = false;
+      this.syncInputState();
+      await this.sendUploadContextToLLM(uploadContext);
+    }
+
+    this.currentBatchId = null;
+  }
+
+  /**
+   * PRD v6.0: Transform upload card to completion state
+   * @param {Array} jobs - Completed job statuses
+   */
+  transformUploadCardToComplete(jobs) {
+    const bubble = this.messagesContainer.querySelector('.chat-bubble-upload');
+    if (!bubble) return;
+
+    // Add completion class
+    bubble.classList.add('chat-bubble-upload-complete');
+
+    // Remove cancel button
+    const cancelBtn = bubble.querySelector('.upload-cancel-btn');
+    if (cancelBtn) {
+      cancelBtn.remove();
+    }
+
+    // Update title with done badge
+    const title = bubble.querySelector('.upload-title');
+    if (title) {
+      const successCount = jobs.filter(j => j.status === 'completed').length;
+      title.innerHTML = `<span class="upload-done-badge">✓</span> ${successCount} file${successCount !== 1 ? 's' : ''} uploaded`;
+    }
+
+    // Remove progress bar
+    const progressContainer = bubble.querySelector('.upload-card-progress');
+    if (progressContainer) {
+      progressContainer.remove();
+    }
+
+    // Add View button to each completed file row
+    const uploadCard = bubble.querySelector('.upload-card');
+    if (!uploadCard) return;
+
+    jobs.forEach(job => {
+      const row = uploadCard.querySelector(`[data-job-id="${job.job_id}"]`);
+      if (!row) return;
+
+      // Add View button for completed jobs with valid report_id (UUID format)
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (job.status === 'completed' && job.report_id && uuidPattern.test(job.report_id)) {
+        // Check if View button already exists
+        if (!row.querySelector('.upload-view-btn')) {
+          const viewBtn = document.createElement('a');
+          viewBtn.href = `/?reportId=${job.report_id}`;
+          viewBtn.className = 'upload-view-btn';
+          viewBtn.target = '_blank';
+          viewBtn.textContent = 'View';
+          row.appendChild(viewBtn);
+        }
+      }
+    });
+  }
+
+  /**
+   * PRD v6.0: Determine primary patient from completed jobs
+   * Uses file order to select first job with valid patient_name
+   * @param {Array} jobs - Completed job statuses
+   * @returns {{ patientId: string, patientName: string, isNew: boolean } | null}
+   */
+  determinePrimaryPatient(jobs) {
+    // Sort by original file order using jobOrderMap
+    const sorted = [...jobs].sort((a, b) =>
+      (this.jobOrderMap.get(a.job_id) ?? Infinity) -
+      (this.jobOrderMap.get(b.job_id) ?? Infinity)
+    );
+
+    // First completed job with non-null patient_name
+    for (const job of sorted) {
+      if (job.status === 'completed' && job.patient_name) {
+        return {
+          patientId: job.patient_id,
+          patientName: job.patient_name,
+          isNew: job.is_new_patient
+        };
+      }
+    }
+
+    // No patient found in any job - keep current patient
+    return null;
+  }
+
+  /**
+   * PRD v6.0: Build upload context for LLM system prompt
+   * @param {Array} jobs - Completed job statuses
+   * @param {string} primaryPatientId - Patient ID for context
+   * @returns {object} Upload context object
+   */
+  buildUploadContext(jobs, primaryPatientId) {
+    // Filter to successful jobs for the primary patient
+    // FIX: Fall back to all completed jobs when primaryPatientId is null/undefined
+    // (handles edge case where OCR misses patient_name and no patient preselected)
+    const patientJobs = jobs
+      .filter(j => j.status === 'completed' && (!primaryPatientId || j.patient_id === primaryPatientId))
+      .sort((a, b) => (this.jobOrderMap.get(a.job_id) ?? 0) - (this.jobOrderMap.get(b.job_id) ?? 0));
+
+    // Debug logging for context building
+    console.log('[Chat Upload] buildUploadContext:', {
+      primaryPatientId,
+      input_jobs: jobs.length,
+      completed_jobs: jobs.filter(j => j.status === 'completed').length,
+      matched_patient_jobs: patientJobs.length,
+      filtered_out: jobs.filter(j => j.status === 'completed' && j.patient_id !== primaryPatientId).map(j => ({
+        job_id: j.job_id,
+        patient_id: j.patient_id,
+        filename: j.filename
+      }))
+    });
+
+    // Get patient name from first job or fallback to selected patient display name
+    const patientName = patientJobs.find(j => j.patient_name)?.patient_name
+      || this.getSelectedPatientDisplayName();
+
+    return {
+      filenames: patientJobs.map(j => j.filename || 'Unknown file'),
+      patientName,
+      totalParameters: patientJobs.reduce((sum, j) => sum + (j.parameter_count || 0), 0),
+      reportDates: patientJobs.map(j => j.test_date || null),
+      reportIds: patientJobs.map(j => j.report_id).filter(Boolean)  // PRD v6.0: For lab data fetch
+    };
+  }
+
+  /**
+   * PRD v6.0: Get display name for currently selected patient
+   * @returns {string} Patient display name or 'Patient'
+   */
+  getSelectedPatientDisplayName() {
+    const patient = this.patients.find(p => p.id === this.selectedPatientId);
+    return patient?.display_name || patient?.full_name || 'Patient';
+  }
+
+  /**
+   * PRD v6.0: Handle patient switch from upload
+   * Closes current session, creates new one for new patient, triggers LLM
+   * @param {string} primaryPatientId - New patient ID
+   * @param {string} primaryPatientName - New patient display name
+   * @param {boolean} isNewPatient - Whether this is a newly created patient
+   * @param {object} uploadContext - Upload context for LLM
+   */
+  async handlePatientSwitchFromUpload(primaryPatientId, primaryPatientName, isNewPatient, uploadContext) {
+    console.log('[Chat Upload] Switching patient:', {
+      from: this.selectedPatientId,
+      to: primaryPatientId,
+      isNew: isNewPatient
+    });
+
+    // 1. Unlock chips
+    this.chipsLocked = false;
+
+    // 2. Close SSE
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+
+    // FIX: Reset session_start flag for new session
+    this._sessionStartReceived = false;
+
+    // 3. Delete current session (fire-and-forget)
+    if (this.sessionId) {
+      fetch(`/api/chat/sessions/${this.sessionId}`, { method: 'DELETE' }).catch(() => {});
+      this.sessionId = null;
+    }
+
+    // 4. Clear chat messages (keep upload card)
+    this.clearChatMessagesKeepingUpload();
+
+    // 5. Update selection
+    this.selectedPatientId = primaryPatientId;
+
+    // 6. Re-fetch patients (new patient may exist)
+    await this.fetchPatientsAndRender();
+
+    // 7. Create new session
+    try {
+      const response = await fetch('/api/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedPatientId: primaryPatientId })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create session');
+      }
+
+      const { sessionId } = await response.json();
+      this.sessionId = sessionId;
+
+      // 8. Connect SSE
+      this.connectSSE(sessionId);
+
+      // 9. Wait for session_start event
+      await this.waitForSessionStart();
+
+      // 10. Show toast
+      this.showToast(
+        isNewPatient
+          ? `Created profile for: ${primaryPatientName}`
+          : `Switched to: ${primaryPatientName}`,
+        'success'
+      );
+
+      // 11. Trigger LLM with upload context
+      this.isUploading = false;
+      this.syncInputState();
+      await this.sendUploadContextToLLM(uploadContext);
+
+    } catch (error) {
+      console.error('[Chat Upload] Patient switch failed:', error);
+      this.showToast('Failed to switch patient context', 'error');
+      this.isUploading = false;
+      this.syncInputState();
+    }
+  }
+
+  /**
+   * PRD v6.0: Clear chat messages but keep upload card
+   */
+  clearChatMessagesKeepingUpload() {
+    const uploadMessage = this.messagesContainer.querySelector('.chat-bubble-upload')?.closest('.chat-message');
+    const emptyState = this.messagesContainer.querySelector('.chat-empty-state');
+
+    this.messagesContainer.innerHTML = '';
+
+    if (uploadMessage) {
+      this.messagesContainer.appendChild(uploadMessage);
+    }
+
+    // Also clear buffers
+    this.messageBuffers.clear();
+    this.activeTools.clear();
+  }
+
+  /**
+   * PRD v6.0: Fetch patients and re-render chips
+   */
+  async fetchPatientsAndRender() {
+    try {
+      const response = await fetch(window.getReportsEndpoint('/patients') + '?sort=recent');
+      if (response.ok) {
+        const data = await response.json();
+        this.patients = data.patients || [];
+        this.renderPatientChips();
+      }
+    } catch (error) {
+      console.warn('[Chat Upload] Failed to refresh patients:', error);
+    }
+  }
+
+  /**
+   * PRD v6.0: Wait for session_start SSE event
+   * Returns a promise that resolves when session_start is received
+   * FIX: Resolves immediately if session_start already arrived (race condition)
+   * @returns {Promise<void>}
+   */
+  waitForSessionStart() {
+    // FIX: If session_start already arrived before this was called, resolve immediately
+    if (this._sessionStartReceived) {
+      console.log('[Chat Upload] session_start already received, resolving immediately');
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      // Store timeout ID so it can be cleared when resolved early
+      const timeoutId = setTimeout(() => {
+        if (this._onSessionStartResolve) {
+          console.warn('[Chat Upload] session_start timeout, proceeding anyway');
+          this._onSessionStartResolve = null;
+          resolve();
+        }
+      }, 10000);
+
+      this._onSessionStartResolve = () => {
+        clearTimeout(timeoutId);
+        resolve();
+      };
+    });
+  }
+
+  /**
+   * PRD v6.0: Send upload context to LLM
+   * Triggers the assistant to analyze the uploaded files
+   * @param {object} uploadContext - Upload context object
+   */
+  async sendUploadContextToLLM(uploadContext) {
+    if (!this.sessionId) {
+      console.error('[Chat Upload] No session for LLM call');
+      return;
+    }
+
+    // Set processing state
+    this.isProcessing = true;
+    this.syncInputState();
+
+    try {
+      const response = await fetch('/api/chat/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          sessionId: this.sessionId,
+          message: '', // Empty message - uploadContext provides context
+          uploadContext
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send upload context');
+      }
+
+      console.log('[Chat Upload] Upload context sent to LLM');
+      // Response will come via SSE
+
+    } catch (error) {
+      console.error('[Chat Upload] Failed to send upload context:', error);
+      this.showToast('Failed to analyze uploaded files', 'error');
+      this.isProcessing = false;
+      this.syncInputState();
+    }
+  }
+
+  /**
+   * PRD v6.0: Cancel upload in progress
+   */
+  cancelUpload() {
+    console.log('[Chat Upload] Cancelling upload');
+
+    this.isCancelled = true;
+
+    // Stop polling
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+
+    // Remove upload card
+    const uploadMessage = this.messagesContainer.querySelector('.chat-bubble-upload')?.closest('.chat-message');
+    if (uploadMessage) {
+      uploadMessage.remove();
+    }
+
+    // Reset state
+    this.isUploading = false;
+    this.currentBatchId = null;
+    this.jobOrderMap.clear();
+    this.syncInputState();
+
+    this.showToast('Upload cancelled', 'info');
+  }
+
+  /**
+   * PRD v6.0: Remove upload card after delay (for error cases)
+   */
+  removeUploadCardAfterDelay() {
+    setTimeout(() => {
+      const uploadMessage = this.messagesContainer.querySelector('.chat-bubble-upload')?.closest('.chat-message');
+      if (uploadMessage) {
+        uploadMessage.remove();
+      }
+    }, 5000);
+  }
+
+  /**
+   * PRD v6.0: Show toast notification
+   * @param {string} message - Toast message
+   * @param {string} type - 'success' | 'error' | 'info'
+   * @param {number} duration - Duration in ms (default 3000)
+   */
+  showToast(message, type = 'success', duration = 3000) {
+    const toast = document.createElement('div');
+    toast.className = `chat-toast chat-toast--${type}`;
+    toast.textContent = message;
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'polite');
+
+    document.body.appendChild(toast);
+
+    // Trigger animation
+    requestAnimationFrame(() => {
+      toast.classList.add('chat-toast--visible');
+    });
+
+    // Remove after duration
+    setTimeout(() => {
+      toast.classList.remove('chat-toast--visible');
+      setTimeout(() => toast.remove(), 300);
+    }, duration);
+  }
+
   /**
    * Cleanup on destroy
    */
   destroy() {
     if (this.eventSource) {
       this.eventSource.close();
+    }
+
+    // FIX: Clear upload polling timer to prevent memory leak and stray requests
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
     }
 
     if (this.sendButton) {
