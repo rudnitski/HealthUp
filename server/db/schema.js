@@ -13,6 +13,7 @@ const schemaStatements = [
     full_name TEXT,
     full_name_normalized TEXT,
     date_of_birth TEXT,
+    date_of_birth_normalized DATE,  -- PRD v6.1: Parsed date for queries
     gender TEXT,
     user_id UUID,  -- Added in Part 1: Associated user account (NULL for shared/unassigned patients)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -24,6 +25,17 @@ const schemaStatements = [
   `,
   `
   COMMENT ON TABLE patients IS 'Patient demographic information';
+  `,
+  // PRD v6.1: DOB normalization - add column for existing databases
+  `
+  ALTER TABLE patients ADD COLUMN IF NOT EXISTS date_of_birth_normalized DATE;
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_patients_dob_normalized ON patients(date_of_birth_normalized);
+  `,
+  `
+  COMMENT ON COLUMN patients.date_of_birth_normalized IS
+    'Normalized DATE from OCR. NULL indicates: (1) ambiguous date where day <= 12 AND month <= 12, (2) unparseable/invalid format, or (3) labeled text like "DOB: ..." that the parser could not extract.';
   `,
   `
   CREATE TABLE IF NOT EXISTS patient_reports (

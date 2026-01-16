@@ -99,16 +99,16 @@ async function buildSystemPrompt(schemaContext, maxIterations, mode = 'legacy', 
     // PRD v4.3: Chat mode - inject selected patient with demographics
     if (selectedPatientId) {
       // PRD v4.4.6: Use queryAsAdmin for admin mode, queryWithUser for regular users
+      // PRD v6.1: Use date_of_birth_normalized for reliable age calculation
       const patientQuery = `
         SELECT
           full_name,
           gender,
           date_of_birth,
+          date_of_birth_normalized,
           CASE
-            WHEN date_of_birth IS NOT NULL AND date_of_birth ~ '^\\d{4}-\\d{2}-\\d{2}$'
-            THEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, date_of_birth::date))::int
-            WHEN date_of_birth IS NOT NULL AND date_of_birth ~ '^\\d{2}/\\d{2}/\\d{4}$'
-            THEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, TO_DATE(date_of_birth, 'DD/MM/YYYY')))::int
+            WHEN date_of_birth_normalized IS NOT NULL
+            THEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, date_of_birth_normalized))::int
             ELSE NULL
           END AS age
         FROM patients

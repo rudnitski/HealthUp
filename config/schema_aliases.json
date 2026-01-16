@@ -17,6 +17,7 @@
   "gender": ["patients"],
   "date of birth": ["patients"],
   "dob": ["patients"],
+  "birth": ["patients"],
   "test date": ["patient_reports"],
   "result": ["lab_results"],
   "value": ["lab_results"],

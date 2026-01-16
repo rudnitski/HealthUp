@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from 'crypto';
 import { pool } from '../db/index.js';
 import { saveFile, deleteFile } from './fileStorage.js';
+import { normalizeDate } from '../utils/dateParser.js';
 
 class PersistLabReportError extends Error {
   constructor(message, {
@@ -79,6 +80,9 @@ async function upsertPatient(client, payload) {
   const normalized = normalizePatientName(fullName);
   const patientId = randomUUID();
 
+  // PRD v6.1: Normalize DOB for date queries
+  const dobNormalized = normalizeDate(dateOfBirth);
+
   // PRD v4.3: last_seen_report_at = NOW() (ingestion time)
   // This represents "when the system last processed a report for this patient"
   // Updated on both INSERT and ON CONFLICT (even for duplicate reports)
@@ -86,6 +90,8 @@ async function upsertPatient(client, payload) {
   // PRD v4.4.3: user_id is set from RLS context (app.current_user_id session variable)
   // This ensures patients are always associated with the authenticated user who uploaded the report.
   // Conflict target changed to composite (user_id, full_name_normalized) for user-scoped uniqueness.
+  //
+  // PRD v6.1: date_of_birth_normalized is recalculated when raw DOB changes
   const result = await client.query(
     `
     INSERT INTO patients (
@@ -93,17 +99,24 @@ async function upsertPatient(client, payload) {
       full_name,
       full_name_normalized,
       date_of_birth,
+      date_of_birth_normalized,
       gender,
       user_id,
       created_at,
       updated_at,
       last_seen_report_at
     )
-    VALUES ($1, $2, $3, $4, $5, current_setting('app.current_user_id', true)::uuid, NOW(), NOW(), NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, current_setting('app.current_user_id', true)::uuid, NOW(), NOW(), NOW())
     ON CONFLICT (user_id, full_name_normalized) DO UPDATE
       SET
         full_name = COALESCE(EXCLUDED.full_name, patients.full_name),
         date_of_birth = COALESCE(EXCLUDED.date_of_birth, patients.date_of_birth),
+        -- PRD v6.1: Always recalculate normalized when raw DOB changes
+        date_of_birth_normalized = CASE
+          WHEN EXCLUDED.date_of_birth IS NOT NULL
+          THEN EXCLUDED.date_of_birth_normalized
+          ELSE patients.date_of_birth_normalized
+        END,
         gender = COALESCE(EXCLUDED.gender, patients.gender),
         updated_at = NOW(),
         last_seen_report_at = NOW()
@@ -114,6 +127,7 @@ async function upsertPatient(client, payload) {
       fullName ?? null,
       normalized,
       dateOfBirth ?? null,
+      dobNormalized,
       gender ?? null,
     ],
   );

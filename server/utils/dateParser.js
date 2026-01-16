@@ -1,5 +1,5 @@
 /**
- * Date parsing utility for lab report date normalization
+ * Date parsing utility for normalizing dates from OCR (test dates, DOB, etc.)
  *
  * Supported formats:
  * - ISO: YYYY-MM-DD, YYYY-MM-DDTHH:mm:ss (zero-padded only)
@@ -17,7 +17,7 @@
  * @param {string} dateStr - Raw date string from OCR
  * @returns {Date|null} - Parsed date or null if unparseable/ambiguous
  */
-export function parseTestDate(dateStr) {
+export function parseDate(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return null;
 
   const trimmed = dateStr.trim();
@@ -99,6 +99,10 @@ export function formatDateForDb(date) {
  * @param {string} dateStr - Raw date string from OCR
  * @returns {string|null} - ISO formatted date string or null
  */
-export function normalizeTestDate(dateStr) {
-  return formatDateForDb(parseTestDate(dateStr));
+export function normalizeDate(dateStr) {
+  return formatDateForDb(parseDate(dateStr));
 }
+
+// Backward compatibility aliases
+export const parseTestDate = parseDate;
+export const normalizeTestDate = normalizeDate;
