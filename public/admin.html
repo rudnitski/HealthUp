@@ -6,6 +6,7 @@
   <title>HealthUp — Admin Panel</title>
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/admin.css">
+  <link rel="stylesheet" href="/css/language-switcher.css">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
 </head>
 <body>
@@ -21,26 +22,26 @@
 
       <nav class="sidebar-nav">
         <div class="nav-section">
-          <div class="nav-section-title">Main</div>
+          <div class="nav-section-title" data-i18n="nav.main">Main</div>
           <a href="/#upload" class="nav-item">
             <span class="nav-icon">📤</span>
-            <span>Upload Reports</span>
+            <span data-i18n="nav.uploadReports">Upload Reports</span>
           </a>
           <a href="/#assistant" class="nav-item">
             <span class="nav-icon">💬</span>
-            <span>Health Assistant</span>
+            <span data-i18n="nav.healthAssistant">Health Assistant</span>
           </a>
           <a href="/#reports" class="nav-item">
             <span class="nav-icon">📄</span>
-            <span>Reports</span>
+            <span data-i18n="nav.reports">Reports</span>
           </a>
         </div>
 
         <div class="nav-section">
-          <div class="nav-section-title">Management</div>
+          <div class="nav-section-title" data-i18n="nav.management">Management</div>
           <a href="/admin/pending-analytes" class="nav-item active">
             <span class="nav-icon">📋</span>
-            <span>Review Queue</span>
+            <span data-i18n="nav.reviewQueue">Review Queue</span>
             <span class="nav-badge" id="nav-pending-count" hidden>0</span>
           </a>
         </div>
@@ -58,7 +59,8 @@
     <main class="main-content">
       <header class="content-header">
         <div class="content-header-inner">
-          <h1 class="page-title">Admin Panel</h1>
+          <h1 class="page-title" data-i18n="admin:title">Admin Panel</h1>
+          <div class="language-switcher"></div>
         </div>
       </header>
 
@@ -282,6 +284,14 @@
       </div>
     </div>
   </div>
+
+  <!-- i18n: Internationalization support (PRD v7.0) -->
+  <script src="https://cdn.jsdelivr.net/npm/i18next@23/i18next.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-http-backend@2/i18nextHttpBackend.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-browser-languagedetector@7/i18nextBrowserLanguageDetector.min.js" defer></script>
+  <script src="/js/i18n.js" defer></script>
+  <script src="/js/formatters.js" defer></script>
+  <script src="/js/language-switcher.js" defer></script>
 
   <!-- Load auth client first with defer -->
   <script src="/js/auth.js" defer></script>

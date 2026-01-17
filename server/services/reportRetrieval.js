@@ -228,24 +228,26 @@ async function executeReportDetailQueries(client, reportId) {
   const labResults = await client.query(
     `
     SELECT
-      id,
-      position,
-      parameter_name,
-      result_value,
-      unit,
-      reference_lower,
-      reference_lower_operator,
-      reference_upper,
-      reference_upper_operator,
-      reference_text,
-      reference_full_text,
-      is_value_out_of_range,
-      numeric_result,
-      specimen_type,
-      created_at
-    FROM lab_results
-    WHERE report_id = $1
-    ORDER BY position ASC NULLS LAST, created_at ASC
+      lr.id,
+      lr.position,
+      lr.parameter_name,
+      lr.result_value,
+      lr.unit,
+      lr.reference_lower,
+      lr.reference_lower_operator,
+      lr.reference_upper,
+      lr.reference_upper_operator,
+      lr.reference_text,
+      lr.reference_full_text,
+      lr.is_value_out_of_range,
+      lr.numeric_result,
+      lr.specimen_type,
+      lr.created_at,
+      a.code AS analyte_code  -- PRD v7.0: Include analyte code for i18n
+    FROM lab_results lr
+    LEFT JOIN analytes a ON a.analyte_id = lr.analyte_id
+    WHERE lr.report_id = $1
+    ORDER BY lr.position ASC NULLS LAST, lr.created_at ASC
     `,
     [reportId],
   );
@@ -286,6 +288,7 @@ async function executeReportDetailQueries(client, reportId) {
       is_value_out_of_range: row.is_value_out_of_range,
       numeric_result: toNumber(row.numeric_result),
       specimen_type: row.specimen_type,
+      analyte_code: row.analyte_code || null, // PRD v7.0: For i18n display name lookup
     })),
   };
 }

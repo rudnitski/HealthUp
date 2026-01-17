@@ -21,5 +21,9 @@
   "test date": ["patient_reports"],
   "result": ["lab_results"],
   "value": ["lab_results"],
-  "unit": ["lab_results", "unit_aliases"]
+  "unit": ["lab_results", "unit_aliases"],
+  "translation": ["analyte_translations"],
+  "localization": ["analyte_translations"],
+  "display name": ["analyte_translations"],
+  "locale": ["analyte_translations"]
 }

@@ -2,6 +2,11 @@
 // PRD v5.0: Landing page state machine and logic
 
 (async () => {
+  // PRD v7.0: Wait for i18n to initialize before UI rendering
+  if (window.i18nReady) {
+    await window.i18nReady;
+  }
+
   // Wait for auth before any API calls
   const isAuthenticated = await window.authReady;
   if (!isAuthenticated) {
@@ -45,23 +50,26 @@
     tracking: { icon: '📈', fallbackTitle: 'Track Progress' }
   };
 
+  // PRD v7.0: i18n helper for translated messages
+  const t = window.i18next?.t?.bind(window.i18next);
+
   // Progress message mapping
   function getDisplayMessage(progress, progressMessage) {
     const patterns = [
-      { match: /^File uploaded/i, display: 'Uploading...' },
-      { match: /^Processing|^Preparing/i, display: 'Preparing your report...' },
-      { match: /^Analyzing/i, display: 'Reading and structuring your results' },
-      { match: /^Parsing|^AI analysis/i, display: 'Processing results...' },
-      { match: /^Saving|^Results saved/i, display: 'Saving your data...' },
-      { match: /^Normalizing|^Mapping|^Analyte/i, display: 'Finalizing...' },
-      { match: /^Completed$/i, display: '✓ Done' },
+      { match: /^File uploaded/i, display: t ? t('onboarding:processing.uploading') : 'Uploading...' },
+      { match: /^Processing|^Preparing/i, display: t ? t('onboarding:processing.preparingReport') : 'Preparing your report...' },
+      { match: /^Analyzing/i, display: t ? t('onboarding:processing.analyzing') : 'Reading and structuring your results' },
+      { match: /^Parsing|^AI analysis/i, display: t ? t('onboarding:processing.processing') : 'Processing results...' },
+      { match: /^Saving|^Results saved/i, display: t ? t('onboarding:processing.saving') : 'Saving your data...' },
+      { match: /^Normalizing|^Mapping|^Analyte/i, display: t ? t('onboarding:processing.finalizing') : 'Finalizing...' },
+      { match: /^Completed$/i, display: `✓ ${t ? t('status.completed') : 'Done'}` },
     ];
 
     for (const { match, display } of patterns) {
       if (match.test(progressMessage)) return display;
     }
 
-    return progress >= 100 ? '✓ Done' : 'Processing...';
+    return progress >= 100 ? `✓ ${t ? t('status.completed') : 'Done'}` : (t ? t('onboarding:processing.processing') : 'Processing...');
   }
 
   // State management
@@ -250,9 +258,9 @@
           if (job.status === 'completed') {
             updateFileStatus(job.filename, '✓', true, false);
           } else if (job.status === 'failed') {
-            updateFileStatus(job.filename, '✗ Failed', false, true);
+            updateFileStatus(job.filename, `✗ ${t ? t('status.failed') : 'Failed'}`, false, true);
           } else if (job.status === 'processing') {
-            updateFileStatus(job.filename, 'Processing...', false, false);
+            updateFileStatus(job.filename, t ? t('onboarding:processing.processing') : 'Processing...', false, false);
           }
         });
 
@@ -291,7 +299,7 @@
           const totalParams = primaryPatientJobs.reduce((sum, j) => sum + (j.parameters?.length || 0), 0);
 
           // Move to generating state
-          markersCount.textContent = `${totalParams} markers found in your report`;
+          markersCount.textContent = t ? t('onboarding:processing.markersFound', { count: totalParams }) : `${totalParams} markers found in your report`;
           showState('generating');
 
           // Generate insight

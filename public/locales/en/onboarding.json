@@ -1,0 +1,83 @@
+{
+  "login": {
+    "title": "Welcome to HealthUp",
+    "subtitle": "Sign in to securely view and understand your lab results",
+    "signingIn": "Signing in...",
+    "footer": "HealthUp Lab Report Analysis",
+    "errors": {
+      "invalidToken": "Sign-in failed. Please try again.",
+      "tokenExpired": "Sign-in expired. Please try again.",
+      "emailUnverified": "Your Google email is not verified. Please verify your email and try again.",
+      "rateLimitExceeded": "Too many sign-in attempts. Please wait a minute and try again.",
+      "serviceUnavailable": "Google authentication is temporarily unavailable. Please try again later.",
+      "noCredential": "Sign-in failed - no credential received",
+      "networkError": "Network error. Please check your connection and try again.",
+      "notConfigured": "Google Sign-In is not configured. Please contact support.",
+      "loadFailed": "Failed to load sign-in. Please refresh the page.",
+      "generic": "Sign-in failed. Please try again."
+    }
+  },
+  "welcome": {
+    "title": "Your labs, explained.",
+    "subtitle": "Upload a lab report to see what really matters — explained clearly.",
+    "uploadButton": "Upload lab report",
+    "dropHint": "Drop a file here or click to browse",
+    "description": "Upload your lab reports and get AI-powered insights about your health."
+  },
+  "processing": {
+    "analyzing": "Analyzing your report...",
+    "uploading": "Uploading...",
+    "preparingReport": "Preparing your report...",
+    "processing": "Processing...",
+    "saving": "Saving your data...",
+    "finalizing": "Finalizing...",
+    "markersExtracted": "Health markers extracted",
+    "markersFound": "{{count}} markers found in your report",
+    "preparingSummary": "Preparing a clear summary for you..."
+  },
+  "error": {
+    "title": "Something went wrong",
+    "goToApp": "Go to App"
+  },
+  "steps": {
+    "upload": {
+      "title": "Upload Your First Lab Report",
+      "description": "Start by uploading a lab report (PDF or image)",
+      "dropHere": "Drop your file here",
+      "orClick": "or click to select"
+    },
+    "processing": {
+      "title": "Analyzing Your Report",
+      "description": "We're extracting and analyzing your lab data...",
+      "extracting": "Extracting data...",
+      "analyzing": "Analyzing results..."
+    },
+    "insight": {
+      "title": "Your Health Insight",
+      "description": "Here's what we found in your report"
+    },
+    "complete": {
+      "title": "You're All Set!",
+      "description": "Your lab data is ready. Ask questions about your health.",
+      "startChatting": "Start Chatting"
+    }
+  },
+  "insight": {
+    "loading": "Generating personalized insight...",
+    "error": "Could not generate insight. Please try again.",
+    "fallback": {
+      "en": "Your lab report has been successfully processed. You can now ask questions about your results.",
+      "ru": "Ваш анализ был успешно обработан. Теперь вы можете задавать вопросы о ваших результатах."
+    }
+  },
+  "cta": {
+    "continueToChat": "Continue to Chat",
+    "uploadAnother": "Upload Another Report",
+    "viewReport": "View Report Details"
+  },
+  "errors": {
+    "uploadFailed": "Failed to upload report. Please try again.",
+    "processingFailed": "Failed to process report. Please try a different file.",
+    "insightFailed": "Could not generate insight."
+  }
+}

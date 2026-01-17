@@ -2,6 +2,11 @@
 // CRITICAL: Make the entire IIFE async to block initialization until auth completes
 // This prevents race conditions where DOM operations run before auth check finishes
 (async () => {
+  // PRD v7.0: Wait for i18n to initialize before UI rendering
+  if (window.i18nReady) {
+    await window.i18nReady;
+  }
+
   // Wait for auth.js to complete authentication check
   // RACE CONDITION FIX: auth.js calls requireAuth() immediately when loaded,
   // and exposes window.authReady promise that resolves when auth completes.
@@ -60,10 +65,12 @@
     userName.textContent = user.display_name; // textContent auto-escapes HTML
 
     // Create logout button
+    // PRD v7.0: i18n for logout button
+    const t = window.i18next?.t?.bind(window.i18next);
     const logoutBtn = document.createElement('button');
     logoutBtn.id = 'logout-btn';
     logoutBtn.className = 'btn-logout';
-    logoutBtn.textContent = 'Logout';
+    logoutBtn.textContent = t ? t('buttons.logout') : 'Logout';
     logoutBtn.addEventListener('click', () => authClient.logout());
 
     // Assemble user menu
@@ -320,6 +327,9 @@
       return;
     }
 
+    // PRD v7.0: i18n helper for translated labels
+    const t = window.i18next?.t?.bind(window.i18next);
+
     const fragment = document.createDocumentFragment();
 
     const addRow = (label, value, { isMissing = false, isSubRow = false } = {}) => {
@@ -357,13 +367,13 @@
 
     if (typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0) {
       const seconds = (elapsedMs / 1000).toFixed(1);
-      addRow('Processing Time', `${seconds} s`);
+      addRow(t ? t('labels.processingTime') : 'Processing Time', `${seconds} s`);
     }
 
     const patientName = isNonEmptyString(payload.patient_name)
       ? payload.patient_name.trim()
-      : 'Missing';
-    addRow('Patient Name', patientName, { isMissing: !isNonEmptyString(payload.patient_name) });
+      : (t ? t('misc.unavailable') : 'Missing');
+    addRow(t ? t('labels.patientName') : 'Patient Name', patientName, { isMissing: !isNonEmptyString(payload.patient_name) });
 
     const ageCandidates = [
       payload.patient_age,
@@ -384,7 +394,7 @@
     }
 
     const ageDisplay = ageValue || UNAVAILABLE_LABEL;
-    addRow('Age', ageDisplay, { isMissing: ageDisplay === UNAVAILABLE_LABEL });
+    addRow(t ? t('labels.age') : 'Age', ageDisplay, { isMissing: ageDisplay === UNAVAILABLE_LABEL });
 
     const rawDateOfBirth = isNonEmptyString(payload.patient_date_of_birth)
       ? payload.patient_date_of_birth
@@ -392,15 +402,15 @@
     const dateOfBirth = isNonEmptyString(rawDateOfBirth)
       ? rawDateOfBirth.trim()
       : UNAVAILABLE_LABEL;
-    addRow('Date of Birth', dateOfBirth, { isMissing: dateOfBirth === UNAVAILABLE_LABEL });
+    addRow(t ? t('labels.dateOfBirth') : 'Date of Birth', dateOfBirth, { isMissing: dateOfBirth === UNAVAILABLE_LABEL });
 
     const rawGender = isNonEmptyString(payload.patient_gender)
       ? payload.patient_gender
       : payload.gender;
     const gender = isNonEmptyString(rawGender)
       ? rawGender.trim()
-      : 'Missing';
-    addRow('Gender', gender, { isMissing: !isNonEmptyString(rawGender) });
+      : (t ? t('misc.unavailable') : 'Missing');
+    addRow(t ? t('labels.gender') : 'Gender', gender, { isMissing: !isNonEmptyString(rawGender) });
 
     let testDate = isNonEmptyString(payload.test_date) ? payload.test_date.trim() : '';
     if (!testDate && payload.lab_dates && typeof payload.lab_dates === 'object') {
@@ -416,7 +426,7 @@
       }
     }
 
-    addRow('Test Date', testDate || 'Missing', {
+    addRow(t ? t('labels.testDate') : 'Test Date', testDate || (t ? t('misc.unavailable') : 'Missing'), {
       isMissing: !testDate,
     });
 
@@ -448,18 +458,21 @@
       missingLookup.set(key, existing);
     });
 
-    addSectionTitle('Parameters');
+    addSectionTitle(t ? t('labels.parameters') : 'Parameters');
 
     if (!parameters.length) {
       // PRD v3.8: Handle zero-result reports (non-blood/non-urine tests)
       const noResultsRow = document.createElement('div');
       noResultsRow.className = 'result-details__row result-details__row--empty-state';
+      const noResultsMsg = t ? t('reports.noBloodUrineResults') : 'No blood or urine test results found in this document.';
+      const mayContainMsg = t ? t('reports.mayContainOther') : 'This document may contain imaging, cytology, or other non-blood/urine tests.';
+      const viewOriginalBtnText = t ? t('buttons.viewOriginalFile') : 'View Original File';
       noResultsRow.innerHTML = `
         <div style="text-align: center; padding: 1.5rem; color: #666;">
-          <p style="margin-bottom: 0.75rem; font-size: 1.1em;">No blood or urine test results found in this document.</p>
-          <p style="margin-bottom: 1rem; color: #888; font-size: 0.9em;">This document may contain imaging, cytology, or other non-blood/urine tests.</p>
+          <p style="margin-bottom: 0.75rem; font-size: 1.1em;">${noResultsMsg}</p>
+          <p style="margin-bottom: 1rem; color: #888; font-size: 0.9em;">${mayContainMsg}</p>
           <button type="button" onclick="viewOriginalFile()" class="secondary-button" style="cursor: pointer;">
-            📄 View Original File
+            📄 ${viewOriginalBtnText}
           </button>
         </div>
       `;
@@ -472,12 +485,16 @@
       table.className = 'parameters-table';
 
       const thead = document.createElement('thead');
+      const paramLabel = t ? t('labels.parameter') : 'Parameter';
+      const valueLabel = t ? t('labels.value') : 'Value';
+      const unitLabel = t ? t('labels.unit') : 'Unit';
+      const refLabel = t ? t('labels.referenceInterval') : 'Reference Interval';
       thead.innerHTML = `
         <tr>
-          <th scope="col">Parameter</th>
-          <th scope="col">Value</th>
-          <th scope="col">Unit</th>
-          <th scope="col">Reference Interval</th>
+          <th scope="col">${paramLabel}</th>
+          <th scope="col">${valueLabel}</th>
+          <th scope="col">${unitLabel}</th>
+          <th scope="col">${refLabel}</th>
         </tr>
       `;
 
@@ -917,8 +934,10 @@
   // Auto-load report if reportId is in URL parameters
   if (reportIdParam) {
     (async () => {
+      // PRD v7.0: i18n helper for translated messages (must be outside try for catch access)
+      const t = window.i18next?.t?.bind(window.i18next);
       try {
-        setResultMessage('Loading report...', 'loading');
+        setResultMessage(t ? t('misc.loading') : 'Loading report...', 'loading');
         const persistedPayload = await fetchPersistedReport(reportIdParam);
 
         if (persistedPayload) {
@@ -930,16 +949,17 @@
           const total = parametersForMessage.length;
 
           if (total > 0) {
-            setResultMessage(`Loaded report with ${total} blood/urine test result${total === 1 ? '' : 's'}.`, 'success');
+            const msg = t ? t('reports.loadedReport', { count: total }) : `Loaded report with ${total} blood/urine test result${total === 1 ? '' : 's'}.`;
+            setResultMessage(msg, 'success');
           } else {
-            setResultMessage('No blood or urine test results found in this document.', 'info');
+            setResultMessage(t ? t('reports.noBloodUrineResults') : 'No blood or urine test results found in this document.', 'info');
           }
         } else {
-          setResultMessage('Report not found.', 'error');
+          setResultMessage(t ? t('reports.notFound') : 'Report not found.', 'error');
         }
       } catch (error) {
         console.error('Failed to load report:', error);
-        setResultMessage('Failed to load report.', 'error');
+        setResultMessage(t ? t('reports.loadFailed') : 'Failed to load report.', 'error');
       }
     })();
   }

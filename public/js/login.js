@@ -11,7 +11,8 @@ async function initializeGoogleSignIn() {
 
     // Check if Google Client ID is configured
     if (!config.googleClientId) {
-      throw new Error('Google Sign-In is not configured. Please contact support.');
+      const msg = window.i18next?.t('onboarding:login.errors.notConfigured') || 'Google Sign-In is not configured. Please contact support.';
+      throw new Error(msg);
     }
 
     googleClientId = config.googleClientId;
@@ -41,7 +42,8 @@ async function initializeGoogleSignIn() {
 
   } catch (error) {
     console.error('Failed to initialize Google Sign-In:', error);
-    showError(error.message || 'Failed to load sign-in. Please refresh the page.');
+    const fallback = window.i18next?.t('onboarding:login.errors.loadFailed') || 'Failed to load sign-in. Please refresh the page.';
+    showError(error.message || fallback);
   }
 }
 
@@ -52,7 +54,7 @@ async function handleCredentialResponse(response) {
 
   if (!credential) {
     console.error('[login.js] No credential in response');
-    showError('Sign-in failed - no credential received');
+    showError(window.i18next?.t('onboarding:login.errors.noCredential') || 'Sign-in failed - no credential received');
     return;
   }
 
@@ -74,18 +76,20 @@ async function handleCredentialResponse(response) {
     if (!apiResponse.ok) {
       hideLoading();
 
-      // Map error codes to user-friendly messages
+      // Map error codes to user-friendly messages (i18n)
       // Note: Unmapped codes (e.g., MISSING_CREDENTIAL, EMAIL_CONFLICT, INTERNAL_ERROR)
       // fall back to generic message via || operator
+      const t = window.i18next?.t?.bind(window.i18next) || ((key, fallback) => fallback);
       const errorMessages = {
-        'INVALID_TOKEN': 'Sign-in failed. Please try again.',
-        'TOKEN_EXPIRED': 'Sign-in expired. Please try again.',
-        'EMAIL_UNVERIFIED': 'Your Google email is not verified. Please verify your email and try again.',
-        'RATE_LIMIT_EXCEEDED': 'Too many sign-in attempts. Please wait a minute and try again.',
-        'SERVICE_UNAVAILABLE': 'Google authentication is temporarily unavailable. Please try again later.'
+        'INVALID_TOKEN': t('onboarding:login.errors.invalidToken', 'Sign-in failed. Please try again.'),
+        'TOKEN_EXPIRED': t('onboarding:login.errors.tokenExpired', 'Sign-in expired. Please try again.'),
+        'EMAIL_UNVERIFIED': t('onboarding:login.errors.emailUnverified', 'Your Google email is not verified. Please verify your email and try again.'),
+        'RATE_LIMIT_EXCEEDED': t('onboarding:login.errors.rateLimitExceeded', 'Too many sign-in attempts. Please wait a minute and try again.'),
+        'SERVICE_UNAVAILABLE': t('onboarding:login.errors.serviceUnavailable', 'Google authentication is temporarily unavailable. Please try again later.')
       };
 
-      const message = errorMessages[data.code] || data.error || 'Sign-in failed. Please try again.';
+      const genericError = t('onboarding:login.errors.generic', 'Sign-in failed. Please try again.');
+      const message = errorMessages[data.code] || data.error || genericError;
       showError(message);
       return;
     }
@@ -99,7 +103,7 @@ async function handleCredentialResponse(response) {
   } catch (error) {
     hideLoading();
     console.error('Login error:', error);
-    showError('Network error. Please check your connection and try again.');
+    showError(window.i18next?.t('onboarding:login.errors.networkError') || 'Network error. Please check your connection and try again.');
   }
 }
 
@@ -136,7 +140,12 @@ function hideLoading() {
 }
 
 // Initialize when Google API is loaded
-window.addEventListener('load', () => {
+window.addEventListener('load', async () => {
+  // PRD v7.0: Wait for i18n to initialize before UI rendering
+  if (window.i18nReady) {
+    await window.i18nReady;
+  }
+
   // Wait for Google API to load
   const checkGoogleLoaded = setInterval(() => {
     if (window.google?.accounts?.id) {

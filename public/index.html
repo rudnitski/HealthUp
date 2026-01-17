@@ -7,6 +7,7 @@
   <title>HealthUp — Lab Report Analysis</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/chat.css">
+  <link rel="stylesheet" href="css/language-switcher.css">
   <link rel="icon" type="image/svg+xml"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
 </head>
@@ -24,26 +25,26 @@
 
       <nav class="sidebar-nav">
         <div class="nav-section">
-          <div class="nav-section-title">Main</div>
+          <div class="nav-section-title" data-i18n="nav.main">Main</div>
           <a href="#upload" class="nav-item active" data-section="upload">
             <span class="nav-icon">📤</span>
-            <span>Upload Reports</span>
+            <span data-i18n="nav.uploadReports">Upload Reports</span>
           </a>
           <a href="#assistant" class="nav-item" data-section="assistant">
             <span class="nav-icon">💬</span>
-            <span>Health Assistant</span>
+            <span data-i18n="nav.healthAssistant">Health Assistant</span>
           </a>
           <a href="#reports" class="nav-item" data-section="reports">
             <span class="nav-icon">📄</span>
-            <span>Reports</span>
+            <span data-i18n="nav.reports">Reports</span>
           </a>
         </div>
 
         <div class="nav-section" id="management-section" hidden>
-          <div class="nav-section-title">Management</div>
+          <div class="nav-section-title" data-i18n="nav.management">Management</div>
           <a href="/admin/pending-analytes" class="nav-item">
             <span class="nav-icon">📋</span>
-            <span>Review Queue</span>
+            <span data-i18n="nav.reviewQueue">Review Queue</span>
             <span class="nav-badge" id="pending-count" hidden>0</span>
           </a>
         </div>
@@ -61,7 +62,8 @@
     <main class="main-content">
       <header class="content-header">
         <div class="content-header-inner">
-          <h1 class="page-title" id="page-title">Upload Lab Reports</h1>
+          <h1 class="page-title" id="page-title" data-i18n="nav.uploadReports">Upload Lab Reports</h1>
+          <div class="language-switcher"></div>
         </div>
       </header>
 
@@ -73,16 +75,16 @@
             <div class="upload-source-selector">
               <button id="manual-upload-btn" class="upload-source-button">
                 <span class="icon">📁</span>
-                <span class="label">Upload Files</span>
-                <span class="help-text">Drag & drop or click to select</span>
+                <span class="label" data-i18n="upload:sources.manual.label">Upload Files</span>
+                <span class="help-text" data-i18n="upload:sources.manual.help">Drag & drop or click to select</span>
               </button>
               <button id="gmail-import-btn" class="upload-source-button" hidden>
                 <span class="icon">📧</span>
-                <span class="label">Import from Gmail</span>
-                <span class="help-text">Connect & import automatically</span>
+                <span class="label" data-i18n="upload:sources.gmail.label">Import from Gmail</span>
+                <span class="help-text" data-i18n="upload:sources.gmail.help">Connect & import automatically</span>
               </button>
             </div>
-            <p class="help-text" style="text-align: center; margin-top: -1rem; margin-bottom: 2rem;">
+            <p class="help-text" style="text-align: center; margin-top: -1rem; margin-bottom: 2rem;" data-i18n="upload:supportedFormats">
               Supported: PDF, PNG, JPEG, HEIC (max 10MB each, up to 20 files)
             </p>
 
@@ -93,14 +95,14 @@
 
             <!-- Upload Queue Table -->
             <section id="upload-queue-section" class="queue-section" hidden>
-              <h3>Selected Files</h3>
+              <h3 data-i18n="upload:queue.title">Selected Files</h3>
               <div class="table-wrapper">
                 <table class="queue-table">
                   <thead>
                     <tr>
-                      <th>Filename</th>
-                      <th>Size</th>
-                      <th>Type</th>
+                      <th data-i18n="labels.filename">Filename</th>
+                      <th data-i18n="labels.size">Size</th>
+                      <th data-i18n="labels.type">Type</th>
                     </tr>
                   </thead>
                   <tbody id="queue-tbody">
@@ -110,9 +112,9 @@
               </div>
               <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
                 <button id="start-processing-btn" class="btn btn-primary btn-lg">
-                  Start Processing (<span id="file-count">0</span> files)
+                  <span data-i18n="buttons.startProcessing">Start Processing</span> (<span id="file-count">0</span> <span data-i18n="upload:queue.files">files</span>)
                 </button>
-                <button id="clear-queue-btn" class="btn btn-secondary">Clear Queue</button>
+                <button id="clear-queue-btn" class="btn btn-secondary" data-i18n="buttons.clearQueue">Clear Queue</button>
               </div>
             </section>
 
@@ -120,14 +122,14 @@
             <section id="gmail-section" class="gmail-section" hidden>
               <!-- Auth Status -->
               <div id="gmail-auth-status" class="gmail-subsection">
-                <h3>Import from Gmail</h3>
+                <h3 data-i18n="upload:gmail.title">Import from Gmail</h3>
                 <div id="auth-status-message"></div>
                 <button id="gmail-action-btn" class="btn btn-primary"></button>
               </div>
 
               <!-- Fetch Progress -->
               <div id="gmail-fetch-progress" class="gmail-subsection" hidden>
-                <h3>Fetching Lab Tests from Gmail</h3>
+                <h3 data-i18n="upload:gmail.fetchTitle">Fetching Lab Tests from Gmail</h3>
                 <div class="progress-bar-wrapper" style="height: 24px; margin-bottom: 1rem;">
                   <div id="gmail-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
                 </div>
@@ -140,13 +142,13 @@
 
               <!-- Attachment Selection -->
               <div id="gmail-selection" class="gmail-subsection" hidden>
-                <h3>Select Attachments to Process</h3>
+                <h3 data-i18n="upload:gmail.selectionTitle">Select Attachments to Process</h3>
                 <div id="gmail-selection-summary" style="margin-bottom: 1rem;"></div>
                 <div class="selection-actions">
-                  <button id="select-all-btn" class="btn btn-secondary btn-sm">Select All</button>
-                  <button id="deselect-all-btn" class="btn btn-secondary btn-sm">Deselect All</button>
+                  <button id="select-all-btn" class="btn btn-secondary btn-sm" data-i18n="buttons.selectAll">Select All</button>
+                  <button id="deselect-all-btn" class="btn btn-secondary btn-sm" data-i18n="buttons.deselectAll">Deselect All</button>
                   <button id="download-recognize-btn" class="btn btn-primary" disabled>
-                    Download & Recognize Selected (<span id="selected-count">0</span>)
+                    <span data-i18n="buttons.downloadRecognize">Download & Recognize Selected</span> (<span id="selected-count">0</span>)
                   </button>
                 </div>
                 <div class="table-wrapper">
@@ -170,13 +172,13 @@
 
             <!-- Unified Progress Table -->
             <section id="progress-section" class="progress-section" hidden>
-              <h3>Processing Files</h3>
+              <h3 data-i18n="upload:progress.title">Processing Files</h3>
               <div class="table-wrapper">
                 <table class="progress-table">
                   <thead>
                     <tr>
-                      <th>Filename</th>
-                      <th>Status</th>
+                      <th data-i18n="labels.filename">Filename</th>
+                      <th data-i18n="labels.status">Status</th>
                       <th>Progress</th>
                       <th>Details</th>
                     </tr>
@@ -190,19 +192,19 @@
 
             <!-- Results Table -->
             <section id="results-section" class="results-section" hidden>
-              <h3>Processing Complete</h3>
+              <h3 data-i18n="upload:progress.complete">Processing Complete</h3>
               <div class="results-summary">
-                <span class="summary-stat">✅ Succeeded: <strong id="success-count">0</strong></span>
-                <span class="summary-stat" id="duplicate-stat" hidden>🔄 Duplicates: <strong
+                <span class="summary-stat">✅ <span data-i18n="status.success">Succeeded</span>: <strong id="success-count">0</strong></span>
+                <span class="summary-stat" id="duplicate-stat" hidden>🔄 <span data-i18n="status.duplicate">Duplicates</span>: <strong
                     id="duplicate-count">0</strong></span>
-                <span class="summary-stat">❌ Failed: <strong id="failed-count">0</strong></span>
+                <span class="summary-stat">❌ <span data-i18n="status.failed">Failed</span>: <strong id="failed-count">0</strong></span>
               </div>
               <div class="table-wrapper">
                 <table class="results-table">
                   <thead>
                     <tr>
-                      <th>Filename</th>
-                      <th>Status</th>
+                      <th data-i18n="labels.filename">Filename</th>
+                      <th data-i18n="labels.status">Status</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -248,12 +250,12 @@
             </div>
             <!-- PRD v4.3: Patient Selector Row -->
             <div class="chat-patient-selector" id="chat-patient-selector">
-              <div class="patient-selector-label">Select patient:</div>
+              <div class="patient-selector-label" data-i18n="chat:patientSelector.selectPatient">Select patient:</div>
               <button class="patient-chips-scroll-btn patient-chips-scroll-left" id="chips-scroll-left"
                 aria-label="Scroll left" hidden>‹</button>
               <div class="patient-chips-container" id="patient-chips-container">
                 <!-- Patient chips populated dynamically -->
-                <div class="patient-chips-loading">Loading patients...</div>
+                <div class="patient-chips-loading" data-i18n="chat:patientSelector.loadingPatients">Loading patients...</div>
               </div>
               <div class="patient-selector-actions">
                 <button class="patient-chips-scroll-btn patient-chips-scroll-right" id="chips-scroll-right"
@@ -261,7 +263,7 @@
                 <div class="patient-selector-divider" aria-hidden="true"></div>
                 <button class="new-chat-button" id="new-chat-button" title="Start new conversation">
                   <span class="new-chat-icon">+</span>
-                  <span class="new-chat-text">New Chat</span>
+                  <span class="new-chat-text" data-i18n="buttons.newChat">New Chat</span>
                 </button>
               </div>
             </div>
@@ -270,26 +272,27 @@
               <div class="chat-empty-state">
                 <div class="chat-empty-content">
                   <div class="chat-empty-icon">🩺</div>
-                  <h2 class="chat-empty-title">HealthUp Assistant</h2>
-                  <p class="chat-empty-subtitle">Ask questions about your lab results in natural language</p>
+                  <h2 class="chat-empty-title" data-i18n="chat:title">HealthUp Assistant</h2>
+                  <p class="chat-empty-subtitle" data-i18n="chat:subtitle">Ask questions about your lab results in natural language</p>
+                  <p class="chat-examples-label" data-i18n="chat:examples.title">Try asking:</p>
 
                   <!-- Example Prompts -->
                   <div class="chat-example-prompts">
                     <button class="chat-example-prompt" data-prompt="Show me my latest cholesterol results">
                       <span class="prompt-icon">📊</span>
-                      <span class="prompt-text">Show my latest cholesterol results</span>
+                      <span class="prompt-text" data-i18n="chat:examples.cholesterol">Show my latest cholesterol results</span>
                     </button>
                     <button class="chat-example-prompt" data-prompt="How has my vitamin D changed over time?">
                       <span class="prompt-icon">📈</span>
-                      <span class="prompt-text">Track vitamin D over time</span>
+                      <span class="prompt-text" data-i18n="chat:examples.vitaminD">Track vitamin D over time</span>
                     </button>
                     <button class="chat-example-prompt" data-prompt="What tests did I do last month?">
                       <span class="prompt-icon">📅</span>
-                      <span class="prompt-text">What tests did I do last month?</span>
+                      <span class="prompt-text" data-i18n="chat:examples.lastMonth">What tests did I do last month?</span>
                     </button>
                     <button class="chat-example-prompt" data-prompt="Show all my out-of-range results">
                       <span class="prompt-icon">⚠️</span>
-                      <span class="prompt-text">Show out-of-range results</span>
+                      <span class="prompt-text" data-i18n="chat:examples.outOfRange">Show out-of-range results</span>
                     </button>
                   </div>
                 </div>
@@ -299,13 +302,13 @@
             <div class="chat-input-container">
               <div class="chat-input-wrapper">
                 <textarea class="chat-input-textarea" placeholder="Ask a question about your lab results..." rows="2"
-                  aria-label="Chat message input" disabled></textarea>
-                <button class="chat-send-button" type="button" aria-label="Send message" disabled>
+                  aria-label="Chat message input" data-i18n-placeholder="chat:placeholder" disabled></textarea>
+                <button class="chat-send-button" type="button" aria-label="Send message" data-i18n="buttons.send" disabled>
                   Send
                 </button>
               </div>
-              <div class="chat-medical-disclaimer">
-                <strong>Note:</strong> This analysis is based on your lab data and general medical knowledge.
+              <div class="chat-medical-disclaimer" data-i18n="chat:disclaimer">
+                Note: This analysis is based on your lab data and general medical knowledge.
                 Always consult your healthcare provider to interpret results in the context of your complete health
                 history.
               </div>
@@ -322,29 +325,29 @@
         <section id="section-reports" class="content-section" style="display: none;">
           <div class="reports-filters">
             <div class="filter-group">
-              <label for="reports-from-date">From</label>
+              <label for="reports-from-date" data-i18n="labels.from">From</label>
               <input type="date" id="reports-from-date">
             </div>
             <div class="filter-group">
-              <label for="reports-to-date">To</label>
+              <label for="reports-to-date" data-i18n="labels.to">To</label>
               <input type="date" id="reports-to-date">
             </div>
             <div class="filter-group">
-              <label for="reports-patient-filter">Patient</label>
+              <label for="reports-patient-filter" data-i18n="labels.patient">Patient</label>
               <select id="reports-patient-filter">
-                <option value="">All Patients</option>
+                <option value="" data-i18n="chat:patientSelector.allPatients">All Patients</option>
               </select>
             </div>
-            <button id="reports-clear-filters" class="btn btn-secondary">Clear</button>
+            <button id="reports-clear-filters" class="btn btn-secondary" data-i18n="buttons.clear">Clear</button>
           </div>
 
           <div class="table-wrapper">
             <table class="reports-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Patient</th>
-                  <th>Actions</th>
+                  <th data-i18n="labels.date">Date</th>
+                  <th data-i18n="labels.patient">Patient</th>
+                  <th data-i18n="labels.actions">Actions</th>
                 </tr>
               </thead>
               <tbody id="reports-table-body">
@@ -375,6 +378,14 @@
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@17/lib/marked.umd.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js" defer></script>
+
+  <!-- i18n: Internationalization support (PRD v7.0) -->
+  <script src="https://cdn.jsdelivr.net/npm/i18next@23/i18next.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-http-backend@2/i18nextHttpBackend.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-browser-languagedetector@7/i18nextBrowserLanguageDetector.min.js" defer></script>
+  <script src="js/i18n.js" defer></script>
+  <script src="js/formatters.js" defer></script>
+  <script src="js/language-switcher.js" defer></script>
 
   <!-- Load auth client AFTER vendors, BEFORE app scripts -->
   <script src="js/auth.js" defer></script>

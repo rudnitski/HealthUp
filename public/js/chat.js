@@ -271,11 +271,14 @@ class ConversationalSQLChat {
     // PRD v4.3: Single-patient behavior - chip is non-interactive
     const isSinglePatient = this.patients.length === 1;
 
+    // PRD v7.0: i18n helper
+    const t = window.i18next?.t?.bind(window.i18next);
+
     this.patients.forEach(patient => {
       const chip = document.createElement('button');
       chip.className = 'patient-chip';
       chip.dataset.patientId = patient.id;
-      chip.textContent = patient.display_name || patient.full_name || 'Unknown';
+      chip.textContent = patient.display_name || patient.full_name || (t ? t('misc.unknown') : 'Unknown');
       chip.title = patient.full_name || '';
 
       if (patient.id === this.selectedPatientId) {
@@ -289,7 +292,7 @@ class ConversationalSQLChat {
       // PRD v4.3: Single patient - non-interactive with tooltip
       if (isSinglePatient) {
         chip.classList.add('patient-chip--single');
-        chip.title = 'Only one patient in system';
+        chip.title = t ? t('chat:patientSelector.singlePatient') : 'Only one patient in system';
         chip.disabled = true;
       } else {
         chip.addEventListener('click', () => {
@@ -489,12 +492,15 @@ class ConversationalSQLChat {
 
   /**
    * Attach click handlers to example prompts
+   * PRD v7.0: Use visible (translated) text so LLM responds in user's language
    */
   attachExamplePromptHandlers() {
     const examplePrompts = this.chatContainer.querySelectorAll('.chat-example-prompt');
     examplePrompts.forEach(button => {
       button.addEventListener('click', () => {
-        const prompt = button.dataset.prompt;
+        // Use translated visible text instead of data-prompt for localized experience
+        const promptTextEl = button.querySelector('.prompt-text');
+        const prompt = promptTextEl ? promptTextEl.textContent : button.dataset.prompt;
         if (prompt && !this.isProcessing) {
           this.inputTextarea.value = prompt;
           this.handleSendMessage();
@@ -610,7 +616,13 @@ class ConversationalSQLChat {
         break;
 
       case 'status':
-        this.showStatusIndicator(data.status, data.message);
+        // PRD v7.0: Translate known status messages
+        const t = window.i18next?.t?.bind(window.i18next);
+        let statusMessage = data.message;
+        if (t && data.status === 'thinking') {
+          statusMessage = t('chat:thinking');
+        }
+        this.showStatusIndicator(data.status, statusMessage);
         break;
 
       case 'plot_result':
@@ -1330,14 +1342,16 @@ class ConversationalSQLChat {
 
   /**
    * Get human-readable tool name
+   * PRD v7.0: i18n support for tool indicators
    */
   getToolDisplayName(toolName) {
+    const t = window.i18next?.t?.bind(window.i18next);
     const displayNames = {
-      'fuzzy_search_parameter_names': 'Searching parameters...',
-      'fuzzy_search_analyte_names': 'Searching lab tests...',
-      'execute_exploratory_sql': 'Exploring database...',
-      'show_plot': 'Validating and fetching data...',
-      'show_table': 'Validating and fetching data...'
+      'fuzzy_search_parameter_names': t ? t('chat:toolIndicators.searchingParameters') : 'Searching parameters...',
+      'fuzzy_search_analyte_names': t ? t('chat:toolIndicators.searchingAnalytes') : 'Searching lab tests...',
+      'execute_exploratory_sql': t ? t('chat:toolIndicators.executingQuery') : 'Exploring database...',
+      'show_plot': t ? t('chat:toolIndicators.generatingPlot') : 'Validating and fetching data...',
+      'show_table': t ? t('chat:toolIndicators.preparingResults') : 'Validating and fetching data...'
     };
 
     return displayNames[toolName] || toolName;
@@ -1978,13 +1992,16 @@ class ConversationalSQLChat {
 
   /**
    * Display table results
+   * PRD v7.0: i18n support
    */
   displayTableResults(rows, title) {
     const tableSection = document.createElement('div');
     tableSection.className = 'result-section';
 
     if (!rows || rows.length === 0) {
-      tableSection.innerHTML = '<p>No results found.</p>';
+      const t = window.i18next?.t?.bind(window.i18next);
+      const noResultsText = t ? t('chat:noResults') : 'No results found.';
+      tableSection.innerHTML = `<p>${noResultsText}</p>`;
       this.resultsContainer.appendChild(tableSection);
       return;
     }

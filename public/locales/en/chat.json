@@ -1,0 +1,57 @@
+{
+  "title": "HealthUp Assistant",
+  "subtitle": "Ask questions about your lab results in natural language",
+  "disclaimer": "Note: This analysis is based on your lab data and general medical knowledge. Always consult your healthcare provider to interpret results in the context of your complete health history.",
+  "placeholder": "Ask about your health data...",
+  "placeholderDisabled": "Select a patient to start chatting",
+  "thinking": "Thinking...",
+  "connectionLost": "Connection lost. Please refresh the page.",
+  "connectionError": "Connection error. Please try again.",
+  "sendError": "Failed to send message. Please try again.",
+  "sessionError": "Session error. Please start a new chat.",
+  "noResults": "No results found.",
+  "toolIndicators": {
+    "searching": "Searching database...",
+    "searchingParameters": "Searching for parameters...",
+    "searchingAnalytes": "Searching for analytes...",
+    "executingQuery": "Executing query...",
+    "generatingPlot": "Generating plot...",
+    "preparingResults": "Preparing results...",
+    "analyzingData": "Analyzing data..."
+  },
+  "results": {
+    "found_one": "{{count}} result found",
+    "found_other": "{{count}} results found",
+    "noResultsForQuery": "No results found for this query.",
+    "showingResults": "Showing {{count}} results"
+  },
+  "patientSelector": {
+    "selectPatient": "Select a patient",
+    "allPatients": "All Patients",
+    "noPatients": "No patients found",
+    "loadingPatients": "Loading patients...",
+    "singlePatient": "Only one patient in system"
+  },
+  "examples": {
+    "title": "Try asking:",
+    "cholesterol": "Show my latest cholesterol results",
+    "vitaminD": "Track vitamin D over time",
+    "lastMonth": "What tests did I do last month?",
+    "outOfRange": "Show out-of-range results"
+  },
+  "upload": {
+    "attachFile": "Attach file",
+    "dropToUpload": "Drop files here to upload",
+    "uploading": "Uploading...",
+    "uploadComplete": "Upload complete",
+    "uploadFailed": "Upload failed",
+    "processingFiles": "Processing {{count}} files...",
+    "fileAdded": "File added to context",
+    "filesAdded_one": "{{count}} file added to context",
+    "filesAdded_other": "{{count}} files added to context"
+  },
+  "newChat": {
+    "title": "New Chat",
+    "confirm": "Start a new chat? Current conversation will be cleared."
+  }
+}

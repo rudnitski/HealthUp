@@ -1,0 +1,63 @@
+{
+  "title": "Admin Panel",
+  "nav": {
+    "pendingAnalytes": "Pending Analytes",
+    "matchReviews": "Match Reviews",
+    "database": "Database"
+  },
+  "pendingAnalytes": {
+    "title": "Pending Analytes",
+    "description": "Review analytes suggested by the AI for addition to the catalog.",
+    "empty": "No pending analytes to review.",
+    "columns": {
+      "suggestedName": "Suggested Name",
+      "originalText": "Original Text",
+      "confidence": "Confidence",
+      "rationale": "Rationale",
+      "actions": "Actions"
+    },
+    "actions": {
+      "approve": "Approve",
+      "discard": "Discard",
+      "edit": "Edit & Approve"
+    },
+    "confirmApprove": "Approve \"{{name}}\" as a new analyte?",
+    "confirmDiscard": "Discard \"{{name}}\"? This cannot be undone."
+  },
+  "matchReviews": {
+    "title": "Match Reviews",
+    "description": "Review ambiguous matches between lab results and analytes.",
+    "empty": "No matches to review.",
+    "columns": {
+      "originalText": "Original Text",
+      "suggestedMatches": "Suggested Matches",
+      "confidence": "Confidence",
+      "actions": "Actions"
+    },
+    "actions": {
+      "selectMatch": "Select Correct Match",
+      "createNew": "Create New Analyte",
+      "skip": "Skip"
+    },
+    "confirmMatch": "Map \"{{original}}\" to \"{{match}}\"?"
+  },
+  "database": {
+    "title": "Database Management",
+    "resetWarning": "This will delete all data and reset the database.",
+    "resetButton": "Reset Database",
+    "confirmReset": "Are you sure you want to reset the database? All data will be lost."
+  },
+  "notifications": {
+    "approveSuccess": "Analyte approved successfully.",
+    "discardSuccess": "Analyte discarded.",
+    "matchSuccess": "Match saved successfully.",
+    "resetSuccess": "Database reset successfully.",
+    "error": "An error occurred. Please try again."
+  },
+  "stats": {
+    "pendingCount_one": "{{count}} pending analyte",
+    "pendingCount_other": "{{count}} pending analytes",
+    "reviewCount_one": "{{count}} match to review",
+    "reviewCount_other": "{{count}} matches to review"
+  }
+}

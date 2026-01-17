@@ -6,6 +6,11 @@
 // CRITICAL: All existing code MUST be wrapped in initializeAdminPanel()
 // to prevent execution before auth checks complete
 (async function() {
+  // PRD v7.0: Wait for i18n to initialize before UI rendering
+  if (window.i18nReady) {
+    await window.i18nReady;
+  }
+
   // Wait for auth.js to complete authentication check
   // Uses same window.authReady promise as app.js (prevents race conditions)
   const isAuthenticated = await window.authReady;

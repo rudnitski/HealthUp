@@ -1,0 +1,65 @@
+{
+  "title": "Панель администратора",
+  "nav": {
+    "pendingAnalytes": "Ожидающие аналиты",
+    "matchReviews": "Проверка соответствий",
+    "database": "База данных"
+  },
+  "pendingAnalytes": {
+    "title": "Ожидающие аналиты",
+    "description": "Проверьте аналиты, предложенные ИИ для добавления в каталог.",
+    "empty": "Нет ожидающих аналитов.",
+    "columns": {
+      "suggestedName": "Предложенное название",
+      "originalText": "Исходный текст",
+      "confidence": "Уверенность",
+      "rationale": "Обоснование",
+      "actions": "Действия"
+    },
+    "actions": {
+      "approve": "Одобрить",
+      "discard": "Отклонить",
+      "edit": "Редактировать"
+    },
+    "confirmApprove": "Одобрить \"{{name}}\" как новый аналит?",
+    "confirmDiscard": "Отклонить \"{{name}}\"? Это действие необратимо."
+  },
+  "matchReviews": {
+    "title": "Проверка соответствий",
+    "description": "Проверьте неоднозначные соответствия между результатами и аналитами.",
+    "empty": "Нет соответствий для проверки.",
+    "columns": {
+      "originalText": "Исходный текст",
+      "suggestedMatches": "Предложенные соответствия",
+      "confidence": "Уверенность",
+      "actions": "Действия"
+    },
+    "actions": {
+      "selectMatch": "Выбрать правильное",
+      "createNew": "Создать новый аналит",
+      "skip": "Пропустить"
+    },
+    "confirmMatch": "Сопоставить \"{{original}}\" с \"{{match}}\"?"
+  },
+  "database": {
+    "title": "Управление базой данных",
+    "resetWarning": "Это удалит все данные и сбросит базу данных.",
+    "resetButton": "Сбросить базу данных",
+    "confirmReset": "Вы уверены, что хотите сбросить базу данных? Все данные будут потеряны."
+  },
+  "notifications": {
+    "approveSuccess": "Аналит успешно одобрен.",
+    "discardSuccess": "Аналит отклонён.",
+    "matchSuccess": "Соответствие сохранено.",
+    "resetSuccess": "База данных сброшена.",
+    "error": "Произошла ошибка. Попробуйте снова."
+  },
+  "stats": {
+    "pendingCount_one": "{{count}} ожидающий аналит",
+    "pendingCount_few": "{{count}} ожидающих аналита",
+    "pendingCount_many": "{{count}} ожидающих аналитов",
+    "reviewCount_one": "{{count}} соответствие для проверки",
+    "reviewCount_few": "{{count}} соответствия для проверки",
+    "reviewCount_many": "{{count}} соответствий для проверки"
+  }
+}

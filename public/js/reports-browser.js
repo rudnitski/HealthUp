@@ -3,6 +3,11 @@ const ReportsBrowser = {
   initialized: false,
 
   async init() {
+    // PRD v7.0: Wait for i18n to initialize before UI rendering
+    if (window.i18nReady) {
+      await window.i18nReady;
+    }
+
     // ==================== AUTH CHECK (MUST BE FIRST) ====================
     // Wait for auth.js to complete authentication check before any API calls
     const isAuthenticated = await window.authReady;
@@ -70,7 +75,10 @@ const ReportsBrowser = {
       const data = await response.json();
 
       this.renderReports(data.reports);
-      document.getElementById('reports-count').textContent = `${data.total} reports`;
+      // PRD v7.0: Use i18next for translated report count
+      const t = window.i18next?.t?.bind(window.i18next);
+      const countText = t ? t('reports.count', { count: data.total }) : `${data.total} reports`;
+      document.getElementById('reports-count').textContent = countText;
     } catch (error) {
       console.error('Failed to load reports:', error);
       // Show error to user
@@ -90,19 +98,21 @@ const ReportsBrowser = {
     errorRow.appendChild(errorCell);
     tbody.appendChild(errorRow);
 
-    document.getElementById('reports-count').textContent = '0 reports';
+    const t = window.i18next?.t?.bind(window.i18next);
+    document.getElementById('reports-count').textContent = t ? t('reports.count', { count: 0 }) : '0 reports';
   },
 
   renderReports(reports) {
     const tbody = document.getElementById('reports-table-body');
     tbody.innerHTML = '';
+    const t = window.i18next?.t?.bind(window.i18next);
 
     if (reports.length === 0) {
       const emptyRow = document.createElement('tr');
       const emptyCell = document.createElement('td');
       emptyCell.colSpan = 3;
       emptyCell.className = 'empty-state';
-      emptyCell.textContent = 'No reports found';
+      emptyCell.textContent = t ? t('reports.noReports') : 'No reports found';
       emptyRow.appendChild(emptyCell);
       tbody.appendChild(emptyRow);
       return;
@@ -126,17 +136,17 @@ const ReportsBrowser = {
       const actionsCell = document.createElement('td');
       actionsCell.className = 'actions-cell';
 
-      // View Data button
+      // View Data button (PRD v7.0: i18n)
       const viewDataBtn = document.createElement('button');
       viewDataBtn.className = 'btn-small btn-primary';
-      viewDataBtn.textContent = 'View Data';
+      viewDataBtn.textContent = t ? t('buttons.viewData') : 'View Data';
       viewDataBtn.addEventListener('click', () => this.viewData(report.report_id));
       actionsCell.appendChild(viewDataBtn);
 
-      // View Original button
+      // View Original button (PRD v7.0: i18n)
       const viewOriginalBtn = document.createElement('button');
       viewOriginalBtn.className = 'btn-small btn-secondary';
-      viewOriginalBtn.textContent = 'View Original';
+      viewOriginalBtn.textContent = t ? t('buttons.viewOriginal') : 'View Original';
       if (report.has_file) {
         viewOriginalBtn.addEventListener('click', () => this.viewOriginal(report.report_id));
       } else {

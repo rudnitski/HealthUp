@@ -6,18 +6,30 @@
   <title>Sign In - HealthUp</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/login.css">
+  <link rel="stylesheet" href="css/language-switcher.css">
   <link rel="icon" type="image/svg+xml"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
 
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- i18n: Internationalization support (PRD v7.0) -->
+  <script src="https://cdn.jsdelivr.net/npm/i18next@23/i18next.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-http-backend@2/i18nextHttpBackend.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-browser-languagedetector@7/i18nextBrowserLanguageDetector.min.js" defer></script>
+  <script src="js/i18n.js" defer></script>
+  <script src="js/formatters.js" defer></script>
+  <script src="js/language-switcher.js" defer></script>
 </head>
 <body class="login-page">
+  <!-- Standalone language switcher for login page -->
+  <div class="language-switcher language-switcher--standalone"></div>
+
   <div class="login-container">
     <div class="login-card">
       <div class="login-header">
-        <h1>Welcome to HealthUp</h1>
-        <p>Sign in to securely view and understand your lab results</p>
+        <h1 data-i18n="onboarding:login.title">Welcome to HealthUp</h1>
+        <p data-i18n="onboarding:login.subtitle">Sign in to securely view and understand your lab results</p>
       </div>
 
       <div class="login-body">
@@ -35,12 +47,12 @@
         <!-- Loading State -->
         <div id="loading-message" class="loading-message hidden">
           <div class="spinner"></div>
-          <span>Signing in...</span>
+          <span data-i18n="onboarding:login.signingIn">Signing in...</span>
         </div>
       </div>
 
       <div class="login-footer">
-        <p class="privacy-notice">
+        <p class="privacy-notice" data-i18n="onboarding:login.footer">
           HealthUp Lab Report Analysis
         </p>
       </div>

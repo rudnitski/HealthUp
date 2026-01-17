@@ -1,0 +1,84 @@
+{
+  "title": "Upload Lab Reports",
+  "sources": {
+    "manual": {
+      "label": "Upload Files",
+      "help": "Drag & drop or click to select"
+    },
+    "gmail": {
+      "label": "Import from Gmail",
+      "help": "Connect & import automatically"
+    }
+  },
+  "supportedFormats": "Supported: PDF, PNG, JPEG, HEIC (max 10MB each, up to 20 files)",
+  "dragDrop": {
+    "dropHere": "Drop files here",
+    "orClick": "or click to select",
+    "dragActive": "Drop files to upload"
+  },
+  "queue": {
+    "title": "Selected Files",
+    "empty": "No files selected",
+    "files": "files",
+    "filesSelected_one": "{{count}} file selected",
+    "filesSelected_other": "{{count}} files selected",
+    "startProcessing": "Start Processing ({{count}} files)",
+    "clearQueue": "Clear Queue"
+  },
+  "validation": {
+    "maxFiles": "Maximum {{max}} files allowed per batch.",
+    "unsupportedType": "\"{{filename}}\": Unsupported file type ({{type}})",
+    "fileTooLarge": "\"{{filename}}\": File too large ({{size}}, max 10MB)",
+    "aggregateTooLarge": "Total size exceeds 100MB ({{size}})",
+    "duplicateSkipped_one": "File \"{{filename}}\" was already added (skipped)",
+    "duplicateSkipped_other": "{{count}} duplicate files were skipped"
+  },
+  "progress": {
+    "title": "Processing Progress",
+    "processing": "Processing {{current}} of {{total}}...",
+    "complete": "Processing complete"
+  },
+  "results": {
+    "title": "Results",
+    "success_one": "{{count}} successful",
+    "success_other": "{{count}} successful",
+    "duplicate_one": "{{count}} duplicate",
+    "duplicate_other": "{{count}} duplicates",
+    "failed_one": "{{count}} failed",
+    "failed_other": "{{count}} failed",
+    "viewReport": "View",
+    "parametersFound_one": "{{count}} parameter",
+    "parametersFound_other": "{{count}} parameters"
+  },
+  "gmail": {
+    "title": "Import from Gmail",
+    "notEnabled": "Gmail integration is not enabled.",
+    "notConnected": "Gmail is not connected.",
+    "connected": "Gmail is connected.",
+    "connect": "Connect Gmail",
+    "disconnect": "Disconnect",
+    "authorize": "Authorize Gmail Access",
+    "fetchTitle": "Fetching Lab Tests from Gmail",
+    "fetchProgress": "{{percent}}% complete",
+    "steps": {
+      "fetchingEmails": "Fetching emails...",
+      "classifyingEmails": "Classifying emails...",
+      "fetchComplete": "Fetch complete"
+    },
+    "timeEstimate": "This may take a few minutes for large mailboxes.",
+    "selectionTitle": "Select Attachments to Process",
+    "selectionSummary": "Found {{emails}} emails with {{attachments}} attachments",
+    "duplicateWarning": "Already processed",
+    "noAttachments": "No lab test attachments found.",
+    "processingAttachments": "Processing {{count}} attachments..."
+  },
+  "status": {
+    "queued": "Queued",
+    "downloading": "Downloading",
+    "processing": "Processing",
+    "completed": "Completed",
+    "updated": "Updated",
+    "duplicate": "Duplicate",
+    "failed": "Failed"
+  }
+}

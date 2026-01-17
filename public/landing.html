@@ -7,28 +7,32 @@
   <title>Welcome to HealthUp</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/landing.css">
+  <link rel="stylesheet" href="css/language-switcher.css">
   <link rel="icon" type="image/svg+xml"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
 </head>
 
 <body class="landing-body">
+  <!-- Standalone language switcher for landing page -->
+  <div class="language-switcher language-switcher--standalone"></div>
+
   <div class="landing-container">
     <div class="landing-card" id="landing-card">
       <!-- Welcome State -->
       <div class="landing-state" id="state-welcome">
-        <h1 class="landing-title">Your labs, explained.</h1>
-        <p class="landing-subtitle">
+        <h1 class="landing-title" data-i18n="onboarding:welcome.title">Your labs, explained.</h1>
+        <p class="landing-subtitle" data-i18n="onboarding:welcome.subtitle">
           Upload a lab report to see what really matters — explained clearly.
         </p>
 
         <div class="upload-zone" id="upload-zone">
           <div class="upload-zone-content">
             <div class="upload-icon">📄</div>
-            <button type="button" class="upload-button" id="upload-button">
+            <button type="button" class="upload-button" id="upload-button" data-i18n="onboarding:welcome.uploadButton">
               Upload lab report
             </button>
             <p class="upload-hint">PDF, PNG, JPEG, HEIC</p>
-            <p class="upload-drop-hint">Drop a file here or click to browse</p>
+            <p class="upload-drop-hint" data-i18n="onboarding:welcome.dropHint">Drop a file here or click to browse</p>
           </div>
         </div>
 
@@ -39,13 +43,13 @@
 
       <!-- Processing State -->
       <div class="landing-state" id="state-processing" hidden>
-        <h2 class="landing-title-sm">Analyzing your report...</h2>
+        <h2 class="landing-title-sm" data-i18n="onboarding:processing.analyzing">Analyzing your report...</h2>
 
         <div class="progress-container" id="progress-container">
           <div class="progress-bar">
             <div class="progress-bar-fill" id="progress-bar-fill"></div>
           </div>
-          <p class="progress-message" id="progress-message">Uploading...</p>
+          <p class="progress-message" id="progress-message" data-i18n="onboarding:processing.uploading">Uploading...</p>
         </div>
 
         <div class="file-list" id="file-list"></div>
@@ -55,9 +59,9 @@
       <div class="landing-state" id="state-generating" hidden>
         <div class="checkmark-container">
           <span class="checkmark">✓</span>
-          <span class="checkmark-text" id="markers-count">Health markers extracted</span>
+          <span class="checkmark-text" id="markers-count" data-i18n="onboarding:processing.markersExtracted">Health markers extracted</span>
         </div>
-        <h2 class="landing-title-sm">Preparing a clear summary for you...</h2>
+        <h2 class="landing-title-sm" data-i18n="onboarding:processing.preparingSummary">Preparing a clear summary for you...</h2>
         <div class="pulse-indicator"></div>
       </div>
 
@@ -74,13 +78,21 @@
       <!-- Error State -->
       <div class="landing-state" id="state-error" hidden>
         <div class="error-icon">⚠️</div>
-        <h2 class="landing-title-sm" id="error-title">Something went wrong</h2>
+        <h2 class="landing-title-sm" id="error-title" data-i18n="onboarding:error.title">Something went wrong</h2>
         <p class="error-message" id="error-message"></p>
-        <button type="button" class="retry-button" id="retry-button">Try Again</button>
-        <button type="button" class="skip-button" id="skip-button" hidden>Go to App</button>
+        <button type="button" class="retry-button" id="retry-button" data-i18n="buttons.retry">Try Again</button>
+        <button type="button" class="skip-button" id="skip-button" hidden data-i18n="onboarding:error.goToApp">Go to App</button>
       </div>
     </div>
   </div>
+
+  <!-- i18n: Internationalization support (PRD v7.0) -->
+  <script src="https://cdn.jsdelivr.net/npm/i18next@23/i18next.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-http-backend@2/i18nextHttpBackend.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/i18next-browser-languagedetector@7/i18nextBrowserLanguageDetector.min.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/formatters.js"></script>
+  <script src="/js/language-switcher.js"></script>
 
   <!-- Scripts - order matters: auth first, then onboarding redirect, then landing -->
   <script src="/js/auth.js"></script>

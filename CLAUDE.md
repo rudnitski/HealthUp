@@ -29,6 +29,9 @@ node scripts/verify_mapping_setup.js
 # Backfill analyte mappings for existing lab results
 node scripts/backfill_analyte_mappings.js
 
+# Seed analyte translations (i18n) from analytes.name and Russian aliases
+node scripts/seed_analyte_translations.js
+
 # Database setup with proper UTF-8 locale
 ./scripts/setup_db.sh
 ```
@@ -271,6 +274,7 @@ Total time = max(Gmail fetch time, LLM classification time) + overhead
 - `lab_results`: Parameter rows with `analyte_id` mapping
 - `analytes`: Canonical analyte catalog
 - `analyte_aliases`: Fuzzy-searchable aliases (requires `pg_trgm`)
+- `analyte_translations`: Localized analyte display names (keyed by analyte_id + locale)
 - `pending_analytes`: LLM-proposed new analytes (admin review)
 - `match_reviews`: Ambiguous matches (admin disambiguation)
 - `gmail_report_provenance`: Audit trail for Gmail-ingested reports
@@ -308,6 +312,35 @@ Static UI (`public/`) with async polling for long operations:
 - Pending analytes review (approve/discard with rationale)
 - Ambiguous matches resolution (select correct analyte)
 - All actions logged to `admin_actions` audit trail
+
+**Internationalization (i18n) - v7.0:**
+- i18next CDN-based localization with English/Russian support
+- Infrastructure files:
+  - `js/i18n.js`: Core initialization, creates `window.i18nReady` promise and `window.i18nHelpers`
+  - `js/formatters.js`: Locale-aware date/number formatting using Intl APIs
+  - `js/language-switcher.js`: Dropdown component for language selection
+  - `css/language-switcher.css`: Styling for in-header and standalone switcher variants
+- Translation files in `public/locales/{en,ru}/`:
+  - `common.json`: Navigation, buttons, labels, status indicators
+  - `chat.json`: Chat interface strings, tool indicators
+  - `upload.json`: Upload flow, Gmail import, file validation
+  - `errors.json`: Error messages with interpolation
+  - `onboarding.json`: Landing page, first-time user strings
+  - `admin.json`: Admin panel strings
+- All JS files must `await window.i18nReady` before rendering (pattern matches `window.authReady`)
+- HTML elements use `data-i18n="namespace:key"` attributes for declarative translation
+- Locale persisted in localStorage (`healthup_locale` key)
+- Russian pluralization supported via i18next plural rules (one/few/many)
+- Analyte translations stored in `analyte_translations` table, fetched via `GET /api/analytes/translations?locale=xx`
+- Seed script: `node scripts/seed_analyte_translations.js` (populates from analytes.name + analyte_aliases)
+
+**i18n Fallback Behavior:**
+- If i18next fails to initialize, app continues with English (no blocking)
+- Missing translation key: returns the key itself (visible as `namespace:key.path` in UI)
+- Missing locale file: falls back to English via `fallbackLng: 'en'`
+- Analyte translations API error: frontend shows `parameter_name` from lab_results (original OCR text)
+- Analyte missing translation for selected locale: frontend falls back to `parameter_name`
+- Browser language not supported: defaults to English
 
 ## Plot Generation Contract
 
@@ -366,6 +399,7 @@ Feature specs live in `docs/PRD_*.md`:
 - v4.2.2: Thumbnail Contract Expansion + Backend Derivation (unified show_plot, backend derives sparkline/deltas)
 - v4.2.3: Thumbnail UI Infrastructure (message anchoring with UUIDs, contract finalization)
 - v5.0: First-Time User Onboarding (landing page, guided upload, personalized insight, chat handoff)
+- v7.0: Localization (i18n) with English/Russian support using i18next
 
 Consult these when drafting new PRDs or understanding feature history. Prompt templates in `prompts/` define OCR extraction schema and SQL generation instructions.
 
@@ -391,3 +425,4 @@ Consult these when drafting new PRDs or understanding feature history. Prompt te
 18. **Row Level Security (RLS)**: Several tables (`lab_results`, `patient_reports`, `patients`) have RLS policies enabled. When writing server-side queries that need to access data without user context (e.g., background jobs, batch processing, post-OCR normalization), use `adminPool` instead of `pool`. The `adminPool` connection has `BYPASSRLS` privilege. Symptom of RLS issue: query returns 0 rows even though data exists in the table. Example: `await adminPool.query('SELECT * FROM lab_results WHERE report_id = $1', [reportId])`.
 19. **Schema aliases sync**: When modifying database schema (adding/removing columns or tables), update `config/schema_aliases.json` to match. This file teaches the LLM which tables are relevant for specific keywords. Incorrect mappings cause the LLM to hallucinate non-existent columns. Example bug: `"unit": ["lab_results", "analytes"]` caused LLM to generate `a.unit_canonical` because it assumed `analytes` has unit columns (it doesn't - only `unit_aliases` does). Always verify aliases point to tables that actually have relevant columns.
 20. **Onboarding state transfer**: First-time user onboarding uses `sessionStorage.setItem('onboarding_context', JSON.stringify(context))` to pass state from `landing.html` to `index.html`. The main app reads this in `handleOnboardingContext()` and clears it immediately to prevent re-processing on refresh. If debugging onboarding transitions, check browser DevTools → Application → Session Storage.
+21. **i18n script loading order**: i18next CDN scripts must load BEFORE `i18n.js`, which must load BEFORE `auth.js`. All JS files must `await window.i18nReady` before `await window.authReady` to ensure translations are available before rendering. If UI shows untranslated keys (e.g., "common:buttons.send"), check script order in HTML and ensure i18nReady is awaited. Locale stored in localStorage key `healthup_locale`.

@@ -1,0 +1,57 @@
+{
+  "network": {
+    "connectionFailed": "Connection failed. Please check your internet connection.",
+    "connectionLost": "Connection lost. Please refresh the page.",
+    "timeout": "Request timed out. Please try again.",
+    "serverError": "Server error. Please try again later.",
+    "notFound": "Resource not found."
+  },
+  "auth": {
+    "unauthorized": "You are not authorized to perform this action.",
+    "sessionExpired": "Your session has expired. Please log in again.",
+    "loginFailed": "Login failed. Please try again.",
+    "logoutFailed": "Logout failed. Please try again.",
+    "googleAuthFailed": "Google authentication failed. Please try again."
+  },
+  "validation": {
+    "required": "This field is required.",
+    "invalidFormat": "Invalid format.",
+    "invalidEmail": "Invalid email address.",
+    "fileTooLarge": "File is too large.",
+    "unsupportedFileType": "Unsupported file type.",
+    "maxFilesExceeded": "Maximum number of files exceeded.",
+    "maxSizeExceeded": "Maximum total size exceeded."
+  },
+  "upload": {
+    "uploadFailed": "Upload failed. Please try again.",
+    "processingFailed": "Processing failed.",
+    "noFiles": "No files to upload.",
+    "batchFailed": "Batch processing failed."
+  },
+  "report": {
+    "loadFailed": "Failed to load report.",
+    "notFound": "Report not found.",
+    "deleteFailed": "Failed to delete report."
+  },
+  "patient": {
+    "loadFailed": "Failed to load patients.",
+    "notFound": "Patient not found.",
+    "createFailed": "Failed to create patient."
+  },
+  "chat": {
+    "sendFailed": "Failed to send message.",
+    "connectionFailed": "Chat connection failed.",
+    "sessionFailed": "Failed to create chat session."
+  },
+  "gmail": {
+    "authFailed": "Gmail authentication failed.",
+    "fetchFailed": "Failed to fetch emails.",
+    "classificationFailed": "Email classification failed.",
+    "ingestFailed": "Failed to process attachments."
+  },
+  "generic": {
+    "unknown": "An unknown error occurred.",
+    "tryAgain": "Please try again.",
+    "contactSupport": "If the problem persists, please contact support."
+  }
+}

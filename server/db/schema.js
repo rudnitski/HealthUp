@@ -118,6 +118,31 @@ const schemaStatements = [
   `
   COMMENT ON COLUMN analyte_aliases.alias_display IS 'Original display form with proper casing and punctuation';
   `,
+  // PRD v7.0: Analyte translations for localized display names
+  `
+  CREATE TABLE IF NOT EXISTS analyte_translations (
+    analyte_id INT NOT NULL REFERENCES analytes(analyte_id) ON DELETE CASCADE,
+    locale TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    verified_by TEXT,
+    verified_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (analyte_id, locale)
+  );
+  `,
+  `
+  CREATE INDEX IF NOT EXISTS idx_analyte_translations_locale ON analyte_translations(locale);
+  `,
+  `
+  COMMENT ON TABLE analyte_translations IS 'Localized display names for analytes (PRD v7.0 i18n support)';
+  `,
+  `
+  COMMENT ON COLUMN analyte_translations.locale IS 'ISO 639-1 language code (e.g., en, ru)';
+  `,
+  `
+  COMMENT ON COLUMN analyte_translations.display_name IS 'Human-readable name in the specified locale';
+  `,
   // PRD v4.8: Unit normalization table
   // PRD v4.8.2: Added learn_count and last_used_at for LLM auto-learning
   `

@@ -4,6 +4,11 @@
  */
 
 (async () => {
+  // PRD v7.0: Wait for i18n to initialize before UI rendering
+  if (window.i18nReady) {
+    await window.i18nReady;
+  }
+
   // ==================== AUTH CHECK (MUST BE FIRST) ====================
   // Wait for auth.js to complete authentication check before any initialization
   const isAuthenticated = await window.authReady;
@@ -371,11 +376,13 @@
   }
 
   function getStatusLabel(status) {
+    // PRD v7.0: i18n for status labels
+    const t = window.i18next?.t?.bind(window.i18next);
     switch (status) {
-      case 'pending': return 'Pending';
-      case 'processing': return 'Processing';
-      case 'completed': return 'Done';
-      case 'failed': return 'Error';
+      case 'pending': return t ? t('status.pending') : 'Pending';
+      case 'processing': return t ? t('status.processing') : 'Processing';
+      case 'completed': return t ? t('status.completed') : 'Done';
+      case 'failed': return t ? t('status.error') : 'Error';
       default: return status;
     }
   }
@@ -397,6 +404,9 @@
     // Render results table
     resultsTbody.innerHTML = '';
 
+    // PRD v7.0: i18n helper for translated labels
+    const t = window.i18next?.t?.bind(window.i18next);
+
     jobs.forEach(job => {
       const row = document.createElement('tr');
       row.dataset.reportId = job.report_id || '';
@@ -405,10 +415,11 @@
       if (job.status === 'completed') {
         statusClass = 'status-completed';
         const paramCount = job.parameters?.length ?? 0;
-        statusLabel = `✅ ${paramCount} results`;
+        const resultsText = t ? t('labels.result', { count: paramCount }) : `${paramCount} results`;
+        statusLabel = `✅ ${resultsText}`;
       } else {
         statusClass = 'status-failed';
-        statusLabel = '❌ Error';
+        statusLabel = `❌ ${t ? t('status.error') : 'Error'}`;
       }
 
       const filenameCell = document.createElement('td');
@@ -428,7 +439,7 @@
         viewLink.href = `/?reportId=${job.report_id}`;
         viewLink.target = '_blank';
         viewLink.className = 'view-button';
-        viewLink.textContent = 'View';
+        viewLink.textContent = t ? t('buttons.viewReport') : 'View';
         actionCell.appendChild(viewLink);
 
         // Add View Original File button
@@ -437,7 +448,7 @@
         viewOriginalLink.href = window.getReportsEndpoint('/' + job.report_id + '/original-file');
         viewOriginalLink.target = '_blank';
         viewOriginalLink.className = 'view-button secondary-button';
-        viewOriginalLink.textContent = '📄 View Original';
+        viewOriginalLink.textContent = `📄 ${t ? t('buttons.viewOriginal') : 'View Original'}`;
         viewOriginalLink.style.marginLeft = '0.5rem';
         actionCell.appendChild(viewOriginalLink);
       } else {
@@ -445,7 +456,7 @@
         logButton.type = 'button';
         logButton.className = 'secondary-button';
         logButton.textContent = 'Log';
-        const errorMessage = job.error || 'Unknown error';
+        const errorMessage = job.error || (t ? t('misc.unknown') : 'Unknown error');
         logButton.addEventListener('click', () => alert(errorMessage));
         actionCell.appendChild(logButton);
       }
@@ -1118,14 +1129,16 @@
   }
 
   function getGmailStatusLabel(status) {
+    // PRD v7.0: i18n for Gmail status labels
+    const t = window.i18next?.t?.bind(window.i18next);
     switch (status) {
-      case 'queued': return 'Queued';
-      case 'downloading': return 'Downloading';
-      case 'processing': return 'Processing';
-      case 'completed': return 'Done';
-      case 'updated': return 'Updated';
-      case 'duplicate': return 'Duplicate';
-      case 'failed': return 'Error';
+      case 'queued': return t ? t('status.queued') : 'Queued';
+      case 'downloading': return t ? t('status.downloading') : 'Downloading';
+      case 'processing': return t ? t('status.processing') : 'Processing';
+      case 'completed': return t ? t('status.completed') : 'Done';
+      case 'updated': return t ? t('status.updated') : 'Updated';
+      case 'duplicate': return t ? t('status.duplicate') : 'Duplicate';
+      case 'failed': return t ? t('status.error') : 'Error';
       default: return status;
     }
   }
@@ -1148,6 +1161,9 @@
     // Render results table
     resultsTbody.innerHTML = '';
 
+    // PRD v7.0: i18n helper for translated labels
+    const t = window.i18next?.t?.bind(window.i18next);
+
     attachments.forEach(att => {
       const row = document.createElement('tr');
       row.dataset.reportId = att.reportId || '';
@@ -1156,17 +1172,20 @@
       if (att.status === 'completed') {
         statusClass = 'status-completed';
         const paramCount = att.parameters?.length ?? 0;
-        statusLabel = `✅ ${paramCount} results`;
+        const resultsText = t ? t('labels.result', { count: paramCount }) : `${paramCount} results`;
+        statusLabel = `✅ ${resultsText}`;
       } else if (att.status === 'updated') {
         statusClass = 'status-updated';
         const paramCount = att.parameters?.length ?? 0;
-        statusLabel = `🔄 Updated (${paramCount} results)`;
+        const resultsText = t ? t('labels.result', { count: paramCount }) : `${paramCount} results`;
+        const updatedText = t ? t('status.updated') : 'Updated';
+        statusLabel = `🔄 ${updatedText} (${resultsText})`;
       } else if (att.status === 'duplicate') {
         statusClass = 'status-duplicate';
-        statusLabel = '🔄 Duplicate';
+        statusLabel = `🔄 ${t ? t('status.duplicate') : 'Duplicate'}`;
       } else {
         statusClass = 'status-failed';
-        statusLabel = '❌ Error';
+        statusLabel = `❌ ${t ? t('status.error') : 'Error'}`;
       }
 
       const filenameCell = document.createElement('td');
@@ -1186,7 +1205,7 @@
         viewLink.href = `/?reportId=${att.reportId}`;
         viewLink.target = '_blank';
         viewLink.className = 'view-button';
-        viewLink.textContent = 'View';
+        viewLink.textContent = t ? t('buttons.viewReport') : 'View';
         actionCell.appendChild(viewLink);
 
         // Add View Original File button
@@ -1195,7 +1214,7 @@
         viewOriginalLink.href = window.getReportsEndpoint('/' + att.reportId + '/original-file');
         viewOriginalLink.target = '_blank';
         viewOriginalLink.className = 'view-button secondary-button';
-        viewOriginalLink.textContent = '📄 View Original';
+        viewOriginalLink.textContent = `📄 ${t ? t('buttons.viewOriginal') : 'View Original'}`;
         viewOriginalLink.style.marginLeft = '0.5rem';
         actionCell.appendChild(viewOriginalLink);
       } else {
@@ -1203,7 +1222,7 @@
         logButton.type = 'button';
         logButton.className = 'secondary-button';
         logButton.textContent = 'Log';
-        const errorMessage = att.error || 'Unknown error';
+        const errorMessage = att.error || (t ? t('misc.unknown') : 'Unknown error');
         logButton.addEventListener('click', () => alert(errorMessage));
         actionCell.appendChild(logButton);
       }

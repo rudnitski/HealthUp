@@ -1,0 +1,90 @@
+{
+  "title": "Загрузка анализов",
+  "sources": {
+    "manual": {
+      "label": "Загрузить файлы",
+      "help": "Перетащите или нажмите для выбора"
+    },
+    "gmail": {
+      "label": "Импорт из Gmail",
+      "help": "Подключите и импортируйте автоматически"
+    }
+  },
+  "supportedFormats": "Поддерживаются: PDF, PNG, JPEG, HEIC (макс. 10МБ, до 20 файлов)",
+  "dragDrop": {
+    "dropHere": "Перетащите файлы сюда",
+    "orClick": "или нажмите для выбора",
+    "dragActive": "Отпустите для загрузки"
+  },
+  "queue": {
+    "title": "Выбранные файлы",
+    "empty": "Файлы не выбраны",
+    "files": "файлов",
+    "filesSelected_one": "Выбран {{count}} файл",
+    "filesSelected_few": "Выбрано {{count}} файла",
+    "filesSelected_many": "Выбрано {{count}} файлов",
+    "startProcessing": "Начать обработку ({{count}} файлов)",
+    "clearQueue": "Очистить"
+  },
+  "validation": {
+    "maxFiles": "Максимум {{max}} файлов за раз.",
+    "unsupportedType": "\"{{filename}}\": Неподдерживаемый тип файла ({{type}})",
+    "fileTooLarge": "\"{{filename}}\": Файл слишком большой ({{size}}, макс. 10МБ)",
+    "aggregateTooLarge": "Общий размер превышает 100МБ ({{size}})",
+    "duplicateSkipped_one": "Файл \"{{filename}}\" уже добавлен (пропущен)",
+    "duplicateSkipped_few": "{{count}} дублирующихся файла пропущено",
+    "duplicateSkipped_many": "{{count}} дублирующихся файлов пропущено"
+  },
+  "progress": {
+    "title": "Прогресс обработки",
+    "processing": "Обработка {{current}} из {{total}}...",
+    "complete": "Обработка завершена"
+  },
+  "results": {
+    "title": "Результаты",
+    "success_one": "{{count}} успешно",
+    "success_few": "{{count}} успешно",
+    "success_many": "{{count}} успешно",
+    "duplicate_one": "{{count}} дубликат",
+    "duplicate_few": "{{count}} дубликата",
+    "duplicate_many": "{{count}} дубликатов",
+    "failed_one": "{{count}} ошибка",
+    "failed_few": "{{count}} ошибки",
+    "failed_many": "{{count}} ошибок",
+    "viewReport": "Открыть",
+    "parametersFound_one": "{{count}} показатель",
+    "parametersFound_few": "{{count}} показателя",
+    "parametersFound_many": "{{count}} показателей"
+  },
+  "gmail": {
+    "title": "Импорт из Gmail",
+    "notEnabled": "Интеграция с Gmail не включена.",
+    "notConnected": "Gmail не подключён.",
+    "connected": "Gmail подключён.",
+    "connect": "Подключить Gmail",
+    "disconnect": "Отключить",
+    "authorize": "Авторизовать доступ к Gmail",
+    "fetchTitle": "Получение анализов из Gmail",
+    "fetchProgress": "Выполнено {{percent}}%",
+    "steps": {
+      "fetchingEmails": "Получение писем...",
+      "classifyingEmails": "Классификация писем...",
+      "fetchComplete": "Получение завершено"
+    },
+    "timeEstimate": "Это может занять несколько минут для большого почтового ящика.",
+    "selectionTitle": "Выберите вложения для обработки",
+    "selectionSummary": "Найдено {{emails}} писем с {{attachments}} вложениями",
+    "duplicateWarning": "Уже обработано",
+    "noAttachments": "Вложения с анализами не найдены.",
+    "processingAttachments": "Обработка {{count}} вложений..."
+  },
+  "status": {
+    "queued": "В очереди",
+    "downloading": "Загрузка",
+    "processing": "Обработка",
+    "completed": "Готово",
+    "updated": "Обновлено",
+    "duplicate": "Дубликат",
+    "failed": "Ошибка"
+  }
+}
