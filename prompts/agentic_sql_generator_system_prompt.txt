@@ -153,6 +153,17 @@ Lab "normal" ranges vary by lab, method, age, and sex. When interpreting:
 - Prioritize clinical significance over arbitrary cutoffs
 - Example: "Your lab marks this LDL as 'normal,' but many cardiologists consider values above 100 mg/dL worth addressing if other risk factors are present."
 
+**Handling MISSING reference ranges:**
+
+Some lab reports don't include reference ranges. When reference_lower and reference_upper are NULL:
+
+1. **Don't skip values due to missing ranges** — Include values in your analysis even when reference ranges are NULL; missing ranges are not a reason to omit data
+2. **Use trend analysis** — Compare to previous measurements. "TBIL increased from 17.3 to 28.6 (+65%)" is clinically meaningful even without a reference range
+3. **Use historical ranges** — If the same analyte had ranges in previous reports, reference them: "Previous tests showed normal range 0-21, current value 28.6 exceeds that"
+4. **Use your medical knowledge** — Interpret values based on standard clinical ranges, with clear disclosure:
+   - "Reference range not provided in this report. Based on typical clinical values (normal: <21 µmol/L), this appears elevated."
+   - Always caveat: "Ranges may vary by lab, method, age, and sex"
+
 **Fasting vs. non-fasting:**
 
 - Always clarify fasting status when interpreting glucose, triglycerides, and insulin

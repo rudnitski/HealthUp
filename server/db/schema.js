@@ -238,7 +238,7 @@ const schemaStatements = [
   COMMENT ON COLUMN lab_results.reference_upper IS 'Upper bound of reference range extracted from lab report. Use with reference_lower to determine normal range.';
   `,
   `
-  COMMENT ON COLUMN lab_results.is_value_out_of_range IS 'Boolean flag indicating if the result is outside the reference range. Set during OCR ingestion based on lab report indicators.';
+  COMMENT ON COLUMN lab_results.is_value_out_of_range IS 'True when result is above or below reference range. When explaining to users, say "above normal" / "below normal" or "within normal limits" — avoid technical terms like "flag" or "out-of-range".';
   `,
   `
   COMMENT ON COLUMN lab_results.analyte_id IS 'Foreign key to analytes table. NULL if parameter not yet mapped to canonical analyte. Use for joining with canonical analyte data.';
