@@ -29,6 +29,9 @@ class ConversationalSQLChat {
     this._onSessionStartResolve = null; // Promise resolver for session_start wait
     this._sessionStartReceived = false; // FIX: Track if session_start already arrived (race condition)
 
+    // PRD v7.0: Analyte translation cache (code -> translated name)
+    this.analyteTranslations = {};
+
     // DOM elements (will be set when UI is initialized)
     this.chatContainer = null;
     this.messagesContainer = null;
@@ -48,6 +51,59 @@ class ConversationalSQLChat {
     this.handleSendMessage = this.handleSendMessage.bind(this);
     this.handleKeyPress = this.handleKeyPress.bind(this);
     this.handleNewChat = this.handleNewChat.bind(this); // PRD v4.3
+  }
+
+  /**
+   * PRD v7.0: Get translation function with English fallbacks
+   * Returns i18next.t() if available, otherwise returns English defaults
+   * This ensures the UI remains functional when i18next CDN/init fails
+   * @returns {Function} Translation function
+   */
+  getTranslator() {
+    // Check isInitialized to handle case where i18next loads but init() fails/pending
+    if (window.i18next?.isInitialized && window.i18next?.t) {
+      return window.i18next.t.bind(window.i18next);
+    }
+    // English fallback map for when i18next is unavailable
+    const fallbacks = {
+      // Thumbnail UI
+      'chat:thumbnailUI.points': (opts) => `${opts?.count || 0} point${opts?.count !== 1 ? 's' : ''}`,
+      'chat:thumbnailUI.series': (opts) => `${opts?.count || 0} series`,
+      'chat:thumbnailUI.statusNormal': 'Normal',
+      'chat:thumbnailUI.statusHigh': 'High',
+      'chat:thumbnailUI.statusLow': 'Low',
+      'chat:thumbnailUI.statusUnknown': 'Unknown',
+      'chat:thumbnailUI.deltaPeriod.year': (opts) => `year${opts?.count !== 1 ? 's' : ''}`,
+      'chat:thumbnailUI.deltaPeriod.month': (opts) => `month${opts?.count !== 1 ? 's' : ''}`,
+      'chat:thumbnailUI.deltaPeriod.week': (opts) => `week${opts?.count !== 1 ? 's' : ''}`,
+      'chat:thumbnailUI.deltaPeriod.day': (opts) => `day${opts?.count !== 1 ? 's' : ''}`,
+      'chat:thumbnailUI.overPeriod': (opts) => `over ${opts?.count || ''} ${opts?.unit || ''}`,
+      // Plot UI
+      'chat:plotUI.plotButton': 'Plot',
+      'chat:plotUI.tableButton': 'Table',
+      'chat:plotUI.selectParameter': 'Select Parameter',
+      'chat:plotUI.panAndZoom': 'Pan and zoom to explore the data.',
+      'chat:plotUI.measurements': 'Measurements',
+      'chat:plotUI.noDataAvailable': 'No data available',
+      // Common labels
+      'common:labels.date': 'Date',
+      'common:labels.value': 'Value',
+      'common:labels.unit': 'Unit',
+      'common:labels.referenceInterval': 'Reference Interval',
+      'common:misc.unknown': 'Unknown',
+      'common:misc.unavailable': 'Unavailable'
+    };
+    return (key, opts) => {
+      const fallback = fallbacks[key];
+      if (typeof fallback === 'function') {
+        return fallback(opts);
+      }
+      if (typeof fallback === 'string') {
+        return fallback;
+      }
+      // Last resort: return the key (better than crashing)
+      return key;
+    };
   }
 
   /**
@@ -258,6 +314,53 @@ class ConversationalSQLChat {
       console.error('[Chat] Failed to initialize patient selector:', error);
       this.showError('Failed to load patients. Please refresh.');
     }
+
+    // PRD v7.0: Fetch analyte translations for current locale
+    await this.fetchAnalyteTranslations();
+
+    // PRD v7.0: Re-fetch translations when language changes
+    if (window.i18next) {
+      window.i18next.on('languageChanged', () => {
+        this.fetchAnalyteTranslations();
+      });
+    }
+  }
+
+  /**
+   * PRD v7.0: Fetch analyte translations for the current locale
+   * Populates this.analyteTranslations map (code -> translated name)
+   */
+  async fetchAnalyteTranslations() {
+    const locale = window.i18nHelpers?.getCurrentLocale() || 'en';
+    try {
+      const response = await fetch(`/api/analytes/translations?locale=${locale}`, {
+        credentials: 'include'
+      });
+      if (!response.ok) {
+        console.warn('[Chat] Failed to fetch analyte translations:', response.status);
+        return;
+      }
+      const data = await response.json();
+      this.analyteTranslations = data.translations || {};
+      console.log(`[Chat] Loaded ${Object.keys(this.analyteTranslations).length} analyte translations for locale: ${locale}`);
+    } catch (error) {
+      console.error('[Chat] Error fetching analyte translations:', error);
+      this.analyteTranslations = {};
+    }
+  }
+
+  /**
+   * PRD v7.0: Get translated analyte name
+   * @param {string} analyteName - Original parameter name (from OCR)
+   * @param {string} analyteCode - Analyte code from mapping (e.g., 'CHOL', 'HDL')
+   * @returns {string} - Translated name or fallback to original
+   */
+  getTranslatedAnalyteName(analyteName, analyteCode) {
+    if (analyteCode && this.analyteTranslations[analyteCode]) {
+      return this.analyteTranslations[analyteCode];
+    }
+    // Fallback to original parameter name
+    return analyteName || '';
   }
 
   /**
@@ -941,14 +1044,23 @@ class ConversationalSQLChat {
 
     const title = document.createElement('div');
     title.className = 'thumbnail-title';
-    title.textContent = plotTitle || 'Untitled';
+    // PRD v7.0: Use translated title if available, or look up by analyte_code
+    const displayTitle = thumbnail.translated_title
+      || this.getTranslatedAnalyteName(plotTitle, thumbnail.analyte_code)
+      || plotTitle
+      || 'Untitled';
+    title.textContent = displayTitle;
     header.appendChild(title);
 
-    // Optional subtitle (focus_analyte_name)
+    // Optional subtitle (focus_analyte_name) - also translate if analyte_code available
     if (thumbnail.focus_analyte_name) {
       const subtitle = document.createElement('div');
       subtitle.className = 'thumbnail-subtitle';
-      subtitle.textContent = thumbnail.focus_analyte_name;
+      const translatedSubtitle = this.getTranslatedAnalyteName(
+        thumbnail.focus_analyte_name,
+        thumbnail.focus_analyte_code
+      );
+      subtitle.textContent = translatedSubtitle;
       header.appendChild(subtitle);
     }
 
@@ -1005,17 +1117,18 @@ class ConversationalSQLChat {
     footer.className = 'thumbnail-footer';
 
     // Point count (always show, even if 0)
+    const t = this.getTranslator();
     const pointMeta = document.createElement('span');
     pointMeta.className = 'thumbnail-meta';
     const pointCount = thumbnail.point_count;
-    pointMeta.textContent = pointCount === 1 ? '1 point' : `${pointCount} points`;
+    pointMeta.textContent = t('chat:thumbnailUI.points', { count: pointCount });
     footer.appendChild(pointMeta);
 
     // Series count (show only if > 1)
     if (thumbnail.series_count > 1) {
       const seriesMeta = document.createElement('span');
       seriesMeta.className = 'thumbnail-meta';
-      seriesMeta.textContent = `${thumbnail.series_count} series`;
+      seriesMeta.textContent = t('chat:thumbnailUI.series', { count: thumbnail.series_count });
       footer.appendChild(seriesMeta);
     }
 
@@ -1070,13 +1183,15 @@ class ConversationalSQLChat {
    * @returns {string} - Display label
    */
   formatStatusLabel(status) {
-    const labels = {
-      'normal': 'Normal',
-      'high': 'High',
-      'low': 'Low',
-      'unknown': 'Unknown'
+    const t = this.getTranslator();
+    const labelKeys = {
+      'normal': 'chat:thumbnailUI.statusNormal',
+      'high': 'chat:thumbnailUI.statusHigh',
+      'low': 'chat:thumbnailUI.statusLow',
+      'unknown': 'chat:thumbnailUI.statusUnknown'
     };
-    return labels[status] || 'Unknown';
+    const key = labelKeys[status] || labelKeys['unknown'];
+    return t(key);
   }
 
   /**
@@ -1181,16 +1296,20 @@ class ConversationalSQLChat {
   formatDeltaPeriod(deltaPeriod) {
     if (!deltaPeriod) return '';
 
+    const t = this.getTranslator();
+
     // Strict pattern: digits + lowercase unit letter only
     const periodPattern = /^(\d+)(y|m|w|d)$/;
     const match = deltaPeriod.match(periodPattern);
 
     if (match) {
-      const [, num, unit] = match;
-      const unitMap = { y: 'year', m: 'month', w: 'week', d: 'day' };
-      const unitName = unitMap[unit];
-      const plural = parseInt(num) !== 1 ? 's' : '';
-      return `over ${num} ${unitName}${plural}`;
+      const [, num, unitChar] = match;
+      const count = parseInt(num, 10);
+      const unitKeyMap = { y: 'year', m: 'month', w: 'week', d: 'day' };
+      const unitKey = unitKeyMap[unitChar];
+      // Get translated unit name with proper pluralization
+      const unitName = t(`chat:thumbnailUI.deltaPeriod.${unitKey}`, { count });
+      return t('chat:thumbnailUI.overPeriod', { count, unit: unitName });
     }
 
     // Render as-is if not shorthand format
@@ -1440,23 +1559,37 @@ class ConversationalSQLChat {
 
   /**
    * Build parameter selector UI from plot data
-   * @param {Array} rows - Full dataset with parameter_name field
+   * PRD v7.0: Supports translated analyte names when analyte_code is available
+   * @param {Array} rows - Full dataset with parameter_name field (and optional analyte_code)
    * @param {HTMLElement} container - Container element for radio buttons
    * @returns {string|null} - Selected parameter name (default: first alphabetically)
    */
   renderParameterSelector(rows, container) {
     if (!container) return null;
 
-    // Extract unique parameters, sorted alphabetically
-    const paramCounts = {};
+    // Extract unique parameters with counts and analyte codes for translation
+    // Map: parameter_name -> { count, analyteCode }
+    const paramData = {};
     rows.forEach(row => {
       const param = row.parameter_name;
       if (param) {
-        paramCounts[param] = (paramCounts[param] || 0) + 1;
+        if (!paramData[param]) {
+          paramData[param] = { count: 0, analyteCode: row.analyte_code || null };
+        }
+        paramData[param].count++;
+        // Prefer non-null analyte_code if multiple rows have different values
+        if (!paramData[param].analyteCode && row.analyte_code) {
+          paramData[param].analyteCode = row.analyte_code;
+        }
       }
     });
 
-    const parameters = Object.keys(paramCounts).sort();
+    // Sort by translated display name for consistent ordering
+    const parameters = Object.keys(paramData).sort((a, b) => {
+      const displayA = this.getTranslatedAnalyteName(a, paramData[a].analyteCode);
+      const displayB = this.getTranslatedAnalyteName(b, paramData[b].analyteCode);
+      return displayA.localeCompare(displayB);
+    });
     if (parameters.length === 0) return null;
 
     // Build radio button list
@@ -1468,7 +1601,7 @@ class ConversationalSQLChat {
       const radio = document.createElement('input');
       radio.type = 'radio';
       radio.name = 'chat-parameter';
-      radio.value = param;
+      radio.value = param; // Keep original parameter_name for filtering
       radio.checked = index === 0; // Default: first alphabetically
 
       // If only one parameter, disable the radio (make it look static)
@@ -1476,7 +1609,9 @@ class ConversationalSQLChat {
         radio.disabled = true;
       }
 
-      const text = document.createTextNode(` ${param} (${paramCounts[param]})`);
+      // PRD v7.0: Use translated name for display
+      const displayName = this.getTranslatedAnalyteName(param, paramData[param].analyteCode);
+      const text = document.createTextNode(` ${displayName} (${paramData[param].count})`);
 
       label.appendChild(radio);
       label.appendChild(text);
@@ -1486,12 +1621,13 @@ class ConversationalSQLChat {
     container.replaceChildren(fragment);
     container.style.display = 'block';
 
-    return parameters[0]; // Return default selection
+    return parameters[0]; // Return default selection (original parameter_name)
   }
 
   /**
    * Attach event listener for parameter switching
    * PRD v4.7: Added plotSection parameter, resets view to Plot on parameter change
+   * PRD v7.0: i18n support for plot labels
    * @param {Array} allRowsForPlot - Full dataset without out-of-range flags (for plot)
    * @param {Array} allRowsOriginal - Full dataset with out-of-range flags (for table)
    * @param {HTMLElement} container - Parameter selector container
@@ -1506,6 +1642,9 @@ class ConversationalSQLChat {
     if (this.parameterSelectorChangeHandler) {
       container.removeEventListener('change', this.parameterSelectorChangeHandler);
     }
+
+    // PRD v7.0: i18n helper
+    const t = this.getTranslator();
 
     this.parameterSelectorChangeHandler = (event) => {
       if (event.target.type === 'radio' && event.target.name === 'chat-parameter') {
@@ -1529,11 +1668,23 @@ class ConversationalSQLChat {
           window.plotRenderer.destroyChart(existingChart);
         }
 
+        // PRD v7.0: Get translated analyte name for plot title
+        const analyteCode = filteredRowsForPlot[0]?.analyte_code || null;
+        const translatedTitle = this.getTranslatedAnalyteName(selectedParameter || plotTitle, analyteCode);
+
+        // PRD v7.0: Update the header h3 with translated title
+        if (plotSection) {
+          const headerH3 = plotSection.querySelector('.chat-plot-header h3');
+          if (headerH3) {
+            headerH3.textContent = translatedTitle;
+          }
+        }
+
         // Re-render with filtered data (without out-of-range flags)
         const newChart = window.plotRenderer.renderPlot(canvasId, filteredRowsForPlot, {
-          title: selectedParameter || plotTitle,
-          xAxisLabel: 'Date',
-          yAxisLabel: 'Value',
+          title: translatedTitle,
+          xAxisLabel: t('common:labels.date'),
+          yAxisLabel: t('common:labels.value'),
           timeUnit: 'day'
         });
 
@@ -1552,12 +1703,16 @@ class ConversationalSQLChat {
 
   /**
    * Render parameter table below plot
+   * PRD v7.0: i18n support for table headers and date formatting
    * @param {Array} rows - Filtered dataset for selected parameter
    * @param {string} parameterName - Currently selected parameter name
    */
   renderParameterTable(rows, parameterName) {
     const tableContainer = this.resultsContainer.querySelector('.chat-parameter-table-container');
     if (!tableContainer) return;
+
+    // PRD v7.0: i18n helper
+    const t = this.getTranslator();
 
     // Hide table if no data
     if (!rows || rows.length === 0) {
@@ -1566,16 +1721,15 @@ class ConversationalSQLChat {
       return;
     }
 
-    // Format timestamp to readable date
+    // PRD v7.0: Use locale-aware date formatting
     const formatDate = (timestamp) => {
-      if (!timestamp) return 'Unknown';
+      if (!timestamp) return t('common:misc.unknown');
       const date = new Date(Number(timestamp));
-      if (isNaN(date.getTime())) return 'Invalid Date';
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
+      if (isNaN(date.getTime())) return t('common:misc.unknown');
+      if (window.formatters?.formatDateShort) {
+        return window.formatters.formatDateShort(date);
+      }
+      return date.toLocaleDateString();
     };
 
     // Build reference interval display string
@@ -1592,7 +1746,7 @@ class ConversationalSQLChat {
       } else if (upper !== null && upper !== undefined) {
         return `${upperOp} ${upper}`;
       }
-      return 'Unavailable';
+      return t('common:misc.unavailable');
     };
 
     // Build table structure
@@ -1602,25 +1756,28 @@ class ConversationalSQLChat {
     const table = document.createElement('table');
     table.className = 'parameters-table';
 
-    // Add caption
+    // Add caption with translated analyte name
     const caption = document.createElement('caption');
     const firstRow = rows[0];
     const unit = firstRow?.unit || '';
-    caption.textContent = `${parameterName}${unit ? ' (' + unit + ')' : ''} Measurements`;
+    const analyteCode = firstRow?.analyte_code || null;
+    const translatedName = this.getTranslatedAnalyteName(parameterName, analyteCode);
+    const measurementsLabel = t('chat:plotUI.measurements');
+    caption.textContent = `${translatedName}${unit ? ' (' + unit + ')' : ''} ${measurementsLabel}`;
     caption.style.captionSide = 'top';
     caption.style.fontWeight = '600';
     caption.style.marginBottom = '0.5rem';
     caption.style.textAlign = 'left';
     table.appendChild(caption);
 
-    // Table header
+    // Table header with i18n
     const thead = document.createElement('thead');
     thead.innerHTML = `
       <tr>
-        <th scope="col">Date</th>
-        <th scope="col">Value</th>
-        <th scope="col">Unit</th>
-        <th scope="col">Reference Interval</th>
+        <th scope="col">${t('common:labels.date')}</th>
+        <th scope="col">${t('common:labels.value')}</th>
+        <th scope="col">${t('common:labels.unit')}</th>
+        <th scope="col">${t('common:labels.referenceInterval')}</th>
       </tr>
     `;
     table.appendChild(thead);
@@ -1756,6 +1913,7 @@ class ConversationalSQLChat {
 
   /**
    * PRD v4.7: Render table in the Table view panel
+   * PRD v7.0: i18n support for table headers and date formatting
    * Uses scoped selector to target .chat-scrollable-table-container
    * @param {HTMLElement} plotSection - The root .chat-plot-visualization element
    * @param {Array} rows - Filtered dataset for selected parameter
@@ -1765,16 +1923,19 @@ class ConversationalSQLChat {
     const tableContainer = plotSection.querySelector('.chat-scrollable-table-container');
     if (!tableContainer) return;
 
-    // Format timestamp to readable date
+    // PRD v7.0: i18n helper
+    const t = this.getTranslator();
+
+    // PRD v7.0: Use locale-aware date formatting
     const formatDate = (timestamp) => {
-      if (!timestamp) return 'Unknown';
+      if (!timestamp) return t('common:misc.unknown');
       const date = new Date(Number(timestamp));
-      if (isNaN(date.getTime())) return 'Invalid Date';
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
+      if (isNaN(date.getTime())) return t('common:misc.unknown');
+      // Use formatters if available, otherwise fallback to Intl
+      if (window.formatters?.formatDateShort) {
+        return window.formatters.formatDateShort(date);
+      }
+      return date.toLocaleDateString();
     };
 
     // Build reference interval display string
@@ -1791,33 +1952,35 @@ class ConversationalSQLChat {
       } else if (upper !== null && upper !== undefined) {
         return `${upperOp} ${upper}`;
       }
-      return 'Unavailable';
+      return t('common:misc.unavailable');
     };
 
     // Build table structure
     const table = document.createElement('table');
     table.className = 'parameters-table';
 
-    // Add caption
+    // Add caption with translated analyte name
     const caption = document.createElement('caption');
     const firstRow = rows[0];
     const unit = firstRow?.unit || '';
-    const displayName = parameterName || 'Data';
-    caption.textContent = `${displayName}${unit ? ' (' + unit + ')' : ''} Measurements`;
+    const analyteCode = firstRow?.analyte_code || null;
+    const translatedName = this.getTranslatedAnalyteName(parameterName, analyteCode);
+    const measurementsLabel = t('chat:plotUI.measurements');
+    caption.textContent = `${translatedName}${unit ? ' (' + unit + ')' : ''} ${measurementsLabel}`;
     caption.style.captionSide = 'top';
     caption.style.fontWeight = '600';
     caption.style.marginBottom = '0.5rem';
     caption.style.textAlign = 'left';
     table.appendChild(caption);
 
-    // Table header
+    // Table header with i18n
     const thead = document.createElement('thead');
     thead.innerHTML = `
       <tr>
-        <th scope="col">Date</th>
-        <th scope="col">Value</th>
-        <th scope="col">Unit</th>
-        <th scope="col">Reference Interval</th>
+        <th scope="col">${t('common:labels.date')}</th>
+        <th scope="col">${t('common:labels.value')}</th>
+        <th scope="col">${t('common:labels.unit')}</th>
+        <th scope="col">${t('common:labels.referenceInterval')}</th>
       </tr>
     `;
     table.appendChild(thead);
@@ -1829,7 +1992,7 @@ class ConversationalSQLChat {
     if (!rows || rows.length === 0) {
       const tr = document.createElement('tr');
       tr.className = 'no-data-row';
-      tr.innerHTML = '<td colspan="4">No data available</td>';
+      tr.innerHTML = `<td colspan="4">${t('chat:plotUI.noDataAvailable')}</td>`;
       tbody.appendChild(tr);
     } else {
       rows.forEach(row => {
@@ -1875,6 +2038,7 @@ class ConversationalSQLChat {
    */
   displayPlotResults(rows, plotMetadata, plotTitle) {
     // Note: Charts are destroyed via destroyAllCharts() in handlePlotResult() before this is called
+    const t = this.getTranslator();
 
     // Generate unique canvas ID to support multiple concurrent plots
     const canvasId = `resultChart-${this.plotCounter++}`;
@@ -1892,7 +2056,7 @@ class ConversationalSQLChat {
             <svg class="segment-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
             </svg>
-            <span>Plot</span>
+            <span>${t('chat:plotUI.plotButton')}</span>
           </button>
           <button class="segment-button" id="tab-table-${canvasId}" data-view="table" role="tab" aria-selected="false" aria-controls="panel-table-${canvasId}" tabindex="-1">
             <svg class="segment-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1901,7 +2065,7 @@ class ConversationalSQLChat {
               <line x1="3" y1="15" x2="21" y2="15"></line>
               <line x1="9" y1="3" x2="9" y2="21"></line>
             </svg>
-            <span>Table</span>
+            <span>${t('chat:plotUI.tableButton')}</span>
           </button>
         </div>
       </div>
@@ -1910,7 +2074,7 @@ class ConversationalSQLChat {
       <div class="chat-plot-content">
         <!-- Parameter selector (OUTSIDE view container - always visible) -->
         <div class="chat-parameter-selector-panel">
-          <h4 class="chat-parameter-selector-title">Select Parameter</h4>
+          <h4 class="chat-parameter-selector-title">${t('chat:plotUI.selectParameter')}</h4>
           <div class="chat-parameter-list">
             <!-- Dynamically populated -->
           </div>
@@ -1922,7 +2086,7 @@ class ConversationalSQLChat {
           <div class="chat-view chat-view--plot chat-view--active" id="panel-plot-${canvasId}" role="tabpanel" aria-labelledby="tab-plot-${canvasId}" aria-hidden="false">
             <div class="chat-plot-canvas-wrapper">
               <div class="chat-plot-toolbar">
-                <span class="chat-plot-toolbar-hint">Pan and zoom to explore the data.</span>
+                <span class="chat-plot-toolbar-hint">${t('chat:plotUI.panAndZoom')}</span>
               </div>
               <canvas id="${canvasId}" width="800" height="400"></canvas>
             </div>
@@ -1962,11 +2126,21 @@ class ConversationalSQLChat {
         filteredRowsWithOutOfRange = rows.filter(row => row.parameter_name === selectedParameter);
       }
 
+      // PRD v7.0: Get translated analyte name for plot title
+      const analyteCode = filteredRows[0]?.analyte_code || null;
+      const translatedTitle = this.getTranslatedAnalyteName(selectedParameter || plotTitle, analyteCode);
+
+      // PRD v7.0: Update the header h3 with translated title
+      const headerH3 = plotSection.querySelector('.chat-plot-header h3');
+      if (headerH3) {
+        headerH3.textContent = translatedTitle;
+      }
+
       // Render plot with filtered data (without out-of-range flags)
       const chart = window.plotRenderer.renderPlot(canvasId, filteredRows, {
-        title: selectedParameter || plotTitle,
-        xAxisLabel: 'Date',
-        yAxisLabel: 'Value',
+        title: translatedTitle,
+        xAxisLabel: t('common:labels.date'),
+        yAxisLabel: t('common:labels.value'),
         timeUnit: 'day'
       });
 

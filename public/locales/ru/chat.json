@@ -55,5 +55,43 @@
   "newChat": {
     "title": "Новый чат",
     "confirm": "Начать новый чат? Текущий разговор будет очищен."
+  },
+  "plotUI": {
+    "selectParameter": "Выберите показатель",
+    "panAndZoom": "Перемещайте и масштабируйте для изучения данных.",
+    "plotButton": "График",
+    "tableButton": "Таблица",
+    "measurements": "Измерения",
+    "noDataAvailable": "Нет данных"
+  },
+  "chart": {
+    "results": "Результаты ({{unit}})",
+    "healthyRange": "Норма ({{unit}})",
+    "outOfRange": "Вне нормы ({{unit}})"
+  },
+  "thumbnailUI": {
+    "statusNormal": "Норма",
+    "statusHigh": "Высокий",
+    "statusLow": "Низкий",
+    "statusUnknown": "Неизвестно",
+    "points_one": "{{count}} точка",
+    "points_few": "{{count}} точки",
+    "points_many": "{{count}} точек",
+    "series": "{{count}} серий",
+    "overPeriod": "за {{count}} {{unit}}",
+    "deltaPeriod": {
+      "year_one": "год",
+      "year_few": "года",
+      "year_many": "лет",
+      "month_one": "месяц",
+      "month_few": "месяца",
+      "month_many": "месяцев",
+      "week_one": "неделя",
+      "week_few": "недели",
+      "week_many": "недель",
+      "day_one": "день",
+      "day_few": "дня",
+      "day_many": "дней"
+    }
   }
 }

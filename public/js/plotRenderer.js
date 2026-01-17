@@ -61,6 +61,24 @@
   const datalabelsPluginRegistered = registerDatalabelsPlugin();
 
   /**
+   * Get translation function with fallback
+   * @returns {Function} - i18next t() or fallback
+   */
+  const getTranslator = () => {
+    // Check isInitialized to handle case where i18next loads but init() fails/pending
+    if (window.i18next?.isInitialized && window.i18next?.t) {
+      return window.i18next.t.bind(window.i18next);
+    }
+    return ((key, opts) => {
+      // Fallback: extract default English text from key and replace unit placeholder
+      if (key.includes('chart.results')) return `Results (${opts?.unit || ''})`;
+      if (key.includes('chart.healthyRange')) return `Healthy range (${opts?.unit || ''})`;
+      if (key.includes('chart.outOfRange')) return `Out of range (${opts?.unit || ''})`;
+      return key;
+    });
+  };
+
+  /**
    * Group data points by unit for multi-series plotting with reference bands
    * @param {Array} rows - Array of {t, y, unit, reference_lower, reference_upper, reference_*_operator, is_value_out_of_range}
    * @returns {Array} Array of {unit: string, measurements: Array, referenceBand: Array, outOfRangePoints: Array}
@@ -319,6 +337,9 @@
             );
           }
 
+          const t = getTranslator();
+          const healthyRangeLabel = t('chat:chart.healthyRange', { unit: series.unit });
+
           if (lowerBandData.length > 0 && upperBandData.length > 0) {
             // Case 1: Two-sided band (fill between lower and upper)
             console.log('[plotRenderer] Adding two-sided reference band');
@@ -338,7 +359,7 @@
               datalabels: { display: false }
             });
             datasets.push({
-              label: `Healthy range (${series.unit})`,
+              label: healthyRangeLabel,
               data: upperBandData,
               borderColor: BAND_BORDER_COLOR,
               backgroundColor: BAND_COLOR,
@@ -356,7 +377,7 @@
             // Case 2: Upper-bound only (fill to origin)
             console.log('[plotRenderer] Adding upper-only reference band');
             datasets.push({
-              label: `Healthy range (${series.unit})`,
+              label: healthyRangeLabel,
               data: upperBandData,
               borderColor: BAND_BORDER_COLOR,
               backgroundColor: BAND_COLOR,
@@ -374,7 +395,7 @@
             // Case 3: Lower-bound only (fill to end/top)
             console.log('[plotRenderer] Adding lower-only reference band');
             datasets.push({
-              label: `Healthy range (${series.unit})`,
+              label: healthyRangeLabel,
               data: lowerBandData,
               borderColor: BAND_BORDER_COLOR,
               backgroundColor: BAND_COLOR,
@@ -407,8 +428,9 @@
         _reference_upper_operator: point.reference_upper_operator
       }));
 
+      const t = getTranslator();
       datasets.push({
-        label: `Results (${series.unit})`,
+        label: t('chat:chart.results', { unit: series.unit }),
         data: measurementData,
         borderColor: color,
         backgroundColor: color + '33',
@@ -440,7 +462,7 @@
       // Dataset 4: Out-of-range points (if any)
       if (series.outOfRangePoints.length > 0) {
         datasets.push({
-          label: `Out of range (${series.unit})`,
+          label: t('chat:chart.outOfRange', { unit: series.unit }),
           data: series.outOfRangePoints,
           borderColor: OUT_OF_RANGE_COLOR,
           backgroundColor: OUT_OF_RANGE_COLOR,
@@ -526,7 +548,15 @@
               maxRotation: 45,
               minRotation: 0,
               autoSkip: true,
-              maxTicksLimit: 10
+              maxTicksLimit: 10,
+              // PRD v7.0: Locale-aware date formatting for axis labels
+              callback: function(value, index, ticks) {
+                const date = new Date(value);
+                if (window.formatters?.formatDateShort) {
+                  return window.formatters.formatDateShort(date);
+                }
+                return date.toLocaleDateString();
+              }
             }
           },
           y: {
@@ -593,15 +623,15 @@
                 return `${value}`;
               },
               title: (tooltipItems) => {
-                // Format date for tooltip title
+                // PRD v7.0: Format date for tooltip title using locale-aware formatter
                 if (tooltipItems.length > 0) {
                   const timestamp = tooltipItems[0].parsed.x;
                   const date = new Date(timestamp);
-                  return date.toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric'
-                  });
+                  // Use formatters if available, otherwise fallback to Intl
+                  if (window.formatters?.formatDateShort) {
+                    return window.formatters.formatDateShort(date);
+                  }
+                  return date.toLocaleDateString();
                 }
                 return '';
               }

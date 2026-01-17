@@ -29,9 +29,6 @@ node scripts/verify_mapping_setup.js
 # Backfill analyte mappings for existing lab results
 node scripts/backfill_analyte_mappings.js
 
-# Seed analyte translations (i18n) from analytes.name and Russian aliases
-node scripts/seed_analyte_translations.js
-
 # Database setup with proper UTF-8 locale
 ./scripts/setup_db.sh
 ```
@@ -332,7 +329,7 @@ Static UI (`public/`) with async polling for long operations:
 - Locale persisted in localStorage (`healthup_locale` key)
 - Russian pluralization supported via i18next plural rules (one/few/many)
 - Analyte translations stored in `analyte_translations` table, fetched via `GET /api/analytes/translations?locale=xx`
-- Seed script: `node scripts/seed_analyte_translations.js` (populates from analytes.name + analyte_aliases)
+- Analyte translations auto-seeded on boot via `server/db/seed_analyte_translations.sql` (static, version-controlled)
 
 **i18n Fallback Behavior:**
 - If i18next fails to initialize, app continues with English (no blocking)

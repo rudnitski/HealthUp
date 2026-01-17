@@ -482,7 +482,7 @@ const TOOL_DEFINITIONS = [
         properties: {
           data: {
             type: "array",
-            description: "Array of data points from execute_sql. Each object MUST have: t (timestamp), y (numeric), parameter_name, unit. SHOULD have: reference_lower, reference_upper, is_out_of_range.",
+            description: "Array of data points from execute_sql. Each object MUST have: t (timestamp), y (numeric), parameter_name, unit, analyte_code. SHOULD have: reference_lower, reference_upper, is_out_of_range.",
             items: {
               type: "object",
               // NOTE: No additionalProperties: false on items to allow DB schema evolution
@@ -494,8 +494,9 @@ const TOOL_DEFINITIONS = [
                   ]
                 },
                 y: { type: "number", description: "Numeric value" },
-                parameter_name: { type: "string", description: "Parameter name" },
+                parameter_name: { type: "string", description: "Parameter name (OCR text)" },
                 unit: { type: "string", description: "Unit of measurement" },
+                analyte_code: { type: "string", description: "Canonical analyte code (e.g., 'CHOL', 'HDL') for i18n translation. Use a.code from analytes table." },
                 reference_lower: { type: "number", description: "Lower reference bound (optional)" },
                 reference_upper: { type: "number", description: "Upper reference bound (optional)" },
                 is_out_of_range: { type: "boolean", description: "Whether value is out of range (optional)" }
@@ -519,6 +520,10 @@ const TOOL_DEFINITIONS = [
               focus_analyte_name: {
                 type: "string",
                 description: "For multi-analyte plots, specifies which series to feature in thumbnail. If omitted, defaults to first alphabetically."
+              },
+              focus_analyte_code: {
+                type: "string",
+                description: "Canonical analyte code (e.g., 'CHOL', 'HDL') for focus_analyte_name. Used for i18n translation of subtitle."
               },
               status: {
                 type: "string",

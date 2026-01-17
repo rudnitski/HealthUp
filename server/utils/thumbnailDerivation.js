@@ -452,10 +452,20 @@ function deriveThumbnail(params) {
     const deltaPeriod = deriveDeltaPeriod(focusSeries.rows, isMixedUnits);
     const sparkline = { series: downsample(focusSeries.rows.map(r => r.y)) };
 
+    // PRD v7.0: Extract analyte_code for i18n translation
+    // First try LLM-provided code, then derive from rows data
+    const focusAnalyteCode = thumbnailConfig?.focus_analyte_code
+      || focusSeries.rows[0]?.analyte_code
+      || null;
+    // For plot title translation, use first row's analyte_code if available
+    const analyteCode = rows[0]?.analyte_code || null;
+
     // Assemble thumbnail
     thumbnail = {
       plot_title,
       focus_analyte_name: focusSeries.name,
+      focus_analyte_code: focusAnalyteCode,  // PRD v7.0: for subtitle translation
+      analyte_code: analyteCode,  // PRD v7.0: for title translation
       point_count: focusSeries.rows.length,
       series_count: new Set(rows.map(r => r.parameter_name)).size,
       latest_value: latestValue,

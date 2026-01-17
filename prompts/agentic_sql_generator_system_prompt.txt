@@ -364,7 +364,7 @@ This separation allows you to:
 
 4. **show_plot** - Display pre-fetched data as time-series plot
    - Pass data array from execute_sql (query_type="plot")
-   - Required data fields: t (timestamp ms or ISO 8601), y (numeric), parameter_name, unit
+   - Required data fields: t (timestamp ms or ISO 8601), y (numeric), parameter_name, unit, analyte_code
    - Optional fields: reference_lower, reference_upper, is_out_of_range
    - Set replace_previous=true to update current plot
    - **Optional thumbnail config**: Include a `thumbnail` object to show a compact chart summary in chat
@@ -377,6 +377,7 @@ This separation allows you to:
      plot_title: "Vitamin D Trend",
      thumbnail: {
        focus_analyte_name: "Vitamin D (25-OH)",  // for multi-analyte plots
+       focus_analyte_code: "VITD",  // analyte code for i18n translation
        status: "normal"  // or "high", "low", "unknown"
      }
    })
@@ -392,6 +393,7 @@ This separation allows you to:
 
    **Thumbnail config guidelines:**
    - Use `focus_analyte_name` for multi-analyte plots to specify which series to highlight
+   - Use `focus_analyte_code` with the canonical analyte code (e.g., 'CHOL', 'HDL') for i18n translation
    - Set `status` by comparing latest value to reference ranges from the data:
      * If latest value > reference_upper: use "high"
      * If latest value < reference_lower: use "low"
@@ -459,6 +461,7 @@ show_plot(
   plot_title="Холестерин",
   thumbnail={
     focus_analyte_name="Холестерин",
+    focus_analyte_code="CHOL",
     status="normal"
   }
 )
@@ -472,7 +475,7 @@ You:
 1. Call fuzzy_search_analyte_names(search_term="холестерин") → get CHOL code
 2. Call execute_sql(sql="SELECT ... WHERE a.code='CHOL' ORDER BY t ASC", query_type="plot")
 3. Analyze returned data: latest value 5.2, was 6.1 two years ago, reference range 3.5-5.5
-4. Call show_plot(data=[...], plot_title="Холестерин", thumbnail={focus_analyte_name: "Холестерин", status: "normal"})
+4. Call show_plot(data=[...], plot_title="Холестерин", thumbnail={focus_analyte_name: "Холестерин", focus_analyte_code: "CHOL", status: "normal"})
 5. Provide text analysis: "Your cholesterol has improved from 6.1 to 5.2 mmol/L over 2 years..."
 
 **Conversation Continuity:**
@@ -516,11 +519,13 @@ You:
 **Display Tool SQL Requirements:**
 
 **For show_plot:**
-- MUST include: t (bigint ms timestamp), y (numeric), parameter_name (text), unit (text)
+- MUST include: t (bigint ms timestamp), y (numeric), parameter_name (text), unit (text), analyte_code (text)
 - SHOULD include: reference_lower, reference_upper, is_out_of_range
 - Use EXTRACT(EPOCH FROM timestamp)::bigint * 1000 for t column
+- Use a.code AS analyte_code (from analytes table via JOIN) for i18n translation support
 - Always ORDER BY t ASC
 - Missing parameter_name will cause frontend selector to fail
+- Missing analyte_code will prevent analyte name translation (fallback to OCR text)
 
 **⚠️ CRITICAL DATABASE DESIGN - READ BEFORE WRITING ANY SQL:**
 - The `analytes` table has NO unit columns - check the schema context for actual columns
@@ -564,6 +569,7 @@ WITH filtered AS MATERIALIZED (
     lr.reference_upper_operator,
     lr.is_value_out_of_range,
     a.name AS analyte_name,
+    a.code AS analyte_code,
     pr.test_date_text,
     pr.recognized_at,
     pr.patient_age_snapshot,
@@ -597,6 +603,7 @@ SELECT
     END
   ) AS y,
   COALESCE(analyte_name, parameter_name) AS parameter_name,
+  analyte_code,
   unit,
   reference_lower,
   reference_lower_operator,

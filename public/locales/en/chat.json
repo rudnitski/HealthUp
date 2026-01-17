@@ -53,5 +53,38 @@
   "newChat": {
     "title": "New Chat",
     "confirm": "Start a new chat? Current conversation will be cleared."
+  },
+  "plotUI": {
+    "selectParameter": "Select Parameter",
+    "panAndZoom": "Pan and zoom to explore the data.",
+    "plotButton": "Plot",
+    "tableButton": "Table",
+    "measurements": "Measurements",
+    "noDataAvailable": "No data available"
+  },
+  "chart": {
+    "results": "Results ({{unit}})",
+    "healthyRange": "Healthy range ({{unit}})",
+    "outOfRange": "Out of range ({{unit}})"
+  },
+  "thumbnailUI": {
+    "statusNormal": "Normal",
+    "statusHigh": "High",
+    "statusLow": "Low",
+    "statusUnknown": "Unknown",
+    "points_one": "{{count}} point",
+    "points_other": "{{count}} points",
+    "series": "{{count}} series",
+    "overPeriod": "over {{count}} {{unit}}",
+    "deltaPeriod": {
+      "year_one": "year",
+      "year_other": "years",
+      "month_one": "month",
+      "month_other": "months",
+      "week_one": "week",
+      "week_other": "weeks",
+      "day_one": "day",
+      "day_other": "days"
+    }
   }
 }

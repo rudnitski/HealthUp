@@ -863,6 +863,20 @@ async function ensureSchema() {
     } else {
       console.warn('[db] Unit aliases seed file not found:', unitAliasesSeedPath);
     }
+
+    // PRD v7.0: Seed analyte_translations on every boot (idempotent with ON CONFLICT DO NOTHING)
+    const translationsSeedPath = path.join(__dirname, 'seed_analyte_translations.sql');
+    if (fs.existsSync(translationsSeedPath)) {
+      try {
+        const seedSQL = fs.readFileSync(translationsSeedPath, 'utf8');
+        await client.query(seedSQL);
+        console.log('[db] Analyte translations seeded successfully');
+      } catch (seedError) {
+        console.warn('[db] Failed to seed analyte_translations:', seedError);
+      }
+    } else {
+      console.warn('[db] Analyte translations seed file not found:', translationsSeedPath);
+    }
   } catch (error) {
     if (transactionStarted) {
       await client.query('ROLLBACK');
@@ -932,6 +946,17 @@ async function resetDatabase() {
       console.log('[db] Unit aliases seeded successfully');
     } else {
       console.warn('[db] Unit aliases seed file not found:', unitAliasesSeedPath);
+    }
+
+    // Re-seed analyte_translations (PRD v7.0)
+    const translationsSeedPath = path.join(__dirname, 'seed_analyte_translations.sql');
+    if (fs.existsSync(translationsSeedPath)) {
+      console.log('[db] Reseeding analyte translations...');
+      const translationsSeedSQL = fs.readFileSync(translationsSeedPath, 'utf8');
+      await client.query(translationsSeedSQL);
+      console.log('[db] Analyte translations seeded successfully');
+    } else {
+      console.warn('[db] Analyte translations seed file not found:', translationsSeedPath);
     }
 
     console.log('[db] ✅ Database reset complete!');
